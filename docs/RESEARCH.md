@@ -88,7 +88,7 @@ C'est de toute façon la règle 9 du `CLAUDE.md` : « en cas de doute : test sur
 
 | # | Risque | Impact | Levée |
 |---|---|---|---|
-| R1 | MT5 (réel ou démo) indisponible chez Axi pour ton pays ou ton entité | L'architecture Python/MT5 tombe (MT4 n'a pas d'API Python officielle ⚪) | Q1 : vérifier dans le portail client Axi |
+| R1 | MT5 (réel ou démo) indisponible chez Axi pour ton pays ou ton entité | L'architecture Python/MT5 tombe (MT4 n'a pas d'API Python officielle ⚪) | **Levé pour la démo** (compte MT5 démo actif le 29/09/2026). À reconfirmer pour un compte réel |
 | R2 | Entité offshore (SVG) | Stop-out à 20 %, levier élevé, pas de protection ESMA | Q1. Le bot applique **ses propres** limites (§3 du `CLAUDE.md`) quel que soit le levier offert |
 | R3 | Faits non relus à la source (proxy) | Erreurs de détail possibles | Phase 1 : `check_connection.py` dumpe `symbol_info`, `account_info` et `terminal_info` ; relecture du §7 |
 | R4 | Profondeur d'historique Axi inconnue (M1 et ticks) | Backtest court, budget d'essais faible (§4.3) | Phase 2 : inventaire de l'historique, Dukascopy en complément (Q8) |
@@ -353,6 +353,7 @@ Les libellés sont 🟡 (https://www.mql5.com/en/docs/constants/errorswarnings/e
 - ⇒ **heure serveur = heure de New York + 7 h**, toute l'année (✅ : EST UTC−5 → GMT+2, EDT UTC−4 → GMT+3).
 - **Conversion** : `ny = serveur − 7 h`, puis `tz_localize('America/New_York')`, puis `tz_convert('UTC')`. Les heures ambiguës ou inexistantes tombent le dimanche matin à New York, marché fermé (✅ Annexe B).
 - **Contrôle** : marché ouvert (tick frais), `round((tick.time − time.time()) / 3600)` doit valoir **2 ou 3** selon l'heure d'été US. Ce contrôle est faux le week-end (tick périmé).
+- **Observé sur le terminal démo de l'utilisateur** (capture du 29/09/2026) : le Market Watch affiche 02:35:29 quand il est 01:35 à Paris (UTC+2). Heure serveur = UTC+3 = New York (EDT, UTC−4) + 7 h : la règle est confirmée pour cette date. La mesure automatique par `check_connection.py` reste à faire.
 
 **Pièges**
 - `pd.to_datetime(t, unit='s')` produit une date naïve qui *ressemble* à de l'UTC.
@@ -425,6 +426,7 @@ Les libellés sont 🟡 (https://www.mql5.com/en/docs/constants/errorswarnings/e
   - CySEC : Solaris EMEA Ltd, licence 433/23 du 10/07/2023 (🟡 https://www.cysec.gov.cy/en-GB/entities/investment-firms/cypriot/95468/).
 - L'entité dépend du pays de résidence. Un pays absent du formulaire = pas de compte possible (🟡 https://help.axi.com/hc/en-us/articles/38787603455897-Can-I-open-an-Axi-account-in-any-country).
 - **France** : le passeport européen de Solaris EMEA couvrirait l'Allemagne, l'Espagne, l'Italie et la Pologne, **mais pas la France**. Un résident français passerait donc par **AxiTrader Ltd (SVG)** (🟠 https://www.broker-forex.fr/Axi.php). → À confirmer avec ton contrat (Q1).
+- **Observé le 29/09/2026** : le compte **démo** MT5 de l'utilisateur est au nom d'**AxiCorp Financial Services Pty Ltd** (ASIC), d'après la barre de titre et la messagerie du terminal. Cela contredit l'hypothèse SVG ci-dessus, au moins pour la démo. Les règles retail de l'ASIC (⚪ levier 20:1 sur l'or, clôture à 50 % de marge) s'appliqueraient ; `check_connection.py` affichera le levier et le stop-out réels.
 - Côté SVG (⚪) :
   - « registered » ne veut pas dire « regulated » ;
   - la protection contre le solde négatif n'est pas documentée pour cette entité ;
@@ -641,7 +643,20 @@ Les libellés sont 🟡 (https://www.mql5.com/en/docs/constants/errorswarnings/e
 - Exemple avec 5 000 $ et un SL de 20 $ :
   - 0,5 % = 25 $, soit 0,0125 lot, arrondi **vers le bas** à 0,01 lot (risque réel 0,4 %) ;
   - tout trade dont le SL dépasse 25 $ est **ignoré**, car le risque n'est jamais arrondi vers le haut (`CLAUDE.md`).
-  - → Q2 (capital).
+
+**Application au compte démo de l'utilisateur : 5 000 €, compte Standard (réponse du 2026-09-29)**
+
+Hypothèse indicative : EUR/USD ≈ 1,15. Le bot utilisera le vrai taux via `order_calc_profit`. Distance maximale du SL (en $ par once) selon le volume :
+
+| Risque par trade | Montant | 0,01 lot (1 oz) | 0,02 lot | 0,03 lot | 0,05 lot |
+|---|---|---|---|---|---|
+| 0,5 % (défaut) | 25 € ≈ 29 $ | SL ≤ 29 $ | SL ≤ 14 $ | SL ≤ 9,6 $ | SL ≤ 5,7 $ |
+| 1 % (plafond dur) | 50 € ≈ 57 $ | SL ≤ 57 $ | SL ≤ 29 $ | SL ≤ 19 $ | SL ≤ 11 $ |
+
+- Perte journalière maximale (2 %) : 100 €. Drawdown maximal (10 %) : 500 €.
+- Le risque réel est **quantifié** par pas de 0,01 lot et presque toujours inférieur à la cible. Exemple : SL de 20 $ → 0,0144 lot → 0,01 lot, soit environ 17 € (0,35 %). Le backtest devra reproduire exactement cet arrondi et ces trades ignorés.
+- Conséquence pour les stratégies : les SL intraday de 10 à 29 $ sont tradables à 0,5 %. **S6 (swing H1-H4, SL typique de 50 à 100 $) ne l'est quasiment pas** avec ce capital ; il faudrait 1 % de risque et un SL ≤ 57 $.
+- Compte Standard : pas de commission, coût intégré au spread (« à partir de 0,18 $ » selon Axi, à mesurer). Devise EUR probable, à confirmer par le check : le P&L de XAUUSD sera converti.
 
 ### 3.11 Spot, futures et prix du CFD
 
@@ -871,6 +886,14 @@ Référence : Chan, « Backtesting and its Pitfalls » (🟡 https://epchan.com/
 ---
 
 ## 6. Questions ouvertes
+
+**Réponses reçues le 2026-09-29**
+- Q1 (partiel) : **compte démo MT5 Axi actif**, en mode **Hedge**, terminal en français. D'après la capture d'écran de l'utilisateur, l'entité affichée est **AxiCorp Financial Services Pty Ltd**, l'entité australienne (ASIC), et non AxiTrader Ltd (SVG) comme le laissait penser §2.1 (🟠). L'entité d'un futur compte réel reste à vérifier dans le contrat.
+- Q2 : compte **Standard**, capital **5 000 €**. Conséquences sur la taille des positions : §3.10.
+- Q3 : le bot tournera sur le **PC** de l'utilisateur (un portable d'après la capture), pas sur un VPS.
+  - Plage de cotation à couvrir : du lundi 00:01 au vendredi 22:58, heure de Paris ; du dimanche 23:01 au vendredi 21:58 pendant les semaines de décalage des changements d'heure (✅ calcul avec la règle serveur).
+  - À prévoir en Phase 6 : PC branché sur secteur, veille et fermeture du capot désactivées, redémarrages Windows planifiés hors marché, connexion internet stable.
+- Q4 à Q10 : toujours ouvertes.
 
 1. **(Bloquant)** Quel est ton pays de résidence, et quelle entité Axi figure dans ton contrat ou ton portail (AxiTrader Ltd SVG ? Solaris EMEA ?) ? MT5, **réel et démo**, t'est-il proposé ? As-tu déjà un compte démo MT5 Axi, et quel est le **nom exact du serveur** ?
 2. Quel **type de compte** vises-tu (Standard ou Pro) et quelle **devise** (USD évite le bruit de change) ? Quel **ordre de grandeur de capital**, en démo puis en réel ? D'après le tableau du §3.10, c'est ce qui fixe les distances de SL tradables.
