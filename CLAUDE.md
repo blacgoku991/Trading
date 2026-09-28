@@ -344,7 +344,7 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
 
 | Phase | Statut | Date | Notes |
 |---|---|---|---|
-| 0 Recherche | à faire | | |
+| 0 Recherche | fait (avec réserves) | 2026-09-28 | `docs/RESEARCH.md`. Proxy : mql5.com, axi.com… illisibles → API MT5 vérifiée sur le wheel officiel 5.0.6231, le reste via extraits de recherche (à confirmer en Phase 1). 10 questions ouvertes (§6), dont une bloquante : MT5 disponible chez Axi pour le pays / l'entité de l'utilisateur. |
 | 1 Connexion MT5 | à faire | | |
 | 2 Données | à faire | | |
 | 3 Backtest + risque + S1 | à faire | | |
