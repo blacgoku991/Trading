@@ -195,9 +195,41 @@ class Secrets:
         return [value for value in values if value]
 
 
+def _read_env_file(env_path: Path) -> dict[str, str | None]:
+    if not env_path.is_file():
+        return {}
+    if env_path.read_bytes()[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        raise ConfigError(
+            f"{env_path} est enregistré en UTF-16 : dans le Bloc-notes, Fichier > Enregistrer sous, "
+            "encodage UTF-8"
+        )
+    try:
+        return dotenv_values(env_path)
+    except UnicodeDecodeError as exc:
+        raise ConfigError(f"{env_path} n'est pas lisible en UTF-8 : réenregistre-le en UTF-8") from exc
+
+
+def _missing_secrets_message(env_path: Path | None, missing: list[str]) -> str:
+    names = ", ".join(missing)
+    if env_path is None:
+        return f"secrets manquants : {names}"
+    if not env_path.is_file():
+        message = f"fichier {env_path} introuvable (secrets manquants : {names}). Crée-le : Copy-Item .env.example .env"
+    else:
+        message = (
+            f"secrets vides ou absents dans {env_path} : {names}. Écris chaque valeur juste après le signe =, "
+            "puis enregistre le fichier (Ctrl+S)"
+        )
+    stray = env_path.with_name(env_path.name + ".txt")
+    if stray.is_file():
+        message += f". Attention : le fichier {stray.name} existe, le Bloc-notes a peut-être ajouté .txt au nom"
+    return message
+
+
 def load_secrets(env_path: Path | None) -> Secrets:
     """Lit les secrets : variables d'environnement d'abord, puis le fichier .env."""
-    file_values = dotenv_values(env_path) if env_path and Path(env_path).is_file() else {}
+    env_path = Path(env_path) if env_path else None
+    file_values = _read_env_file(env_path) if env_path else {}
 
     def get(key: str, *, strip: bool = True) -> str:
         value = os.environ.get(key)
@@ -208,7 +240,7 @@ def load_secrets(env_path: Path | None) -> Secrets:
 
     missing = [key for key in ("MT5_LOGIN", "MT5_PASSWORD", "MT5_SERVER") if not get(key)]
     if missing:
-        raise ConfigError(f"secrets manquants (fichier .env) : {', '.join(missing)}")
+        raise ConfigError(_missing_secrets_message(env_path, missing))
 
     login_text = get("MT5_LOGIN")
     if not login_text.isdigit():

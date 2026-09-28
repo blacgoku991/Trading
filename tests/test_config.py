@@ -97,6 +97,39 @@ def test_missing_secrets_are_listed_without_values(tmp_path, clean_env):
         load_secrets(_env(tmp_path, "MT5_LOGIN=1\n"))
 
 
+def test_empty_template_explains_how_to_fill_it(tmp_path, clean_env):
+    template = (Path(__file__).resolve().parents[1] / ".env.example").read_text(encoding="utf-8")
+    env = _env(tmp_path, template)
+    with pytest.raises(ConfigError, match=r"vides ou absents.*Ctrl\+S") as info:
+        load_secrets(env)
+    assert str(env) in str(info.value)
+
+
+def test_missing_env_file_is_named(tmp_path, clean_env):
+    with pytest.raises(ConfigError, match="introuvable.*Copy-Item"):
+        load_secrets(tmp_path / ".env")
+
+
+def test_env_saved_as_txt_is_pointed_out(tmp_path, clean_env):
+    (tmp_path / ".env.txt").write_text("MT5_LOGIN=1\nMT5_PASSWORD=x\nMT5_SERVER=s\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"\.env\.txt"):
+        load_secrets(tmp_path / ".env")
+
+
+def test_utf16_env_file_is_explained(tmp_path, clean_env):
+    path = tmp_path / ".env"
+    path.write_bytes("MT5_LOGIN=1\nMT5_PASSWORD=x\nMT5_SERVER=s\n".encode("utf-16"))
+    with pytest.raises(ConfigError, match="UTF-16"):
+        load_secrets(path)
+
+
+def test_env_with_spaces_and_windows_line_endings(tmp_path, clean_env):
+    path = tmp_path / ".env"
+    path.write_bytes(b"\xef\xbb\xbfMT5_LOGIN = 42\r\nMT5_PASSWORD = x\r\nMT5_SERVER = Srv-Demo\r\n")
+    secrets = load_secrets(path)
+    assert (secrets.login, secrets.server) == (42, "Srv-Demo")
+
+
 def test_login_must_be_numeric(tmp_path, clean_env):
     with pytest.raises(ConfigError, match="nombre entier") as info:
         load_secrets(_env(tmp_path, "MT5_LOGIN=abc123\nMT5_PASSWORD=x\nMT5_SERVER=s\n"))
