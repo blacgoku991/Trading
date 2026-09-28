@@ -42,9 +42,8 @@ class MarketSchedule:
             return False
         if weekday == _MONDAY and clock < self.week_open:
             return False
-        if weekday == _FRIDAY and clock >= self.week_close:
-            return False
-        return True
+        after_friday_close = weekday == _FRIDAY and clock >= self.week_close
+        return not after_friday_close
 
     def seconds_since_open(self, server_time: datetime) -> float | None:
         """Secondes écoulées depuis la dernière ouverture (None si le marché est fermé)."""
