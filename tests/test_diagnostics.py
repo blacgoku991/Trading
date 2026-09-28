@@ -130,7 +130,7 @@ def test_unreachable_terminal_fails_fast_with_progress_messages(tmp_path, env_fi
     assert broker.connect_calls == 3  # la config en autorise 8, le diagnostic s'arrête à 3
     assert "Connexion au terminal MT5 en cours" in output
     assert "MT5_PATH vide" in output
-    assert "ouvre-le, connecte-toi une fois à la main" in output
+    assert "(Get-Process terminal64).Path" in output
 
 
 def test_invalid_configuration(tmp_path, env_file, rule):

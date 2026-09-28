@@ -22,11 +22,13 @@ _HINTS = {
         "(Outils > Options > Expert Consultants)"
     ),
     C.RES_E_INTERNAL_FAIL_INIT: (
-        "terminal introuvable ou impossible à lancer : vérifie MT5_PATH (terminal64.exe)"
+        "terminal introuvable ou impossible à lancer : renseigne MT5_PATH avec le chemin du terminal "
+        "ouvert (PowerShell : (Get-Process terminal64).Path)"
     ),
     C.RES_E_INTERNAL_FAIL_TIMEOUT: (
-        "le terminal ne répond pas : ouvre-le, connecte-toi une fois à la main, "
-        "autorise le trading algorithmique"
+        "le terminal ne répond pas : renseigne MT5_PATH avec le chemin du terminal ouvert "
+        "(PowerShell : (Get-Process terminal64).Path), ferme les fenêtres de dialogue de MT5, "
+        "et lance MT5 et PowerShell avec les mêmes droits (aucun des deux en administrateur)"
     ),
     C.RES_E_INTERNAL_FAIL_CONNECT: "liaison perdue avec le terminal : est-il toujours ouvert ?",
 }

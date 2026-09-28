@@ -110,9 +110,9 @@ notepad .env
 - `MT5_LOGIN` : numéro du compte.
 - `MT5_PASSWORD` : mot de passe du compte. S'il contient un espace ou un `#`, entoure-le de guillemets **simples**.
 - `MT5_SERVER` : nom **exact** du serveur, tel qu'affiché dans MT5.
-- `MT5_PATH` : chemin complet de `terminal64.exe`, **sans guillemets**. Pour le trouver : clic droit sur le raccourci
-  MT5 > « Ouvrir l'emplacement du fichier ». Tu peux le laisser vide au premier essai : le script affichera le
-  chemin du terminal trouvé.
+- `MT5_PATH` : chemin complet de `terminal64.exe` du terminal Axi, **sans guillemets**. Pour l'obtenir, MT5 ouvert,
+  tape dans PowerShell : `(Get-Process terminal64).Path`. Vide, le module cherche un terminal lui-même, et peut
+  échouer avec l'erreur -10005 (IPC timeout) s'il ne trouve pas celui qui est ouvert.
 
 Ne colle jamais ces valeurs dans un chat.
 

@@ -406,7 +406,10 @@ def main(
         update={"max_attempts": min(settings.mt5.reconnect.max_attempts, CHECK_MAX_ATTEMPTS)}
     )
     if secrets.terminal_path is None:
-        report.line("MT5_PATH vide : le module cherche lui-même le terminal MT5 installé.")
+        report.line(
+            "MT5_PATH vide : le module cherche lui-même le terminal MT5 installé. Conseillé : MT5_PATH = "
+            "résultat de (Get-Process terminal64).Path dans PowerShell, MT5 ouvert."
+        )
     report.line(
         f"Connexion au terminal MT5 en cours (jusqu'à {settings.mt5.timeout_ms / 1000:.0f} s par essai, "
         f"{reconnect.max_attempts} essais au maximum)..."
