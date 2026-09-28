@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "goldbot"
+version = "0.1.0"
+description = "Bot de trading XAUUSD sur MetaTrader 5 (Axi)"
+readme = "README.md"
+# MetaTrader5 5.0.6231 publie des wheels cp36 à cp314 ; numpy récent exige 3.12+.
+# Version recommandée des deux côtés (Windows et Codespaces) : 3.13 (.python-version).
+requires-python = ">=3.12,<3.15"
+# Chaque dépendance est justifiée (règle 10 du CLAUDE.md).
+dependencies = [
+    # Connecteur officiel MetaQuotes. Wheels win_amd64 uniquement : installé
+    # seulement sous Windows. Version figée : on met à jour terminal et package ensemble.
+    "MetaTrader5==5.0.6231; sys_platform == 'win32'",
+    # Validation de la configuration (exigée par CLAUDE.md §6).
+    "pydantic>=2.13,<3",
+    # Lecture de config/settings.yaml.
+    "PyYAML>=6.0.3,<7",
+    # Lecture des secrets depuis .env.
+    "python-dotenv>=1.2,<2",
+    # Base IANA des fuseaux horaires pour zoneinfo (absente sous Windows).
+    "tzdata>=2026.4",
+]
+
+[project.optional-dependencies]
+# Tests unitaires.
+dev = ["pytest>=9.1,<10"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,25 @@
+# Secrets : jamais dans git
+.env
+.env.*
+!.env.example
+
+# Données, journaux, rapports : jamais dans git (ancrés à la racine, pour ne pas
+# ignorer le package src/goldbot/data/)
+/data/
+/logs/
+/reports/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+
+# Éditeurs et OS
+.idea/
+.DS_Store
+Thumbs.db
