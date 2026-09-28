@@ -345,7 +345,7 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
 | Phase | Statut | Date | Notes |
 |---|---|---|---|
 | 0 Recherche | fait (avec réserves) | 2026-09-28 | `docs/RESEARCH.md`. Proxy : mql5.com, axi.com… illisibles → API MT5 vérifiée sur le wheel officiel 5.0.6231, le reste via extraits de recherche (à confirmer en Phase 1). 10 questions ouvertes (§6), dont une bloquante : MT5 disponible chez Axi pour le pays / l'entité de l'utilisateur. |
-| 1 Connexion MT5 | à faire | | |
+| 1 Connexion MT5 | code fait, check Windows à lancer | 2026-09-29 | Squelette, config validée (plafond 1 %/trade), secrets masqués, logs rotatifs UTC. MT5Broker (import paresseux, last_error détaillé, contrôle des constantes), FakeBroker, reconnexion avec backoff, flux figé, heure serveur = New York + 7 h, détection du symbole or. `scripts/check_connection.py` + `--test-order` démo uniquement (SL resserré, jamais éloigné). 132 tests OK (Python 3.13). Reste : exécution sous Windows par l'utilisateur. |
 | 2 Données | à faire | | |
 | 3 Backtest + risque + S1 | à faire | | |
 | 4 Stratégies + validation | à faire | | |
