@@ -77,12 +77,13 @@ git clone https://github.com/blacgoku991/Trading.git
 cd Trading
 git checkout claude/new-session-863awc
 py -3.13 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -e ".[dev]"
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
 
-- Si `Activate.ps1` est bloqué : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, puis relance l'activation.
+- Toutes les commandes appellent directement le Python de l'environnement virtuel (`.venv\Scripts\python.exe`).
+  Pas besoin de `Activate.ps1`, que Windows bloque par défaut (« l'exécution de scripts est désactivée »).
+  Si tu préfères l'activer : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, puis `.\.venv\Scripts\Activate.ps1`.
 - Si le dépôt est privé, Git ouvre une fenêtre de connexion GitHub.
 
 ### 3. Régler le terminal MT5 d'Axi
@@ -118,7 +119,7 @@ Ne colle jamais ces valeurs dans un chat.
 ### 5. Lancer la vérification (terminal MT5 ouvert)
 
 ```powershell
-python scripts/check_connection.py
+.\.venv\Scripts\python.exe scripts\check_connection.py
 ```
 
 Le script affiche l'état du terminal, du compte, du symbole de l'or, de l'heure serveur et du flux de prix.
@@ -128,7 +129,7 @@ telle quelle.
 ### 6. Ordre de test (compte démo, pendant les heures de cotation)
 
 ```powershell
-python scripts/check_connection.py --test-order
+.\.venv\Scripts\python.exe scripts\check_connection.py --test-order
 ```
 
 Déroulé :
@@ -142,7 +143,7 @@ Refusé sur un compte réel, le week-end et pendant la pause quotidienne (de 23:
 ### 7. (Optionnel) Tests sous Windows
 
 ```powershell
-pytest
+.\.venv\Scripts\python.exe -m pytest
 ```
 
 Sous Windows, un test supplémentaire compare les constantes du bot à celles du vrai package `MetaTrader5`.
