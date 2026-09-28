@@ -88,11 +88,16 @@ pip install -e ".[dev]"
 ### 3. Régler le terminal MT5 d'Axi
 
 1. Ouvre le terminal MT5 d'Axi et connecte-toi à ton compte **démo** (Fichier > Connexion à un compte de trading).
-2. Outils > Options > onglet **Expert Advisors** :
-   - coche « Autoriser le trading algorithmique » ;
-   - si elle existe, **décoche** l'option « Disable algorithmic trading via external Python API ».
-3. Dans la barre d'outils, le bouton **Algo Trading** doit être activé (vert).
-4. Outils > Options > onglet **Graphiques** : « Max bars in chart » sur **Unlimited**, puis redémarre le terminal.
+2. Outils > Options > onglet **Expert Consultants** (« Expert Advisors » en anglais) :
+   - **coché** : « Autoriser le trading algorithmique » ;
+   - **décoché** : « Désactiver le trading algorithmique via les API Python externes » ;
+   - **décoché** : « Désactiver le trading algorithmique lors du changement de compte ». Le script se connecte
+     lui-même au compte à chaque lancement : cochée, cette option pourrait couper Algo Trading à chaque fois.
+     Le bot vérifie de son côté le type de compte (démo) à chaque démarrage ;
+   - laisse décochés « Autoriser les importations DLL » et « Autoriser WebRequest » (inutiles ici).
+3. Dans la barre d'outils, le bouton **Trading Algo** doit être vert (icône ▷), pas rouge.
+4. Outils > Options > onglet **Graphiques** : « Max bars in chart » (nombre maximal de barres dans le graphique)
+   sur **Unlimited**, puis redémarre le terminal.
 
 ### 4. Renseigner les secrets
 

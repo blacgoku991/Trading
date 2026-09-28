@@ -38,13 +38,19 @@ def check_terminal(terminal: TerminalState) -> list[Finding]:
         else Finding(Level.ERROR, "Terminal NON connecté au serveur de trading (vérifie la connexion dans MT5)"),
         Finding(Level.OK, "Bouton Algo Trading activé")
         if terminal.trade_allowed
-        else Finding(Level.ERROR, "Bouton Algo Trading désactivé : tout ordre serait refusé (code 10027)"),
+        else Finding(
+            Level.ERROR,
+            "Bouton Trading Algo désactivé : tout ordre serait refusé (code 10027). Clique dessus pour le "
+            "passer au vert, et décoche « Désactiver le trading algorithmique lors du changement de compte » "
+            "(Outils > Options > Expert Consultants)",
+        ),
         Finding(Level.OK, "Trading via l'API Python autorisé dans le terminal")
         if not terminal.tradeapi_disabled
         else Finding(
             Level.ERROR,
-            "Option « Disable algorithmic trading via external Python API » cochée "
-            "(Outils > Options > Expert Advisors) : à décocher",
+            "Option « Désactiver le trading algorithmique via les API Python externes » "
+            "(Disable algorithmic trading via external Python API) cochée : "
+            "à décocher dans Outils > Options > Expert Consultants",
         ),
     ]
     if terminal.maxbars < MIN_MAXBARS:

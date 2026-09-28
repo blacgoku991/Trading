@@ -18,8 +18,8 @@ _HINTS = {
     C.RES_E_AUTH_FAILED: "vérifie MT5_LOGIN, MT5_PASSWORD et le nom EXACT de MT5_SERVER",
     C.RES_E_INVALID_VERSION: "mets à jour ensemble le terminal MT5 et le package MetaTrader5",
     C.RES_E_AUTO_TRADING_DISABLED: (
-        "décoche « Disable algorithmic trading via external Python API » "
-        "(Outils > Options > Expert Advisors)"
+        "décoche « Désactiver le trading algorithmique via les API Python externes » "
+        "(Outils > Options > Expert Consultants)"
     ),
     C.RES_E_INTERNAL_FAIL_INIT: (
         "terminal introuvable ou impossible à lancer : vérifie MT5_PATH (terminal64.exe)"
