@@ -35,6 +35,8 @@ from goldbot.monitoring.logging_setup import SecretRedactor, setup_logging
 
 log = logging.getLogger("goldbot.check")
 
+CHECK_MAX_ATTEMPTS = 3
+
 EXIT_OK = 0
 EXIT_PROBLEMS = 1
 EXIT_NO_CONNECTION = 2
@@ -399,9 +401,19 @@ def main(
     now_utc = now_utc or (lambda: datetime.now(UTC))
     stamp = now_utc().strftime("%Y%m%dT%H%M%SZ")
     broker = broker_factory(settings, secrets)
+    # Diagnostic interactif : peu d'essais, pour échouer vite et clairement (le bot live garde la config).
+    reconnect = settings.mt5.reconnect.model_copy(
+        update={"max_attempts": min(settings.mt5.reconnect.max_attempts, CHECK_MAX_ATTEMPTS)}
+    )
+    if secrets.terminal_path is None:
+        report.line("MT5_PATH vide : le module cherche lui-même le terminal MT5 installé.")
+    report.line(
+        f"Connexion au terminal MT5 en cours (jusqu'à {settings.mt5.timeout_ms / 1000:.0f} s par essai, "
+        f"{reconnect.max_attempts} essais au maximum)..."
+    )
     try:
         try:
-            ConnectionSupervisor(broker, settings.mt5.reconnect, sleep=sleep).connect()
+            ConnectionSupervisor(broker, reconnect, sleep=sleep).connect()
         except BrokerError as exc:
             log.error("connexion au terminal MT5 impossible : %s", exc)
             report.line(f"ERREUR : connexion au terminal MT5 impossible : {exc}")

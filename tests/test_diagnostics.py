@@ -120,6 +120,19 @@ def test_connection_failure_explains_the_fix(tmp_path, env_file, rule):
     assert "MT5_SERVER" in output
 
 
+def test_unreachable_terminal_fails_fast_with_progress_messages(tmp_path, env_file, rule):
+    broker = _fake(rule)
+    broker.connect_errors = [
+        BrokerError("initialize", C.RES_E_INTERNAL_FAIL_TIMEOUT, "IPC timeout") for _ in range(10)
+    ]
+    code, output = _run(tmp_path, env_file, broker)
+    assert code == EXIT_NO_CONNECTION
+    assert broker.connect_calls == 3  # la config en autorise 8, le diagnostic s'arrête à 3
+    assert "Connexion au terminal MT5 en cours" in output
+    assert "MT5_PATH vide" in output
+    assert "ouvre-le, connecte-toi une fois à la main" in output
+
+
 def test_invalid_configuration(tmp_path, env_file, rule):
     lines = []
     code = main(["--config", str(tmp_path / "absent.yaml"), "--env", str(env_file)], root=tmp_path, echo=lines.append)
