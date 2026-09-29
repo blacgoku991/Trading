@@ -311,6 +311,53 @@ Lecture :
   signaux ne prédisent pas la direction : **plus de trades, c'est plus de pertes**. L'auto-apprentissage n'est
   donc pas ajouté au bot démo. L'outil reste disponible pour tester de nouvelles idées sans se tromper soi-même.
 
+### Apprentissage à chaque trade (v2, `scripts/analyse_scalp.py`)
+
+Demande de l'utilisateur : que le bot comprenne son erreur « à chaque trade » et la corrige au trade suivant, par
+exemple « si les achats perdent en ce moment, chercher des ventes, et inversement si ça se retourne ».
+Protocole (`src/goldbot/scalping/learning.py`, fixé avant les résultats) :
+- chaque signal est simulé avec 18 **variantes** : stop x1, x1,5 ou x2 la distance de base, objectif 0,8, 1,2 ou
+  2 R, dans le sens du signal ou **à l'envers** (vendre quand le signal dit d'acheter) ;
+- après **chaque** trade simulé fermé, le score de sa variante est mis à jour : moyenne des résultats en R, les
+  trades récents pesant plus (demi-vie de 20, 100 ou 500 trades) ; scores communs à la stratégie, ou **séparés
+  pour les achats et les ventes** ;
+- au signal suivant : la variante qui marche le mieux en ce moment (jugée après 20 trades), ou pas de trade si
+  toutes perdent (sinon, en mode « trade toujours », la moins mauvaise) ;
+- chaque décision n'utilise que des trades déjà fermés : rien du futur. 24 réglages essayés par stratégie, tous
+  listés ci-dessous (meilleur et pire) : le meilleur des 24 est flatté par le hasard.
+
+| Stratégie | Règles v1 | Meilleure variante fixe, connue après coup | 24 réglages d'apprentissage | Ton idée : achats et ventes séparés, inversion permise |
+|---|---|---|---|---|
+| cassure | −0,105 R | −0,048 R (stop x2) | de −0,021 R (504 trades) à −0,102 R | de −0,044 à −0,094 R |
+| impulsion-repli | −0,195 R | −0,067 R (stop x2, objectif 2 R, à l'envers) | de −0,066 R à −0,141 R | de −0,066 à −0,095 R |
+
+Lecture :
+- **L'apprentissage réduit toujours la perte**, surtout en choisissant des stops plus larges (le spread pèse alors
+  moins dans chaque trade) et, pour l'impulsion-repli, en jouant les signaux à l'envers.
+- **Aucun réglage ne gagne**, même le meilleur des 48 : la variante fixe la meilleure, connue seulement après
+  coup, perd encore. L'apprentissage ne peut pas faire mieux que la meilleure façon de jouer ces signaux.
+- **« Si les achats perdent, vendre »** : sur 21 jours, le sens qui a perdu récemment ne prédit pas assez la
+  direction des minutes suivantes pour battre le spread.
+
+**Mis dans le bot démo quand même**, à la demande de l'utilisateur, comme version « + apprentissage v1 » (scores
+séparés achats / ventes, inversion permise, demi-vie de 100 trades, jugé après 20, pas de trade quand toutes les
+variantes perdent). Rejeu, signaux simulés seuls : cassure −0,087 R sur 4 129 trades, impulsion-repli −0,066 R sur
+2 770 trades, contre −0,105 R et −0,195 R sans apprentissage. **Perd moins, mais perd.**
+
+Rejeu avec les règles du compte (compte de 5 000 €, 0,1 % par trade, limite de −1 % par jour ;
+`scripts/backtest_scalp.py`, option `--sans-apprentissage` pour v1) :
+
+| Prix exécutables | v1, sans apprentissage | v2, + apprentissage v1 |
+|---|---|---|
+| cassure seule | 2 177 trades, PF 0,73, −987 € | 3 041 trades, PF 0,80, −819 €, 1 jour positif sur 21 |
+| impulsion-repli seule | 1 378 trades, PF 0,69, −994 € | 2 143 trades, PF 0,83, −627 €, 1 jour positif sur 21 |
+| les deux ensemble (comme en démo) | 1 043 trades, PF 0,55, −989 € | 3 363 trades, PF 0,81, −958 €, 0 jour positif sur 21 |
+| les deux ensemble, +10 points de glissement | 664 trades, PF 0,38, −1 045 € | 1 180 trades, PF 0,52, −996 € |
+
+Le total dépend surtout de la limite journalière (environ −1 % par jour sur 20 jours) : v2 perd moins par trade,
+donc trade plus longtemps avant d'atteindre la limite. Aucune journée n'est positive quand les deux tournent
+ensemble.
+
 ### Historique des réglages
 
 - 29/09/2026 matin (cassure seule, avant versionnage) : 3 positions, 0,3 % de risque cumulé, 10 s entre deux

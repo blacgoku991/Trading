@@ -282,6 +282,15 @@ vraies ouvertures et clôtures, pas à gagner. Quelques trades gagnants ne prouv
 3. Bilans à tout moment : `.\.venv\Scripts\python.exe scripts\run_scalp.py --bilan`.
    Sans aucun ordre (tout simulé localement) : `run_scalp.py --simulation`.
 
+**Apprentissage à chaque trade** (« + apprentissage v1 ») : chaque signal est aussi simulé avec 18 variantes
+(stop plus ou moins large, objectif plus ou moins loin, et le signal joué à l'envers). Après chaque trade simulé
+fermé, le score de la variante est mis à jour, séparément pour les achats et les ventes de chaque stratégie ; les
+trades récents pèsent plus. Au signal suivant, le bot joue la meilleure variante du moment, ou s'abstient si
+toutes perdent (« refus : apprentissage : toutes les variantes perdent en ce moment »). Il annonce ce qu'il apprend
+(« apprentissage [cassure, achats] : meilleure variante récente … ») et le bilan montre les scores. Il commence
+avec les règles de départ, le temps de juger chaque variante sur 20 trades simulés. Rejoué sur 4 semaines : perd
+moins que sans apprentissage, mais perd (`docs/STRATEGIES.md`).
+
 Plusieurs entrées par minute : jusqu'à 5 nouvelles entrées sur 60 s glissantes quand des occasions **distinctes**
 apparaissent (au plus une par bougie de 5 s), 5 trades ouverts et 0,5 % de risque cumulé au plus. Le bot distingue :
 - un **nouveau signal** : une occasion différente (autre niveau cassé, autre impulsion) ; la même occasion n'est
