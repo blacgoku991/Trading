@@ -531,6 +531,25 @@ mouvement se développe. Protéger à +1 R ne change rien. Aucune des 36 sorties
 scalper gagnant : les sorties ne font que redistribuer les résultats (beaucoup de petits gains ou peu de gros) ;
 ce qui manque, c'est une **entrée** qui prévoit les secondes suivantes mieux que le spread.
 
+**Stop fixe en pips** (demande de l'utilisateur : « compter en pips », « vente à 4000, stop à 4003 » ; 1 pip =
+0,10 $). Option `fixed_stop_pips` / `fixed_target_pips` (désactivée). Rejeu de la cassure seule, sans apprentissage,
+0,1 % par trade, sans arrêt total, pour comparer les règles sur les 4 semaines (6 essais de plus) :
+
+| Stop / objectif | Trades | Gagnants | Gain moyen / perte moyenne | Total | PF |
+|---|---|---|---|---|---|
+| derrière la structure (≥ 20 pips), objectif 3 x (réglage démo) | 1 976 | 35 % | +46,3 / −26,4 pips | −1 298 pips | 0,95 |
+| fixe 20 / 20 pips | 1 326 | 41 % | +18,5 / −19,7 pips | −5 313 pips | 0,66 |
+| fixe 20 / 60 pips | 1 125 | 30 % | +30,1 / −19,3 pips | −5 269 pips | 0,66 |
+| fixe 30 / 30 pips | 3 453 | 46 % | +26,3 / −26,9 pips | −9 420 pips | 0,81 |
+| fixe 30 / 90 pips | 3 231 | 38 % | +36,2 / −26,3 pips | −8 979 pips | 0,83 |
+| fixe 50 / 50 pips | 1 123 | 41 % | +32,0 / −31,6 pips | −6 536 pips | 0,69 |
+| fixe 50 / 150 pips | 1 453 | 41 % | +33,3 / −30,7 pips | −6 359 pips | 0,76 |
+
+Un stop fixe fait trader plus (plus aucun refus « stop trop proche »), mais perd beaucoup plus : le stop placé
+derrière le dernier plus haut ou plus bas s'adapte au mouvement réel du marché, un stop fixe l'ignore. Élargir à
+2 $ un stop trop proche au lieu de refuser le signal est aussi moins bon (PF 0,81 contre 0,87). Le réglage démo
+garde donc le stop derrière la structure ; les refus « stop trop proche » sont voulus.
+
 **Lot fixe de 0,1** (décision de l'utilisateur, 29/09 au soir : « mettre les lots à 0,1 ou 0,2 »). Mis en démo
 dans les limites dures : un trade est refusé si 0,1 lot risquerait plus de 1 % de l'equity au stop (stop de plus de
 5,70 $ environ sur 5 000 €) ; 0,2 lot aurait dépassé 1 % dès 2,84 $ de stop, donc refusé la plupart du temps. Perte
