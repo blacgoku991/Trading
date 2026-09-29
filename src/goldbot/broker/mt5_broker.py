@@ -81,15 +81,21 @@ class MT5Broker(Broker):
 
     def connect(self) -> None:
         mt5 = self._module()
-        credentials = {
-            "login": self._login,
-            "password": self._password,
-            "server": self._server,
-            "timeout": self._timeout_ms,
-        }
-        connected = mt5.initialize(self._path, **credentials) if self._path else mt5.initialize(**credentials)
-        if not connected:
+        # 1. S'attacher au terminal tel qu'il est, sans lui faire refaire l'authentification.
+        attached = (
+            mt5.initialize(self._path, timeout=self._timeout_ms)
+            if self._path
+            else mt5.initialize(timeout=self._timeout_ms)
+        )
+        if not attached:
             error = self._error("initialize")  # lire last_error() avant shutdown()
+            mt5.shutdown()
+            raise error
+        # 2. Se connecter au compte de .env seulement si le terminal n'y est pas déjà.
+        account = mt5.account_info()
+        on_expected_account = account is not None and account.login == self._login
+        if not on_expected_account and not mt5.login(self._login, password=self._password, server=self._server):
+            error = self._error("login")
             mt5.shutdown()
             raise error
         problems = verify_constants(mt5)
