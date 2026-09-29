@@ -64,6 +64,10 @@ def _resolve(root: Path, path: Path) -> Path:
     return path if path.is_absolute() else root / path
 
 
+class PendingOrders(Refused):
+    """Ordres encore ouverts ou en attente : l'expérience ne peut pas être archivée telle quelle."""
+
+
 def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Callable[[str], None]) -> ScalpStore:
     """Réglages figés pendant l'expérience : un changement exige --nouvelle-experience (l'ancienne est archivée)."""
     current = params_hash(settings.scalping.model_dump())
@@ -74,12 +78,12 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
     if store.has_activity() and (new_experiment or (saved is not None and saved != current)):
         pending = store.orders(OPEN, SENDING)
         if pending:
-            # Archiver maintenant perdrait le résultat de ces trades (jamais relu ensuite).
+            # Archiver maintenant perdrait le résultat de ces trades (jamais relu ensuite) : live_main les ferme et
+            # les enregistre d'abord dans l'expérience en cours (avec --nouvelle-experience), puis archive.
             store.close()
-            raise Refused(
-                f"{len(pending)} ordre(s) de l'expérience encore ouvert(s) ou en attente : relance d'abord sans "
-                "--nouvelle-experience (avec les réglages de l'expérience) pour que le bot les ferme et enregistre "
-                "leur résultat (Ctrl+C ferme les positions), puis démarre la nouvelle expérience"
+            raise PendingOrders(
+                f"{len(pending)} ordre(s) de l'expérience encore ouvert(s) ou en attente : lance "
+                "run_scalp.py --nouvelle-experience, le bot les fermera et enregistrera leur résultat avant d'archiver"
             )
         if not new_experiment:
             store.close()
@@ -98,19 +102,27 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
     return store
 
 
-def _wind_down(runner: ScalpRunner, sleep: Callable[[float], None], passes: int = 40) -> int:
-    """Expérience arrêtée : fermer les positions restantes et enregistrer leurs sorties, sans aucune entrée.
+def _wind_down(runner: ScalpRunner, sleep: Callable[[float], None], reason: str = "arrêt total : drawdown maximal",
+               passes: int = 60) -> int:  # fmt: skip
+    """Fin d'une expérience : fermer ses positions et enregistrer les sorties (et les ordres incertains), sans entrée.
 
     Renvoie le nombre de positions de l'expérience encore ouvertes (marché fermé, liaison perdue...).
     """
     for _ in range(passes):
         now_ms = runner.server_now_ms()
-        runner._manage_positions(now_ms)
-        runner._check_drawdown(now_ms)  # arrêtée : ferme ce qui reste (nouvel essai toutes les 5 s)
+        runner._manage_positions(now_ms)  # sorties lues dans les deals, ordres incertains retrouvés ou notés échec
+        runner._close_everything(runner._mine(), now_ms, reason)  # nouvel essai toutes les 5 s
         if not runner.store.orders(OPEN, SENDING) and not runner._mine():
             return 0
         sleep(POLL_SECONDS)
-    return len(runner._mine())
+    left = runner._mine()
+    for order in runner.store.orders(OPEN):
+        if order.position not in left:
+            # Position disparue et aucun deal de sortie dans l'historique : résultat inconnu, noté comme tel.
+            runner.store.update_order(order.tag, order.part, status=CLOSED, closed_ms=runner.server_now_ms(),
+                                      detail="position fermée, deal de sortie introuvable : résultat inconnu")  # fmt: skip
+            runner.say(f"   ordre {order.comment} : position fermée mais deal de sortie introuvable, résultat inconnu")
+    return len(left)
 
 
 def _history_check(runner: ScalpRunner, comment: str, position: Position, sent_ms: int) -> tuple[str, bool, str]:
@@ -324,7 +336,24 @@ def live_main(
         if args.bilan or args.verification:
             store = ScalpStore(store_path)  # lecture des bilans / test technique : pas de contrôle des réglages
         else:
-            store = _open_store(store_path, settings, new_experiment=args.nouvelle_experience, say=say)
+            try:
+                store = _open_store(store_path, settings, new_experiment=args.nouvelle_experience, say=say)
+            except PendingOrders:
+                if not args.nouvelle_experience or args.simulation:
+                    raise
+                # Fin propre de l'expérience en cours : positions fermées, sorties enregistrées, puis archive.
+                say("Avant d'archiver : fermeture des ordres restants de l'expérience et enregistrement du résultat...")
+                old = ScalpStore(store_path)
+                closer = ScalpRunner(broker, supervisor, old, settings=settings, spec=spec, local_only=False,
+                                     now_utc=now_utc, say=say, sleep=sleep)  # fmt: skip
+                left = _wind_down(closer, sleep, "fin de l'expérience")
+                old.close()
+                if left:
+                    raise Refused(
+                        f"{left} position(s) de l'expérience encore ouverte(s) (marché fermé ?) : leur stop "
+                        "reste sur le serveur ; relance --nouvelle-experience à la réouverture"
+                    ) from None
+                store = _open_store(store_path, settings, new_experiment=True, say=say)
             if store.meta("start_equity") is None:
                 store.set_meta("start_equity", str(account.equity))
         if not args.bilan:

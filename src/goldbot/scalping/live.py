@@ -263,10 +263,11 @@ class ScalpRunner:
                  "plus aucune entrée. Relance manuelle uniquement : run_scalp.py --nouvelle-experience.")  # fmt: skip
         self._close_everything(mine, now_ms)
 
-    def _close_everything(self, positions: dict[int, Position], now_ms: int) -> None:
+    def _close_everything(self, positions: dict[int, Position], now_ms: int,
+                          reason: str = "arrêt total : drawdown maximal") -> None:  # fmt: skip
         by_ticket = {order.position: order for order in self.store.orders(OPEN)}
         for position in positions.values():
-            self._close(position, by_ticket.get(position.ticket), now_ms, "arrêt total : drawdown maximal")
+            self._close(position, by_ticket.get(position.ticket), now_ms, reason)
 
     def _trade_results(self) -> list[tuple[str, float]]:
         """(identifiant, résultat net) de chaque trade fermé de l'expérience, dans l'ordre de clôture.

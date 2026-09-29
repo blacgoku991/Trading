@@ -283,7 +283,9 @@ vraies ouvertures et clôtures, pas à gagner. Quelques trades gagnants ne prouv
    fermeture échoue (marché fermé, connexion perdue), leur stop reste sur le serveur et le bot les reprend au
    redémarrage. Si les réglages de la section `scalping` changent en cours de collecte, le bot refuse de
    repartir ; pour démarrer une nouvelle expérience (l'ancienne est archivée, jamais effacée) :
-   `run_scalp.py --nouvelle-experience`. C'est aussi la seule façon de repartir après un arrêt total (−10 %).
+   `run_scalp.py --nouvelle-experience`. C'est aussi la seule façon de repartir après un arrêt total (−10 %). Si
+   des ordres de l'expérience sont encore ouverts, le bot les ferme et enregistre leur résultat avant d'archiver
+   (refus si le marché est fermé : leur stop reste sur le serveur, relance à la réouverture).
 
 3. Bilans à tout moment : `.\.venv\Scripts\python.exe scripts\run_scalp.py --bilan`.
    Sans aucun ordre (tout simulé localement) : `run_scalp.py --simulation`.

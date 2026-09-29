@@ -828,5 +828,34 @@ def test_a_new_experiment_is_refused_while_orders_are_still_open(tmp_path, env_f
     store.update_order("SC-B-1-L", 1, status=OPEN, position=999)
     store.close()
     code, output = _launch(tmp_path, env_file, broker, clock, "--nouvelle-experience")
-    assert code == EXIT_REFUSED and "encore ouvert" in output
+    # Position introuvable et aucun deal : résultat inconnu, noté comme tel, puis archive.
+    assert code == EXIT_OK and "résultat inconnu" in output and "Ancienne expérience archivée" in output
+
+
+def test_a_new_experiment_first_closes_and_records_the_open_trades(tmp_path, env_file, world):
+    broker, clock, quote, runner, lines = world
+    store_path = tmp_path / "project" / "data" / "scalp.sqlite"
+    store_path.parent.mkdir(parents=True)
+    live = runner(store=ScalpStore(store_path))
+    _breakout(broker, clock, quote, live)
+    (position,) = broker.positions()
+    live.store.close()
+    code, output = _launch(tmp_path, env_file, broker, clock, "--nouvelle-experience")
+    assert code == EXIT_OK and "fermeture des ordres restants" in output and "archivée" in output
+    assert position.ticket not in broker._positions  # fermée (le broker factice est déconnecté après le lancement)
+    (archive,) = store_path.parent.glob("scalp_*.sqlite")
+    (row,) = ScalpStore(archive).closed_orders()
+    assert row["real_pnl"] is not None and row["exit_reason"] == "fin de l'expérience"  # résultat gardé
+
+
+def test_a_new_experiment_is_refused_while_positions_cannot_be_closed(tmp_path, env_file, world):
+    broker, clock, quote, runner, lines = world
+    store_path = tmp_path / "project" / "data" / "scalp.sqlite"
+    store_path.parent.mkdir(parents=True)
+    live = runner(store=ScalpStore(store_path))
+    _breakout(broker, clock, quote, live)
+    live.store.close()
+    broker.send_retcodes = [C.TRADE_RETCODE_MARKET_CLOSED] * 1000
+    code, output = _launch(tmp_path, env_file, broker, clock, "--nouvelle-experience")
+    assert code == EXIT_REFUSED and "encore ouverte" in output and len(broker._positions) == 1
     assert list(store_path.parent.glob("scalp_*.sqlite")) == []  # rien d'archivé
