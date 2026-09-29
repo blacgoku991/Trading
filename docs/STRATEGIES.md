@@ -489,6 +489,22 @@ ce classement : elle multiplie gains et pertes par le même nombre (même espér
 sur le même signal reviennent à un seul lot plus gros. Tant que l'espérance est négative, un lot plus gros fait
 seulement perdre plus vite ; il ne s'augmente (en % de risque, plafond dur 1 %) qu'une fois un avantage démontré.
 
+**« Fermer dès que c'est en profit »** (question de l'utilisateur : des bots vus ailleurs gardent leurs positions
+quelques secondes et ferment dès le premier gain). Rejeu de la cassure seule, stop d'au moins 2 $, 0,1 % par trade
+(3 essais de plus, total 30) :
+
+| Sortie | Gagnants | Gain moyen / perte moyenne | Durée moyenne | PF | Résultat |
+|---|---|---|---|---|---|
+| fermer dès +0,30 $ | 82 % | +0,40 / −3,64 € | 36 s | 0,52 | −499 € (arrêt à −10 % au 12e jour) |
+| fermer dès +0,50 $ | 78 % | +0,66 / −3,62 € | 48 s | 0,65 | −498 € (arrêt au 12e jour) |
+| fermer dès +0,50 $, 30 s au plus | 58 % | +0,61 / −1,55 € | 19 s | 0,55 | −503 € (arrêt au 12e jour) |
+
+Beaucoup de trades gagnants et courts, mais chaque gain rapporte environ 9 fois moins qu'une perte ne coûte : il
+faudrait plus de 90 % de gagnants juste pour être à zéro, et le spread (0,16 $) mange la moitié d'un gain de
+0,30 $. C'est la plus mauvaise sortie testée (t de −6,5 à −9 : perte nette, pas du hasard). Les bots qui semblent
+réussir ainsi montrent la série de petits gains ; la perte rare mais grosse (ou un stop absent, une martingale,
+une grille) n'apparaît pas sur les captures.
+
 **Lot fixe de 0,1** (décision de l'utilisateur, 29/09 au soir : « mettre les lots à 0,1 ou 0,2 »). Mis en démo
 dans les limites dures : un trade est refusé si 0,1 lot risquerait plus de 1 % de l'equity au stop (stop de plus de
 5,70 $ environ sur 5 000 €) ; 0,2 lot aurait dépassé 1 % dès 2,84 $ de stop, donc refusé la plupart du temps. Perte
