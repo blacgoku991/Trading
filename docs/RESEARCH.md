@@ -17,6 +17,7 @@
 - [Annexe A : référence API vérifiée sur le package officiel](#annexe-a--référence-api-vérifiée-sur-le-package-officiel-)
 - [Annexe B : changements d'heure et heures clés](#annexe-b--changements-dheure-et-heures-clés--calculés-avec-la-base-iana-via-zoneinfo)
 - [Annexe C : bibliographie et sources](#annexe-c--bibliographie-et-sources)
+- [Annexe D : constats sur le compte démo Axi](#annexe-d--constats-sur-le-compte-démo-axi-check-du-29092026)
 
 ---
 
@@ -144,6 +145,7 @@ La référence exhaustive (signatures, codes, champs, constantes), vérifiée su
     - en mode portable, copier `servers.dat`.
 - Les comptes protégés par **OTP ou certificat** ne sont pas supportés : le binaire contient « Unsupported authorization mode, OTP or certificate password needed » (✅). → Ne pas activer d'OTP sur le compte du bot 🧪.
 - Appeler `last_error()` **immédiatement** après l'échec (⚪).
+- **Constaté sur le PC de l'utilisateur (29/09/2026)** : `initialize(path, login=, password=, server=)` échouait à chaque essai en **-10005 IPC timeout**, alors que le terminal était ouvert et connecté au bon compte. S'attacher d'abord avec `initialize(path, timeout=)`, sans identifiants, puis appeler `login()` seulement si `account_info().login` diffère : connexion en 3 secondes (✅). C'est la méthode retenue par `MT5Broker` (Annexe D).
 
 **🧪 À vérifier**
 - Terminal fermé : `initialize(path)` le lance-t-il, et en combien de temps ?
@@ -646,7 +648,7 @@ Les libellés sont 🟡 (https://www.mql5.com/en/docs/constants/errorswarnings/e
 
 **Application au compte démo de l'utilisateur : 5 000 €, compte Standard (réponse du 2026-09-29)**
 
-Hypothèse indicative : EUR/USD ≈ 1,15. Le bot utilisera le vrai taux via `order_calc_profit`. Distance maximale du SL (en $ par once) selon le volume :
+Hypothèse indicative : EUR/USD ≈ 1,15. Le bot utilisera le vrai taux via `order_calc_profit`. Le check du 29/09/2026 a mesuré 1,137 (1 $ de hausse = 0,88 € pour 0,01 lot), soit 25 € ≈ 28,4 $ : les valeurs ci-dessous changent à peine. Distance maximale du SL (en $ par once) selon le volume :
 
 | Risque par trade | Montant | 0,01 lot (1 oz) | 0,02 lot | 0,03 lot | 0,05 lot |
 |---|---|---|---|---|---|
@@ -1202,3 +1204,42 @@ Les URL citées dans le texte y figurent point par point. Voici la liste consoli
 - White, H. (2000). A Reality Check for Data Snooping. *Econometrica* 68(5). https://onlinelibrary.wiley.com/doi/abs/10.1111/1468-0262.00152
 - pandas `resample` (défauts `closed` et `label`) : https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.resample.html
 - pandas 3.0, notes de version : https://pandas.pydata.org/docs/whatsnew/v3.0.0.html
+
+---
+
+## Annexe D — Constats sur le compte démo Axi (check du 29/09/2026)
+
+Source : sortie de `scripts/check_connection.py` sur le PC de l'utilisateur, le 29/09/2026 à 02:04, heure de Paris (✅ mesuré). Aucun identifiant n'est reproduit ici.
+
+| Élément | Hypothèse de la recherche | Constaté |
+|---|---|---|
+| Package / terminal | package 5.0.6231 | package 5.0.6231, terminal build 6231 du 27/09/2026 : les numéros coïncident |
+| Python | 3.13, 64 bits | 3.13.15, 64 bits |
+| Connexion | `initialize(path, login, password, server)` | -10005 IPC timeout répété ; OK en s'attachant d'abord sans identifiants (§1.2) |
+| « Max bars in chart » sur Unlimited | 100 000 000 (🟠) | 100 000 000 ✅ |
+| `ping_last` | en microsecondes (🟡/🟠) | 89 900, soit 89,9 ms, cohérent (serveur démo probablement loin de la France) |
+| Heure serveur | New York + 7 h | GMT+3 mesuré, écart de 0 s avec la règle ✅ ; horloge du PC juste |
+| Entité | AxiTrader Ltd, SVG (🟠) | AxiCorp Financial Services Pty Ltd |
+| Levier | 1000:1 « Int » (🟡) ou 20:1 ASIC retail (⚪) | 1:1000 |
+| Appel de marge / stop-out | < 100 % / 20 % « Int » (🟡) | 99 % / 20 %, en pourcentage ✅ |
+| Mode de marge | inconnu | hedging ✅ |
+| Devise | EUR probable | EUR ✅ |
+| Symboles or | XAUUSD, .pro ? | XAUUSD (sans suffixe, compte Standard), XAUAUD, XAUEUR, XAUGBP |
+| Contrat, volumes | 100 oz ; 0,01 à 20 lots (🟡) | 100 ; min 0,01, max 20, pas 0,01 ✅ |
+| Prix | inconnu | 2 décimales, point = pas de prix = 0,01 |
+| Stops level / freeze level | inconnus | 1 point / 0 |
+| Remplissage | masque FOK = 1, IOC = 2 (🟡/⚪) | 3 = FOK + IOC ✅ |
+| Exécution | Market ? | MARKET ✅ : `deviation` sans effet |
+| Expiration / types d'ordres | masques MQL5 (⚪) | 15 et 127 : toutes les options, cohérent avec les valeurs des masques ✅ |
+| Durée des ordres GTC | inconnue | GTC (pas de suppression quotidienne des SL/TP) |
+| Triple swap | mercredi pour le FX, métaux non trouvé | **mercredi** ✅ |
+| Swaps | non trouvés | mode POINTS : long −61,6, short +40,5 points par lot et par nuit |
+| Spread | « à partir de 0,18 $ » (Standard) | 16 points = 0,16 $ à 03:04 heure serveur (session asiatique), flottant |
+| Mode de calcul | CFD ? | FOREX (sans effet pour nous : marge et profit viennent du terminal) |
+| Marge pour 0,01 lot | — | 3,63 € (or à 4 124 $) |
+| 1 $ de mouvement | 1 $ par 0,01 lot | 0,88 € par 0,01 lot (EUR/USD ≈ 1,137) |
+
+Conséquences chiffrées (✅ calcul à partir de ces valeurs) :
+- **Swap sur 0,01 lot** : −0,54 € par nuit en achat, +0,36 € par nuit en vente, triplé le mercredi (−1,63 € / +1,07 €). Pour 1 lot : −54 € / +36 € par nuit. Une position acheteuse gardée plusieurs jours paie donc un coût réel, à intégrer au backtest (Phase 3).
+- **Coût du spread** : 0,16 $ par once, soit 0,14 € par aller-retour sur 0,01 lot. C'est environ 0,8 % du risque d'un trade de 0,01 lot avec un SL de 20 $ (17,6 €) : faible, sauf au rollover et pendant les news, où il reste à mesurer (Phase 2).
+- **Commission** : aucune attendue sur un compte Standard. À confirmer avec `--test-order`.
