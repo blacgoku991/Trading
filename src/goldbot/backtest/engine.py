@@ -64,6 +64,10 @@ class Costs:
     swap_long_points: float = 0.0  # par lot et par nuit (mode « points » de MT5)
     swap_short_points: float = 0.0
     triple_swap_weekday: int = 2  # lundi = 0 : nuit du mercredi facturée 3 fois
+    # Si renseignés : swaps en % annuel du prix (année de 360 jours, négatif = payé), à la place des points.
+    # Les swaps d'aujourd'hui en points, appliqués à 2019-2021 (taux proches de zéro, or à 1 500 $), seraient faux.
+    swap_long_pct_year: float | None = None
+    swap_short_pct_year: float | None = None
 
 
 @dataclass
@@ -197,7 +201,7 @@ class Backtest:
             if self.day[i] != current_day:
                 if current_day is not None:
                     self.daily.append((self.times[i - 1], self.equity_now))
-                    self._charge_swaps(int(current_day), int(self.day[i]))
+                    self._charge_swaps(int(current_day), int(self.day[i]), self.c[i - 1])
                 current_day = self.day[i]
                 self.limits.new_day(int(current_day), self.equity_now)
             new = scheduled.get(i)
@@ -437,7 +441,15 @@ class Backtest:
         self.limits.on_exit(pnl, when, lambda now: next_session_start(now, SESSIONS))
         self._apply_equity_limits(i)
 
-    def _charge_swaps(self, previous_day: int, new_day: int) -> None:
+    def _swap_points(self, side: int, price: float) -> float:
+        """Swap d'une nuit en points (par lot) : fixe, ou en % annuel du prix."""
+        costs = self.costs
+        percent = costs.swap_long_pct_year if side == LONG else costs.swap_short_pct_year
+        if percent is not None:
+            return price * percent / 100.0 / 360.0 / self.instrument.point
+        return costs.swap_long_points if side == LONG else costs.swap_short_points
+
+    def _charge_swaps(self, previous_day: int, new_day: int, price: float) -> None:
         """Swaps des positions qui passent la nuit : un par fin de jour ouvré (lundi = 0), triple le jour dit."""
         if not self.positions:
             return
@@ -448,7 +460,7 @@ class Backtest:
                 continue
             nights = 3 if weekday == self.costs.triple_swap_weekday else 1
             for position in self.positions:
-                points = self.costs.swap_long_points if position.intent.side == LONG else self.costs.swap_short_points
+                points = self._swap_points(position.intent.side, price)
                 charge = points * value * position.lots * nights
                 position.swap += charge
                 self.balance += charge

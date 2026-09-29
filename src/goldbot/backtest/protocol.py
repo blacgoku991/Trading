@@ -22,7 +22,7 @@ import itertools
 import json
 import math
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import NormalDist
 
@@ -58,6 +58,10 @@ PERIODS = {
 
 # Coûts : réels (spread de la barre, plancher et glissement de la config) et stress (spread x 1,5, glissement 10 pts).
 SCENARIOS: dict[str, tuple[float | None, float | None]] = {"reel": (None, None), "stress": (1.5, 10.0)}
+# Swaps prudents en % annuel du prix (année de 360 jours) : achat payé comme aujourd'hui chez Axi (61,6 points par
+# nuit à 4 115 $ ≈ 5,4 %), vente jamais créditée (le crédit actuel de 3,5 % n'existait pas avec des taux à zéro).
+# Stress : achat 7 %, vente payée 1 %.
+SWAPS_PCT_YEAR = {"reel": (-5.4, 0.0), "stress": (-7.0, -1.0)}
 
 
 def in_period(times: pd.Series | pd.DatetimeIndex, period: Period) -> np.ndarray:
@@ -87,6 +91,8 @@ def run_intents(
     changes = [update for update in updates if _within(update.time, period)]
     spread_x, slippage = SCENARIOS[scenario]
     costs = costs_for(settings.backtest, dataset.symbol, spread_multiplier=spread_x, slippage_points=slippage)
+    swap_long, swap_short = SWAPS_PCT_YEAR[scenario]
+    costs = replace(costs, swap_long_pct_year=swap_long, swap_short_pct_year=swap_short)
     backtest = Backtest(
         bars,
         instrument=dataset.instrument,

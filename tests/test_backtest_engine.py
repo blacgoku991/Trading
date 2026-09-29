@@ -250,3 +250,17 @@ def test_updates_for_unknown_signals_are_ignored(settings):
 def test_stop_update_needs_a_stop_or_an_exit():
     with pytest.raises(ValueError, match="sans nouveau SL"):
         StopUpdate(time=pd.Timestamp("2026-01-06", tz="UTC"), tag="x", sl=None)
+
+
+def test_swaps_can_follow_the_price_as_an_annual_rate(settings):
+    # Même nuit du mercredi (x 3) : 3,6 % par an sur 2 000 $ = 0,20 $ par once et par nuit.
+    wednesday = frame([QUIET] * 9, start="2026-01-07 21:50")
+    thursday = frame([QUIET] * 6, start="2026-01-07 23:00")
+    bars = pd.concat([wednesday, thursday], ignore_index=True)
+    order = intent(bars, kind=MARKET, sl=1990.0, tp=2010.0, exit_at=bars["time"].iloc[-1])
+    costs = Costs(swap_long_points=-61.6, swap_long_pct_year=-3.6, swap_short_pct_year=0.0, triple_swap_weekday=2)
+    (trade,) = run(bars, [order], settings=settings, costs=costs).trades.itertuples()
+    assert trade.swap == pytest.approx(-2000.20 * 0.036 / 360 * 100 * trade.lots * 3)
+    short = intent(bars, side=SHORT, kind=MARKET, sl=2010.0, tp=1990.0, exit_at=bars["time"].iloc[-1])
+    (trade,) = run(bars, [short], settings=settings, costs=costs).trades.itertuples()
+    assert trade.swap == 0.0
