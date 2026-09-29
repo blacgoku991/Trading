@@ -4,8 +4,8 @@ Bot algorithmique sur l'or, connecté à MetaTrader 5 via le package officiel `M
 Le plan complet, les règles non négociables et le journal d'avancement sont dans [`CLAUDE.md`](CLAUDE.md).
 La recherche préalable est dans [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
-**État : Phase 2 (données).** Le bot se connecte, vérifie tout et exporte l'historique de l'or ; il ne trade pas
-encore. Seul l'ordre de test (0,01 lot, compte démo uniquement) envoie un ordre.
+**État : Phase 5 (démo).** Le bot est prêt à trader seul sur le compte démo la stratégie validée par backtest
+(`docs/STRATEGIES.md`). Le passage en réel reste une décision humaine, après plusieurs semaines de démo.
 
 ## Principes de sécurité
 
@@ -183,7 +183,39 @@ git pull
 - Si l'historique est court : ouvre un graphique de l'or en M1, clique dedans, appuie sur la touche Début (Home),
   attends une minute et relance l'export.
 
-### 8. (Optionnel) Tests sous Windows
+### 8. Lancer le bot (compte démo)
+
+Le bot trade la stratégie validée (`docs/STRATEGIES.md`) : momentum intraday à Londres et à New York.
+Il lui faut le terminal MT5 ouvert, connecté, et le bouton **Trading Algo** vert.
+
+D'abord en simulation (aucun ordre envoyé, il affiche ce qu'il aurait fait) :
+
+```powershell
+cd $HOME\Trading
+git pull
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe scripts\run_live.py --simulation
+```
+
+Puis pour de vrai, sur le compte démo :
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_live.py
+```
+
+- Laisse la fenêtre PowerShell ouverte : le bot vérifie le marché toutes les 2 secondes et décide à chaque minute.
+  Toutes les 30 minutes, il affiche une ligne « toujours en marche ».
+- Horaires des signaux (heure de Paris) : Londres vers 11:00, New York vers 15:30 ; sorties à 17:00 et 22:00.
+  Le PC et MT5 doivent donc rester allumés en semaine, environ de 10:30 à 22:30.
+- Ctrl+C arrête le bot. Les positions ouvertes gardent leur stop loss côté serveur ; au redémarrage, le bot les
+  reprend (sortie horaire comprise) grâce à son état enregistré dans `data\live.sqlite`.
+- Garde-fous : compte démo uniquement (un compte réel exige `LIVE_TRADING=true` dans `.env` **et**
+  `--i-understand-real-money`), compte en hedging exigé, un seul bot à la fois, jamais de contact avec tes trades
+  manuels (magic number). Il respecte aussi les limites de `config/settings.yaml` (0,5 % par trade, −2 % par jour,
+  arrêt total à −10 %).
+- Journal détaillé : `logs\goldbot.log`.
+
+### 9. (Optionnel) Tests sous Windows
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
@@ -205,3 +237,6 @@ Sous Windows, un test supplémentaire compare les constantes du bot à celles du
 
 `export_history.py` : 0 export complet, 1 export incomplet (tranches en échec ou aucune barre), 2 connexion
 impossible, 4 configuration invalide, 130 interrompu (Ctrl+C).
+
+`run_live.py` : 0 arrêt normal, 2 connexion impossible, 3 refus (compte réel, netting, Algo Trading désactivé),
+4 configuration invalide, 5 un autre bot tourne déjà.

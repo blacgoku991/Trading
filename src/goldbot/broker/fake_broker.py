@@ -428,6 +428,40 @@ class FakeBroker(Broker):
         bars = self.history_bars
         return self._serve_history(bars[(bars["time"] >= start) & (bars["time"] <= end)])
 
+    def latest_bars(self, symbol: str, count: int) -> np.ndarray:
+        self._require_connection("copy_rates_from_pos")
+        self.history_calls.append(("latest", symbol, count))
+        if self.history_errors:
+            raise self.history_errors.pop(0)
+        return self.history_bars[-count:].copy()
+
+    def hit_stop(self, ticket: int, price: float, reason: int = C.DEAL_REASON_SL) -> None:
+        """Simule une clôture côté serveur (SL ou TP touché) : position retirée, deal de sortie ajouté."""
+        position = self._positions.pop(ticket)
+        spec = self._symbols[position.symbol]
+        direction = 1 if position.type == C.POSITION_TYPE_BUY else -1
+        ticket_out = self._new_ticket()
+        self._deals.append(
+            Deal(
+                ticket=ticket_out,
+                order=ticket_out,
+                position_id=ticket,
+                symbol=position.symbol,
+                type=C.DEAL_TYPE_SELL if direction == 1 else C.DEAL_TYPE_BUY,
+                entry=C.DEAL_ENTRY_OUT,
+                reason=reason,
+                volume=position.volume,
+                price=price,
+                commission=0.0,
+                swap=0.0,
+                fee=0.0,
+                profit=round((price - position.price_open) * direction * position.volume * spec.trade_contract_size, 2),
+                magic=position.magic,
+                comment=position.comment,
+                time_msc=position.time_msc,
+            )
+        )
+
     def ticks_range(self, symbol: str, start: int, end: int, flags: int) -> np.ndarray:
         self._require_connection("copy_ticks_range")
         self.history_calls.append(("ticks", symbol, start, end, flags))

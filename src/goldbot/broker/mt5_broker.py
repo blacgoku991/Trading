@@ -207,6 +207,10 @@ class MT5Broker(Broker):
         found = self._module().copy_ticks_range(symbol, _as_datetime(start), _as_datetime(end), flags)
         return self._history(f"copy_ticks_range({symbol})", found, TICKS_DTYPE)
 
+    def latest_bars(self, symbol: str, count: int) -> np.ndarray:
+        found = self._module().copy_rates_from_pos(symbol, C.TIMEFRAME_M1, 0, count)
+        return self._history(f"copy_rates_from_pos({symbol})", found, RATES_DTYPE)
+
 
 def _as_datetime(epoch_s: int) -> datetime:
     """Borne de copy_*_range. Comme dans les exemples officiels : datetime avec tzinfo UTC.

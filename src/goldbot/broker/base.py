@@ -317,3 +317,10 @@ class Broker(ABC):
     @abstractmethod
     def ticks_range(self, symbol: str, start: int, end: int, flags: int) -> np.ndarray:
         """copy_ticks_range : ticks entre start et end (secondes, epoch SERVEUR)."""
+
+    @abstractmethod
+    def latest_bars(self, symbol: str, count: int) -> np.ndarray:
+        """copy_rates_from_pos(M1, 0, count) : les count dernières barres M1, de la plus ancienne à la plus récente.
+
+        La dernière peut être la barre en cours, pas encore clôturée : c'est à l'appelant de l'écarter.
+        """
