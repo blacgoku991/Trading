@@ -124,3 +124,35 @@ Période d'étude (22/07/2019 → 30/09/2025), risque de 0,5 % par trade :
   pire −16,7 %.
 - 17 trimestres positifs sur 25, 9 semestres sur 13 ; les 5 meilleurs trades font 25 % du profit (critère < 30 %).
 - Aucun arrêt au drawdown maximal de 10 % sur la période.
+
+### Test hors échantillon (01/10/2025 → 28/09/2026), lancé une seule fois
+
+Portefeuille figé (commit `cc4ebd9`), coûts réels, compte de 5 000 € (5 700 $) :
+
+| Trades | Profit factor | Espérance | Rendement | Drawdown max | Signaux ignorés |
+|---|---|---|---|---|---|
+| 111 | 1,54 | +0,217 R | +10,3 % | −4,8 % | 98 à 104 |
+
+Détail par stratégie : Londres +0,39 R (27 trades), New York +0,32 R (35), **Asie −0,06 R (44)**.
+Avec spread × 1,5 et 10 points de glissement : profit factor 1,57, +10,6 %.
+
+Lecture honnête :
+- **S8 (Asie) échoue** hors échantillon : désactivée (`enabled: false`). C'était l'hypothèse la plus fragile.
+- **S7 (Londres, New York) tient**, mais le chiffre ci-dessus est flatté par la taille du compte. En 2026, l'or est
+  très volatil (vers 4 000 $) : le SL de 0,3 ATR dépasse souvent 28 $, et avec 5 000 € le lot minimal (0,01) ferait
+  alors risquer plus de 0,5 %. Le bot ignore ces signaux (règle : jamais d'arrondi du risque vers le haut). Or ces
+  jours très agités ont été plutôt perdants cette année.
+- Sans signal ignoré (compte simulé plus gros), Londres + New York donnent sur la même année :
+
+| Compte | Trades | Ignorés | Profit factor | Espérance | Rendement | Drawdown |
+|---|---|---|---|---|---|---|
+| 5 000 € | 63 | 58 | 1,82 | +0,349 R | +9,7 % | −3,9 % |
+| 10 000 € | 115 | 6 | 1,24 | +0,071 R | +5,2 % | −4,3 % |
+| 20 000 € | 121 | 0 | 1,14 | +0,067 R | +3,8 % | −5,6 % |
+
+  Même période d'étude pour Londres + New York seuls : 614 trades, profit factor 1,29 à 1,31, +0,141 R ; les
+  5 meilleurs trades font 32 à 34 % du profit (critère 30 % : limite).
+
+**Verdict** : S7 Londres + New York montre un avantage réel mais **modeste** (profit factor d'environ 1,15 à 1,3
+selon la période, sans filtre). Il est suffisant pour passer en **démo**, qui servira de test « en avant » sur des
+données futures, mais pas pour promettre des gains. Environ 10 trades par mois au rythme actuel.

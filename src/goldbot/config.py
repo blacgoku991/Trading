@@ -196,6 +196,7 @@ class SessionMomentumConfig(_Section):
     sl_atr: float = Field(gt=0)
     tp_r: float = Field(ge=0)  # 0 : pas de TP, sortie à exit_time
     fade: bool = False
+    enabled: bool = True  # false : gardée pour mémoire, ni backtestée par défaut ni tradée
 
     @field_validator("zone")
     @classmethod

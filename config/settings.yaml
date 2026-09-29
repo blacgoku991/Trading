@@ -104,6 +104,8 @@ strategies:
     # (docs/STRATEGIES.md). Réglages pris au milieu des zones stables, jamais sur le meilleur résultat.
     asie:
       # S8 : pendant la session asiatique, le mouvement du matin a tendance à se retourner.
+      # DÉSACTIVÉE : échec hors échantillon (-0,06 R sur 44 trades), hypothèse tirée des données.
+      enabled: false
       zone: Asia/Tokyo
       signal_time: "11:00"
       exit_time: "15:00"

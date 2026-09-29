@@ -17,15 +17,17 @@ _NAMES = {
 def session_strategy(key: str, config: SessionMomentumConfig) -> SessionMomentum:
     title, idea = _NAMES[config.fade]
     return SessionMomentum(
-        SessionMomentumParams(**config.model_dump()),
+        SessionMomentumParams(**config.model_dump(exclude={"enabled"})),
         name=f"{title} ({key})",
         code=f"{'S8' if config.fade else 'S7'}{key[:1].upper()}",
         description=f"{idea} ({key}, signal à {config.signal_time:%H:%M}, sortie à {config.exit_time:%H:%M}).",
     )
 
 
-def session_portfolio(configs: Mapping[str, SessionMomentumConfig]) -> Portfolio:
-    strategies = [session_strategy(key, config) for key, config in configs.items()]
+def session_portfolio(configs: Mapping[str, SessionMomentumConfig], *, include_disabled: bool = False) -> Portfolio:
+    strategies = [
+        session_strategy(key, config) for key, config in configs.items() if config.enabled or include_disabled
+    ]
     return Portfolio(
         strategies,
         name="Portefeuille momentum de sessions",

@@ -32,7 +32,8 @@ def test_rolling_windows_and_concentration():
 
 
 def test_portfolio_from_settings(settings):
-    portfolio = session_portfolio(settings.strategies.session_momentum)
+    assert [s.code for s in session_portfolio(settings.strategies.session_momentum).strategies] == ["S7L", "S7N"]
+    portfolio = session_portfolio(settings.strategies.session_momentum, include_disabled=True)
     codes = [strategy.code for strategy in portfolio.strategies]
     assert codes == ["S8A", "S7L", "S7N"]
     asia = portfolio.strategies[0].params
