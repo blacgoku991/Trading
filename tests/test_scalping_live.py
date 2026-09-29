@@ -174,7 +174,7 @@ def test_position_limit_also_counts_the_simulated_trades(world):
     _breakout(broker, clock, quote, live)
     _second_breakout(broker, clock, quote, live)
     assert live.store.status_counts() == {NOT_SENT: 1, REFUSED: 1}
-    assert any("positions ouvertes au maximum : 1" in line for line in lines)
+    assert live.set_aside == {"positions ouvertes au maximum": 1}
 
 
 def _setup_at(candle_end_ms, *, key="B+1@4000.20"):
@@ -189,7 +189,7 @@ def test_no_entry_when_the_market_closes_before_the_max_duration(world):
     near_break = server_epoch_of("2026-01-06 23:57") * 1000 + 30_000  # pause quotidienne à 23:59
     live.consider(_setup_at(near_break - 1_000), near_break)
     assert broker.sent == [] and live.store.status_counts() == {REFUSED: 1}
-    assert any("le marché ferme avant la durée max" in line for line in lines)
+    assert live.set_aside == {"le marché ferme avant la durée max": 1}
 
 
 def test_a_stale_signal_is_refused(world):
@@ -198,7 +198,7 @@ def test_a_stale_signal_is_refused(world):
     live.step()
     live.consider(_setup_at(BASE_MS + 30_000), BASE_MS + 60_000)  # après un trou de connexion
     assert broker.sent == [] and live.store.status_counts() == {REFUSED: 1}
-    assert any("signal périmé" in line for line in lines)
+    assert live.set_aside == {"signal périmé": 1}
 
 
 def test_the_same_signal_seen_twice_is_a_counted_duplicate_never_resent(world):
@@ -369,7 +369,8 @@ def test_wide_spread_is_refused_with_its_reason(world):
     live.step()
     assert broker.sent == []
     assert live.store.status_counts() == {REFUSED: 1}
-    assert any("refus : objectif trop faible" in line for line in lines)
+    assert live.set_aside == {"objectif trop faible face au coût": 1}
+    assert not any("refus" in line or "signal" in line for line in lines)  # écarté sans affichage
 
 
 def test_pullback_signal_is_traded_live(world):
@@ -494,7 +495,9 @@ def test_learning_skips_the_signal_when_every_variant_loses(world):
     _teach(live, "B+", None)
     _breakout(broker, clock, quote, live)
     assert _deals(broker) == [] and live.store.status_counts() == {REFUSED: 1}
-    assert any("refus : apprentissage : toutes les variantes perdent en ce moment" in line for line in lines)
+    assert live.set_aside == {"apprentissage": 1}
+    (row,) = live.store._rows("SELECT detail FROM signals")
+    assert row["detail"].startswith("apprentissage : toutes les variantes perdent en ce moment")
 
 
 def test_learning_state_is_saved_after_each_simulated_trade_and_reloaded_after_a_restart(world, tmp_path):
@@ -870,7 +873,7 @@ def test_live_direction_filter_refuses_when_the_day_has_no_clear_move(world):
     live.policy.cfg = live.cfg
     _breakout(broker, clock, quote, live)  # 5 heures de barres seulement : pas d'ATR journalier, pas de sens
     assert broker.positions() == [] and live.direction == 0
-    assert any("refus : sens : pas de mouvement net du jour" in line for line in lines)
+    assert live.set_aside == {"sens": 1} and not any("refus" in line for line in lines)
     assert "sens du jour : aucun trade" in live.status_line()
 
 
@@ -886,7 +889,7 @@ def test_live_market_read_decides_the_side_and_announces_its_changes(world, monk
     live.policy.cfg = live.cfg
     _breakout(broker, clock, quote, live)  # la cassure est un achat ; la lecture dit « vendeur »
     assert broker.positions() == [] and live.direction == -1
-    assert any("refus : lecture du marché : marché vendeur en ce moment" in line for line in lines)
+    assert live.set_aside == {"lecture du marché": 1} and not any("refus" in line for line in lines)
     assert "lecture du marché : VENDEUR (ventes)" in live.status_line()
     read["side"] = 1  # la minute suivante, les bougies réagissent à la hausse
     clock.server_ms += 60_000
@@ -905,3 +908,22 @@ def test_strategy_label_names_the_market_read():
     cfg = cfg.model_copy(update={"market_read": ScalpMarketReadConfig(enabled=True, model="reaction", version=2)})
     label = strategy_label("B", cfg, 1, "abcd1234")
     assert label.startswith("cassure v1") and "+ lecture reaction v2 · abcd1234" in label
+
+
+def test_account_limit_refusals_are_shown_once_per_15_minutes_and_rule_refusals_never(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    candle = Candle(BASE_MS, 4000.0, 4000.1, 3999.9, 4000.0, 3999.9, 4000.1, 0.2, 5)
+    setup = Setup(BREAKOUT, LONG, 4000.0, 3999.0, candle, key="B+1@4000.00", reason="test")
+    live._signal_line = "signal ACHAT test"
+    live._refuse(setup, 0.2, "stop trop proche : 9.5 pips < 20.0 pips")
+    assert lines == [] and live.set_aside == {"stop trop proche": 1}
+    for k in range(3):  # trois signaux en 10 minutes, tous refusés par la limite du jour
+        later = replace(candle, start_ms=BASE_MS + k * 300_000)
+        live._signal_line = f"signal ACHAT {k}"
+        live._refuse(replace(setup, candle=later), 0.2, "perte du jour atteinte : -101.00, limite -2 %")
+    shown = [line for line in lines if "refus" in line]
+    assert len(shown) == 1 and "perte du jour atteinte" in shown[0] and lines[0] == "signal ACHAT 0"
+    live._signal_line = "signal ACHAT 4"
+    live._refuse(replace(setup, candle=replace(candle, start_ms=BASE_MS + 900_000)), 0.2, "perte du jour atteinte : x")
+    assert len([line for line in lines if "refus" in line]) == 2  # 15 minutes plus tard : rappel

@@ -52,7 +52,7 @@ from goldbot.scalping.engine import (
 )
 from goldbot.scalping.learning import LearningBook
 from goldbot.scalping.market_read import check_model, read_direction
-from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, split_volume, trade_volume
+from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, reason_key, split_volume, trade_volume
 from goldbot.scalping.store import (
     CLOSED,
     FAILED,
@@ -72,6 +72,11 @@ WARMUP_S = 120  # ticks relus au démarrage pour remplir les fenêtres des déte
 CLOCK_GRACE_MS = 1000  # une bougie n'est close par l'horloge qu'une seconde après sa fin (ticks en retard)
 DIRECTION_BARS = 30_000  # barres M1 lues pour le sens (lecture du marché, sens du jour) : environ 20 jours
 CLOSE_RETRY_MS = 5000  # délai entre deux tentatives de clôture d'une même position
+# Refus affichés (au plus une fois par motif et par 15 minutes) : les limites du compte. Les autres signaux écartés
+# par les règles (stop trop proche, sens, etc.) sont seulement comptés : ils ne sont pas des erreurs.
+ALERT_REFUSALS = {"arrêt total", "perte du jour atteinte", "budget de perte du jour", "marge libre insuffisante",
+                  "broker saturé", "volume maximal du symbole atteint"}  # fmt: skip
+ALERT_EVERY_MS = 15 * 60_000
 BROKER_PAUSE_MS = 60_000  # après « trop de requêtes » (10024), plus d'envoi pendant 60 s
 DUPLICATES = "doublons_evites"
 LEARNER = "apprentissage"  # état de l'apprentissage dans la table meta (JSON)
@@ -146,6 +151,9 @@ class ScalpRunner:
         self.trend = 0
         self.atr = 0.0
         check_model(self.cfg)
+        self._signal_line: str | None = None  # signal en cours, affiché seulement s'il donne un trade ou une alerte
+        self._alerted: dict[str, int] = {}  # motif d'alerte -> dernier affichage (ms serveur)
+        self.set_aside: Counter = Counter()  # signaux écartés par motif (non affichés un par un)
         self.direction = 0  # sens permis (lecture du marché ou sens du jour) : +1, -1 ou 0
         self._context_minute: int | None = None
         # Trades simulés en cours : tag -> (trade, exposition, envoyé au broker ?, stratégie).
@@ -399,7 +407,20 @@ class ScalpRunner:
 
     def _refuse(self, setup: Setup, spread: float, reason: str) -> None:
         self.store.record_signal(setup.tag, status=REFUSED, detail=reason, spread=spread, **self._signal_fields(setup))
-        self.say(f"   refus : {reason}")
+        key = reason_key(reason)
+        self.set_aside[key] += 1
+        when = setup.candle.start_ms
+        if key in ALERT_REFUSALS and when - self._alerted.get(key, -(2**62)) >= ALERT_EVERY_MS:
+            self._alerted[key] = when
+            self._announce()
+            self.say(f"   refus : {reason} (signaux suivants écartés sans affichage pendant 15 min)")
+        self._signal_line = None
+
+    def _announce(self) -> None:
+        """Affiche la ligne du signal en cours (une seule fois)."""
+        if self._signal_line is not None:
+            self.say(self._signal_line)
+            self._signal_line = None
 
     def _day_result(self) -> float:
         """Résultat du jour : démo réalisé + latent ; en --simulation, résultat simulé réalisé (comme le rejeu)."""
@@ -429,8 +450,8 @@ class ScalpRunner:
         tick = self.broker.tick(spec.name)
         spread = tick.ask - tick.bid
         side_text = "ACHAT" if setup.side == LONG else "VENTE"
-        self.say(f"{self._clock(now_ms)} signal {side_text} [{self.labels[setup.strategy]}] : {setup.reason}, "
-                 f"spread {pips(spread, self.cfg)}")  # fmt: skip
+        self._signal_line = (f"{self._clock(now_ms)} signal {side_text} [{self.labels[setup.strategy]}] : "
+                             f"{setup.reason}, spread {pips(spread, self.cfg)}")  # fmt: skip
         if self.halted:
             self._refuse(setup, spread, "arrêt total : drawdown maximal atteint (relance manuelle)")
             return
@@ -462,6 +483,7 @@ class ScalpRunner:
                 self._refuse(setup, spread, f"apprentissage : {why}")
                 return
             if variant != self.book.learner.default.name:
+                self._announce()
                 self.say(f"   apprentissage : {why}")
             plan = chosen  # sortie et sens choisis d'après les derniers résultats
         order_type = C.ORDER_TYPE_BUY if plan.side == LONG else C.ORDER_TYPE_SELL
@@ -494,6 +516,7 @@ class ScalpRunner:
             self._refuse(setup, spread, reason)
             return
         self.policy.accept(now_ms)
+        self._announce()
         parts = split_volume(volume, spec.volume_max, spec.volume_step)
         split = f" en {len(parts)} ordres (fractionnement)" if len(parts) > 1 else ""
         direction = ("ACHAT" if plan.side == LONG else "VENTE") + (" (signal joué à l'envers)" if plan.side != setup.side
@@ -844,7 +867,7 @@ class ScalpRunner:
         return (
             f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | ATR M1 {pips(self.atr, self.cfg)} | "
             f"spread {pips(tick.ask - tick.bid, self.cfg)} | signaux : {counts.get(SENT, 0)} envoyés, "
-            f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} refusés | {self.running_total()} | "
+            f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} écartés par les règles | {self.running_total()} | "
             f"{self.policy.cadence.describe()}" + (f" | ARRÊT TOTAL : {self.halted}" if self.halted else "")
         )
 

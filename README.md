@@ -272,8 +272,10 @@ et clôtures, pas à gagner. Quelques trades gagnants ne prouveront pas qu'elle 
    .\.venv\Scripts\python.exe scripts\run_scalp.py
    ```
 
-   En direct : chaque signal avec sa stratégie et sa version, le motif d'entrée ou de refus, le spread, le lot,
-   le stop, l'objectif, la durée maximale ; à chaque sortie, le motif, la durée réelle, le résultat estimé et
+   En direct : chaque trade avec sa stratégie et sa version, le motif d'entrée, le spread, le lot, le stop,
+   l'objectif, la durée maximale. Les signaux écartés par les règles (stop trop proche, etc.) ne s'affichent plus
+   un par un : ils sont comptés dans la ligne « en marche ». Les limites du compte (perte du jour, arrêt total,
+   marge) s'affichent, au plus une fois par 15 minutes ; à chaque sortie, le motif, la durée réelle, le résultat estimé et
    exécuté, les frais, puis le **résultat de l'essai : réalisé, latent (positions ouvertes) et total**. Une ligne
    « en marche » toutes les 5 minutes (tendance, ATR, spread, compteurs, résultat total). Deux bilans toutes les
    15 minutes et à l'arrêt, par stratégie et au total :
