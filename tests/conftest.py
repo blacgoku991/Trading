@@ -56,6 +56,8 @@ def v1_exit_settings():
         risk_per_trade_pct=0.1,
         max_total_risk_pct=0.5,
         daily_loss_pct=1.0,
+        max_entries_per_minute=5,
+        max_open_positions=5,
     )
     data["cadence"].update(ceiling_total_risk_pct=1.0)
     data["learning"].update(version=1, target_ratios=[0.8, 1.2, 2.0])

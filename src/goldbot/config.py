@@ -317,9 +317,8 @@ class ScalpingConfig(_Section):
     fixed_volume: float | None = Field(default=None, gt=0)
     max_open_positions: int = Field(ge=1)
     max_total_risk_pct: float = Field(gt=0)
-    max_entries_per_minute: int = Field(
-        ge=1, le=5
-    )  # de base, 5 au plus (accord de l'utilisateur) ; seule la cadence liée au bénéfice peut aller au-delà
+    # Une entrée par bougie de 5 s au plus, soit 12 par minute (l'utilisateur a levé sa limite de 5 le 29/09).
+    max_entries_per_minute: int = Field(ge=1, le=12)
     min_seconds_between_entries: float = Field(ge=0)
     daily_loss_pct: float = Field(gt=0)
     # Baisse maximale depuis le plus haut de l'expérience : arrêt total, relance manuelle (CLAUDE.md règle 5).

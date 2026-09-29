@@ -552,6 +552,8 @@ _V1_EXITS = [
     ("  max_total_risk_pct: 2.0 ", "  max_total_risk_pct: 0.5 "),
     ("  daily_loss_pct: 2.0 ", "  daily_loss_pct: 1.0 "),
     ("    ceiling_total_risk_pct: 2.0 ", "    ceiling_total_risk_pct: 1.0 "),
+    ("  max_open_positions: 20 ", "  max_open_positions: 5 "),
+    ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
 ]
 
 

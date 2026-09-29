@@ -519,8 +519,8 @@ def test_cadence_config_is_checked():
     with pytest.raises(ValidationError, match="perte journalière"):
         CONFIG.model_validate({**CONFIG.model_dump(), "cadence": {**CONFIG.cadence.model_dump(),
                                                                   "ceiling_total_risk_pct": 2.0}})  # fmt: skip
-    with pytest.raises(ValidationError, match="less than or equal to 5"):  # la base reste à 5 (accord de l'utilisateur)
-        CONFIG.model_validate({**CONFIG.model_dump(), "max_entries_per_minute": 6})
+    with pytest.raises(ValidationError, match="less than or equal to 12"):  # une par bougie de 5 s au plus
+        CONFIG.model_validate({**CONFIG.model_dump(), "max_entries_per_minute": 13})
 
 
 # --- corrections tirées des trades démo -----------------------------------------------------------------------

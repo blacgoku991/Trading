@@ -150,9 +150,9 @@ scalping:
   # refusé, jamais réduit en douce. Supprimer fixed_volume pour revenir au lot calculé d'après le risque.
   fixed_volume: 0.1
   risk_per_trade_pct: 1.0
-  max_open_positions: 5         # trades ouverts en même temps (démo et simulés)
+  max_open_positions: 20        # trades ouverts en même temps : le risque cumulé (2 %) limite avant
   max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
-  max_entries_per_minute: 5     # nouvelles entrées sur 60 s glissantes (base ; la cadence peut les relever)
+  max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
   min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s (base)
   daily_loss_pct: 2.0           # plus d'entrée pour la journée au-delà de -2 % (démo, latent compris ; CLAUDE.md §3.5)
   max_drawdown_pct: 10.0        # -10 % depuis le plus haut de l'expérience : arrêt total, relance manuelle
