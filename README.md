@@ -302,6 +302,8 @@ usage en réel, demander à Axi par écrit la fréquence acceptée.
 
 Rejeu et comparaison des deux stratégies sur les ticks exportés (Codespaces ou Windows) :
 `python scripts/backtest_scalp.py` (options : `--strategie B`, `P` ou `ensemble`).
+Analyse des erreurs (résultat par contexte, excursions) et apprentissage en avançant, testé jour après jour sans
+regarder le futur : `python scripts/analyse_scalp.py` (option `--glissement 10`). Résultats : `docs/STRATEGIES.md`.
 
 ### 10. (Optionnel) Tests sous Windows
 

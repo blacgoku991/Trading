@@ -276,6 +276,41 @@ l'écart entre résultat estimé et exécuté, et la tenue de la chaîne d'exéc
 Quelques clôtures en bénéfice sur le compte démo ne changeront pas ce verdict : il faudrait des centaines de trades
 et un résultat nettement positif, confirmé sur des données nouvelles, pour le remettre en cause.
 
+### Analyse des erreurs et apprentissage en avançant (`scripts/analyse_scalp.py`)
+
+Demande de l'utilisateur (29/09/2026) : une stratégie « qui s'auto-améliore » et « comprend ses erreurs ».
+Protocole, fixé avant de regarder les résultats :
+- chaque signal jouable (plan accepté) est simulé seul, sans les limites du compte, résultat en R (mouvement
+  divisé par la distance du stop, spread compris) ; meilleure et pire excursion pendant le trade ;
+- 7 contextes à l'entrée : heure de Paris, sens, stop / ATR M1, coût / risque, ATR M1, entrée au-delà du niveau
+  clé, trades du même sens déjà ouverts ;
+- **apprentissage en avançant** : chaque jour, un filtre est appris sur les jours précédents seulement (résultat
+  moyen de chaque tranche, rapproché de la moyenne générale quand la tranche compte peu de trades, écarts
+  additionnés), puis appliqué au jour suivant ; un signal n'est pris que si son résultat attendu est positif.
+  16 jours testés ainsi sur les 21.
+
+| Stratégie | Signaux | Tous les signaux | 16 jours testés, sans filtre | Avec le filtre appris |
+|---|---|---|---|---|
+| cassure v1 | 12 812 | −0,105 R (t −13,2) | −0,107 R, 0 jour positif | 509 trades, −0,147 R (t −4,2), 2 jours positifs |
+| impulsion-repli v1 | 7 992 | −0,195 R (t −16,3) | −0,194 R, 0 jour positif | 102 trades, −0,119 R (t −1,2), 7 jours positifs |
+
+Avec 10 points de glissement : cassure −0,221 R sans filtre, −0,164 R avec ; impulsion-repli −0,359 R et −0,275 R.
+
+Lecture :
+- **Aucune tranche d'aucun contexte n'est positive**, même mesurée sur toute la période : heure, sens, taille du
+  stop, volatilité, coût, entrée tardive, trades groupés dans le même sens. Les moins mauvaises restent entre
+  −0,02 et −0,07 R, sur de petits effectifs.
+- **L'apprentissage n'invente pas d'avantage.** Pour la cassure, le filtre appris fait pire que sans filtre : il
+  retient des tranches favorables par hasard, qui ne le restent pas le jour suivant. Pour l'impulsion-repli, il
+  réduit la perte sans la rendre positive, sur trop peu de trades pour conclure.
+- **Les sorties ne sauveraient pas les perdants** : seuls 19 % (cassure) et 24 % (impulsion-repli) des trades
+  perdants ont d'abord gagné 0,5 R, et 3 à 5 % un R entier ; remonter le stop au prix d'entrée ou suivre le prix
+  n'y changerait presque rien. À l'inverse, 30 à 42 % des gagnants ont d'abord perdu 0,5 R : un stop plus serré
+  couperait surtout des gagnants.
+- À cet horizon (quelques secondes à 2 minutes), le spread pèse 10 à 30 % du risque de chaque trade et les
+  signaux ne prédisent pas la direction : **plus de trades, c'est plus de pertes**. L'auto-apprentissage n'est
+  donc pas ajouté au bot démo. L'outil reste disponible pour tester de nouvelles idées sans se tromper soi-même.
+
 ### Historique des réglages
 
 - 29/09/2026 matin (cassure seule, avant versionnage) : 3 positions, 0,3 % de risque cumulé, 10 s entre deux
