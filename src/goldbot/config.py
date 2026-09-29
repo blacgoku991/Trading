@@ -133,6 +133,15 @@ class PathsConfig(_Section):
     reports: Path
 
 
+class ExportConfig(_Section):
+    # Dossier des fichiers exportés (ignoré par git).
+    directory: Path
+    # Barres M1 : date serveur la plus ancienne demandée (l'export s'arrête avant si l'historique du broker s'arrête).
+    bars_since: date
+    # Ticks : nombre de jours récents (calendaires) exportés, un fichier par semaine.
+    tick_days: int = Field(ge=0, le=3650)
+
+
 class LoggingConfig(_Section):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     max_bytes: int = Field(gt=0)
@@ -149,6 +158,7 @@ class Settings(_Section):
     risk: RiskConfig
     test_order: TestOrderConfig
     paths: PathsConfig
+    export: ExportConfig
     logging: LoggingConfig
 
 

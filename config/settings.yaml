@@ -65,6 +65,14 @@ paths:
   logs: logs
   reports: reports
 
+export:
+  # scripts/export_history.py (Windows) : fichiers à m'envoyer ensuite.
+  directory: data/export
+  # Barres M1 : on remonte mois par mois jusqu'à cette date au plus loin (AAAA-MM-JJ, heure serveur).
+  bars_since: "2000-01-01"
+  # Ticks : nombre de jours récents exportés (environ 1 Mo par jour de cotation).
+  tick_days: 30
+
 logging:
   level: INFO
   max_bytes: 5000000
