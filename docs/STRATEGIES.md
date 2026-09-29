@@ -540,8 +540,11 @@ seulement (`--nouvelle-experience`). Rejeu de la cassure seule avec ces réglage
 
 | Prix exécutables | Trades | Gagnants | Gain moyen / perte moyenne | PF | Résultat | Arrêt total |
 |---|---|---|---|---|---|---|
-| 0,1 lot fixe | 42 | 21 % | +35,44 / −23,49 € | 0,41 | −456 € | au 5e jour (−10,8 %) |
-| 0,1 lot fixe, +10 points | 76 | 32 % | +42,69 / −26,26 € | 0,75 | −341 € | au 4e jour (−10,2 %) |
+| 0,1 lot fixe | 30 | 17 % | +47,25 / −23,19 € | 0,41 | −343 € réalisés | au 4e jour |
+| 0,1 lot fixe, +10 points | 47 | 30 % | +48,21 / −26,91 € | 0,76 | −213 € réalisés | au 3e jour |
+
+(Après la relecture critique, l'arrêt du rejeu se mesure comme en démo, latent compris, et ferme les trades
+ouverts : il arrive plus tôt. Première version : −456 € et arrêt au 5e jour.)
 
 Chaque trade pèse 4 à 5 fois plus qu'à 0,1 % de risque : sur ces 4 semaines, un mauvais départ suffit à atteindre
 −10 % en quelques jours, et l'arrêt total coupe l'expérience. Le lot ne change pas l'espérance en R (toujours
