@@ -118,7 +118,10 @@ def strategy_label(code: str, config: ScalpingConfig, version: int, digest: str)
 
 def strategy_versions(config: ScalpingConfig) -> dict[str, tuple[int, str, dict[str, object]]]:
     """Code -> (version, empreinte, réglages) des stratégies actives : leurs règles et les réglages communs."""
-    common = config.model_dump(exclude={"breakout", "pullback", "two_candles", "experiment_days"})
+    exclude = {"breakout", "pullback", "two_candles", "experiment_days"}
+    if config.opposite_signals == "garder":
+        exclude.add("opposite_signals")  # comportement d'avant ce réglage : même empreinte qu'avant (expérience continuée)
+    common = config.model_dump(exclude=exclude)
     versions = {}
     sections = ((BREAKOUT, config.breakout), (PULLBACK, config.pullback), (TWO_CANDLES, config.two_candles))
     for code, section in sections:

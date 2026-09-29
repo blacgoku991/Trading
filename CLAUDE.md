@@ -417,6 +417,10 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   réglage `opposite_signals: retourner_si_gain` (trades dans l'autre sens fermés au marché puis remplacés s'ils
   sont tous en gain, sinon gardés et signal ignoré ; jamais d'achat et de vente ouverts ensemble, même code au
   rejeu et en démo). Rejeu : même perte par trade qu'avant (−0,14 R contre −0,15 R), toujours perdant, annoncé.
+  Puis l'utilisateur montre sa séance démo avec la version d'avant (`f8489472`) : +459 € en une heure, 14 trades,
+  et doute du nouveau principe ; recalculée avec le retournement : environ +299 €. Retour à `opposite_signals:
+  garder` (empreinte `f8489472` inchangée, expérience continuée), retournement gardé en option. Rappelé : une heure
+  ne prouve rien (rejeu 4 semaines perdant). Trois T/P déplacés sur le serveur pendant la séance, pas par le bot.
 
 ---
 

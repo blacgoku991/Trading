@@ -238,9 +238,9 @@ seule la cassure tourne en démo (l'impulsion-repli perd dans toutes ses version
   l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code) ;
 - **deux bougies** (idée de l'utilisateur, seule active depuis le 29/09 au soir) : bougie baissière puis haussière
   → vente (haussière puis baissière → achat), stop au-delà des deux bougies (10 pips au moins), une position de
-  0,4 lot (0,3 si 0,4 perdrait plus de 1 % au stop), objectif 40 pips. Signal dans l'autre sens qu'un trade ouvert :
-  ce trade est fermé puis remplacé s'il est en gain, sinon gardé et le signal ignoré (jamais d'achat et de vente
-  ouverts en même temps, `opposite_signals`). Rejeu 4 semaines : perdante (PF 0,92, arrêt à −10 % au 5e jour).
+  0,4 lot (0,3 si 0,4 perdrait plus de 1 % au stop), objectif 40 pips ; un achat et une vente peuvent être ouverts
+  en même temps (option `opposite_signals: retourner_si_gain` : fermer le trade contraire s'il est en gain, sinon
+  ignorer le signal). Rejeu 4 semaines : perdante (PF 0,74, arrêt à −10 % au 4e jour de cotation).
 
 Pour les deux (sorties v2, d'après les trades démo du 29/09) : stop côté serveur derrière la structure du signal,
 d'au moins 2 $, objectif à 3 fois le stop (un gain couvre trois pertes), sortie forcée au bout de 10 minutes même

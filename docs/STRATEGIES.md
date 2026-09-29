@@ -744,8 +744,9 @@ autre ». Nouveau réglage `opposite_signals`, même règle au rejeu et en démo
 - `garder` : comportement d'avant, achats et ventes peuvent coexister ;
 - `ignorer` : pas de signal contraire tant qu'un trade est ouvert ;
 - `retourner` : les trades dans l'autre sens sont fermés au marché, puis le nouveau part ;
-- `retourner_si_gain` (**mis en démo**, « + retournement si gain » dans le nom) : fermés et remplacés seulement
-  s'ils sont tous en gain (latent, frais compris) ; sinon gardés avec leur stop et leur objectif, signal ignoré.
+- `retourner_si_gain` (« + retournement si gain » dans le nom ; en démo quelques heures, puis retour à `garder`,
+  voir plus bas) : fermés et remplacés seulement s'ils sont tous en gain (latent, frais compris) ; sinon gardés
+  avec leur stop et leur objectif, signal ignoré.
 
 En démo, la fermeture passe avant l'envoi du nouvel ordre ; si elle échoue (refus du serveur, envoi incertain),
 pas de nouvelle entrée : jamais d'achat et de vente ouverts en même temps. Rejeu sur les 4 semaines de ticks Axi,
@@ -768,6 +769,23 @@ retourné vaut environ 11 pips au lieu de 32), pas la perte par trade (−0,14 R
 aucune règle ne rend la stratégie gagnante. Le cadre démo (90 trades en 4 jours) est trop court pour départager.
 Mise en démo parce que c'est le comportement demandé ; « ignorer » perd le moins en euros (moins de trades), pas par
 trade.
+
+**Retour à `garder`** (même soir). Séance démo de l'utilisateur avec la version d'avant (`f8489472`, achats et
+ventes pouvant coexister) : 14 trades en une heure (21:58 → 22:50, heure de Paris), 7 gagnants, **+459 €**, pendant
+une montée de l'or d'environ 12 $. Recalculée trade par trade avec le retournement si gain (clôture au prix d'entrée
+du signal contraire) : environ **+299 €**. Le retournement aurait évité deux pertes (+37 € et +71 €) mais coupé tôt
+des gagnants qui ont ensuite touché leur objectif de 40 pips (achat de 22:31 : +12 € au lieu de +141 € ; vente de
+22:45 : +59 € au lieu de +148 €). L'utilisateur préfère la version d'avant : `opposite_signals: garder`, qui garde
+l'empreinte `f8489472` (le réglage n'entre dans l'empreinte que s'il change le comportement), donc l'expérience en
+cours continue sans archivage. Une heure favorable ne prouve rien : sur les 4 semaines de rejeu, cette même version
+perd (PF 0,74, arrêt à −10 % au 4e jour).
+
+Dans la même séance, trois positions ont eu leur objectif (T/P) déplacé sur le serveur, plus près du prix : achat de
+21:58 fermé « objectif » à 4175.19 (objectif envoyé 4177.20), achat de 22:20 à 4175.39 (envoyé 4177.66), vente de
+22:22 avec un T/P à 4173.19 (envoyé 4171.06). Le bot envoie l'objectif affiché et ne modifie jamais une position,
+sauf pour reposer un stop manquant (ligne « stop manquant reposé », absente ici) : la modification vient d'ailleurs
+(ligne de T/P déplacée à la main sur le graphique, ou autre programme sur le terminal). Les +69,85 € et +61,05 € de
+ces deux achats en dépendent en partie.
 
 
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
@@ -825,4 +843,5 @@ PF 0,77, 25/35 0,80, 30/40 0,81, 30/50 0,80, 40/60 0,81 ; avec 1 pip de glisseme
   apprentissage, 0,1 % par trade) : voir « v4 » ci-dessus ; puis **v5 « deux bougies »** (idée de l'utilisateur, en
   démo à sa demande malgré le test perdant).
 - 29/09/2026 nuit (suite) : deux bougies v1 « + retournement si gain » (jamais d'achat et de vente ouverts
-  ensemble), voir « Signaux contraires » ci-dessus.
+  ensemble), voir « Signaux contraires » ci-dessus ; puis retour à la v1 telle quelle (`garder`, `f8489472`) après
+  la séance démo de l'utilisateur.

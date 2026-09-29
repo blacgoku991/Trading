@@ -156,13 +156,13 @@ scalping:
   min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s (base)
   daily_loss_pct: 2.0           # plus d'entrée pour la journée au-delà de -2 % (démo, latent compris ; CLAUDE.md §3.5)
   max_drawdown_pct: 10.0        # -10 % depuis le plus haut de l'expérience : arrêt total, relance manuelle
-  # Signal dans l'autre sens qu'un trade ouvert (demande de l'utilisateur, 29/09, nuit : « il lance des positions
-  # contraires, c'est pas bon ; fermer celle qui est bien et en renvoyer une autre ») : si les trades ouverts dans
-  # l'autre sens sont tous en gain, ils sont fermés au marché puis le nouveau trade part ; sinon ils sont gardés
-  # (stop et objectif inchangés) et le signal est ignoré. Jamais d'achat et de vente ouverts en même temps.
-  # Autres choix : garder (les deux sens coexistent), ignorer, retourner (même en perte). Rejeu sur 4 semaines de
-  # ticks Axi : même perte par trade qu'avant (-0,14 R contre -0,15 R) ; ne rend pas la stratégie gagnante.
-  opposite_signals: retourner_si_gain
+  # Signal dans l'autre sens qu'un trade ouvert : garder (achat et vente peuvent coexister : le principe de la
+  # version f8489472), ignorer, retourner (trades contraires fermés au marché puis nouveau trade), retourner_si_gain
+  # (fermés et remplacés seulement s'ils sont tous en gain, sinon gardés et signal ignoré). retourner_si_gain a été
+  # demandé le 29/09 (nuit) ; puis, sur la séance démo de l'utilisateur avec « garder » (+459 € en une heure,
+  # 14 trades), il aurait donné environ +299 € (gagnants coupés tôt) : retour à « garder », même empreinte f8489472.
+  # Rejeu sur 4 semaines de ticks Axi : même perte par trade avec l'un ou l'autre (-0,15 R contre -0,14 R).
+  opposite_signals: garder
   # Sens du jour (v3) : trades seulement dans le sens du mouvement du jour quand il atteint 0,5 x l'ATR journalier.
   # Désactivé en v4 à la demande de l'utilisateur (« pas seulement des achats ou des ventes, en fonction du
   # marché ») : le sens vient de la tendance M1 (EMA20 / EMA50) et de la cassure des 60 s, il change en quelques

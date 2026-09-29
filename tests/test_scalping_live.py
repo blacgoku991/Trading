@@ -557,7 +557,6 @@ _V1_EXITS = [
     ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
     ("  risk_per_trade_pct: 1.0\n", "  risk_per_trade_pct: 0.1\n"),
     ("  lot_choices: [0.4, 0.3]\n", ""),
-    ("  opposite_signals: retourner_si_gain\n", "  opposite_signals: garder\n"),
     ("résultat (PF 0,90 contre 0,91).\n    enabled: false\n", "résultat (PF 0,90 contre 0,91).\n    enabled: true\n"),
     ("la moins perdante des trois sur 7 ans de M1 (PF 0,88).\n    enabled: true\n",
      "la moins perdante des trois sur 7 ans de M1 (PF 0,88).\n    enabled: false\n"),
@@ -1056,3 +1055,12 @@ def test_strategy_label_names_the_opposite_signal_rule(settings):
     assert "retournement" not in strategy_label("B", cfg, 1, "abcd1234")  # « garder » : comportement d'origine
     cfg = cfg.model_copy(update={"opposite_signals": "retourner_si_gain"})
     assert strategy_label("B", cfg, 1, "abcd1234").endswith(" + retournement si gain · abcd1234")
+
+
+def test_keeping_opposite_trades_keeps_the_fingerprint_of_the_versions_before_the_setting(settings):
+    # « garder » = le comportement d'avant ce réglage : même empreinte, l'expérience en cours continue sans archivage.
+    kept = strategy_versions(settings.scalping)[BREAKOUT]
+    assert "opposite_signals" not in kept[2]["common"]
+    reversed_ = strategy_versions(settings.scalping.model_copy(update={"opposite_signals": "retourner_si_gain"}))
+    assert reversed_[BREAKOUT][2]["common"]["opposite_signals"] == "retourner_si_gain"
+    assert reversed_[BREAKOUT][1] != kept[1]  # autre règle : autre empreinte, nouvelle expérience exigée
