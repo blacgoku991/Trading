@@ -232,7 +232,8 @@ des ticks, toutes sessions ouvertes. Deux stratégies existent, chacune identifi
 de ses réglages (par exemple `cassure v1 + apprentissage v2 + cadence v1 · 3a694f43`) ; depuis le 29/09 au soir,
 seule la cassure tourne en démo (l'impulsion-repli perd dans toutes ses versions, `pullback.enabled: false`) :
 - **cassure** : cassure du plus haut ou du plus bas des 60 s précédentes, confirmée par deux clôtures, dans le sens
-  de la tendance M1 (EMA20 / EMA50) ;
+  de la tendance M1 (EMA20 / EMA50). En v4 (29/09, nuit), le sens est libre : achats ou ventes selon cette
+  tendance, qui change en quelques minutes (plus de filtre « sens du jour ») ;
 - **impulsion-repli** : impulsion d'au moins 1 ATR M1, repli de 30 à 70 %, puis reprise dans le sens de
   l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code).
 
@@ -242,8 +243,10 @@ en perte. Règles détaillées et résultats : `docs/STRATEGIES.md`, « Expérie
 
 **À savoir avant de lancer** : rejouées sur les 4 semaines de ticks Axi, **les deux perdent**. Règles v1 : profit
 factor 0,73 pour la cassure, 0,69 pour l'impulsion-repli, aucune journée positive sur 21. Réglages actuels
-(sorties v2, apprentissage, cadence) : profit factor d'environ 0,9, perte réduite de moitié, mais toujours une perte. L'expérience sert à observer de
-vraies ouvertures et clôtures, pas à gagner. Quelques trades gagnants ne prouveront pas qu'elle est rentable.
+(v4 : sens libre, sans apprentissage, 0,1 % par trade) : environ 78 trades par jour, moitié achats moitié ventes,
+profit factor 0,91, arrêt total à −10 % atteint en 1 à 2 semaines. Sur 5 ans de M1 Axi, aucun sens simple (hasard,
+sens du jour, tendance EMA) ne bat les coûts à quelques minutes. L'expérience sert à observer de vraies ouvertures
+et clôtures, pas à gagner. Quelques trades gagnants ne prouveront pas qu'elle est rentable.
 
 1. Vérification technique, **pendant les heures de cotation** (terminal MT5 ouvert, Algo Trading vert) :
 
@@ -290,7 +293,7 @@ vraies ouvertures et clôtures, pas à gagner. Quelques trades gagnants ne prouv
 3. Bilans à tout moment : `.\.venv\Scripts\python.exe scripts\run_scalp.py --bilan`.
    Sans aucun ordre (tout simulé localement) : `run_scalp.py --simulation`.
 
-**Apprentissage à chaque trade** (« + apprentissage v1 ») : chaque signal est aussi simulé avec 18 variantes
+**Apprentissage à chaque trade** (« + apprentissage v1 », désactivé en v4) : chaque signal est aussi simulé avec 18 variantes
 (stop plus ou moins large, objectif plus ou moins loin, et le signal joué à l'envers). Après chaque trade simulé
 fermé, le score de la variante est mis à jour, séparément pour les achats et les ventes de chaque stratégie ; les
 trades récents pèsent plus. Au signal suivant, le bot joue la meilleure variante du moment, ou s'abstient si
@@ -299,8 +302,8 @@ toutes perdent (« refus : apprentissage : toutes les variantes perdent en ce mo
 avec les règles de départ, le temps de juger chaque variante sur 20 trades simulés. Rejoué sur 4 semaines : perd
 moins que sans apprentissage, mais perd (`docs/STRATEGIES.md`).
 
-Plusieurs entrées par minute : de base, jusqu'à 5 nouvelles entrées sur 60 s glissantes quand des occasions
-**distinctes** apparaissent (au plus une par bougie de 5 s), 5 trades ouverts et 0,5 % de risque cumulé au plus.
+Plusieurs entrées par minute : de base, jusqu'à 12 nouvelles entrées sur 60 s glissantes quand des occasions
+**distinctes** apparaissent (au plus une par bougie de 5 s), 20 trades ouverts et 2 % de risque cumulé au plus.
 **Cadence liée au bénéfice** (« + cadence v1 ») : si les 30 derniers trades fermés sont en bénéfice net, frais
 compris, ces limites doublent (puis x4, x6), jusqu'à 30 entrées par minute et 1 % de risque ouvert au plus ; dès
 qu'ils sont en perte nette, retour à la base. Le bot l'annonce (« cadence : palier 1 (x2)… ») et l'affiche dans la
@@ -313,9 +316,9 @@ ligne « en marche » et les bilans. Le risque de chaque trade ne change jamais.
   position en double chez le broker est fermée ; ces cas sont comptés dans le bilan.
 
 Garde-fous : compte **démo obligatoire, sans exception** (aucune option ne permet le réel), compte en hedging,
-Algo Trading actif, un seul exemplaire à la fois ; **lot fixe de 0,1** (choix de l'utilisateur, `fixed_volume`),
-refusé si ce lot risquerait plus de 1 % de l'equity au stop (plafond dur ; sans `fixed_volume`, lot calculé d'après
-`risk_per_trade_pct`) ; plus d'entrée pour la journée à −2 % (démo, latent compris) ; marge libre d'au moins 50 %
+Algo Trading actif, un seul exemplaire à la fois ; **lot calculé** : 0,1 % de l'equity perdus au stop
+(`risk_per_trade_pct`, plafond dur 1 %), arrondi vers le bas ; option lot fixe (`fixed_volume`), refusé si ce lot
+risquerait plus de 1 % de l'equity au stop ; plus d'entrée pour la journée à −2 % (démo, latent compris) ; marge libre d'au moins 50 %
 de l'equity après l'ordre ; pas d'entrée si le marché ferme avant la durée maximale ; pas d'entrée si, tous les
 stops touchés, la journée dépasserait −2 % (budget du jour) ; **arrêt total à −10 % depuis le plus haut de
 l'expérience** : positions fermées, plus aucune entrée, relance manuelle uniquement ; réponse du serveur perdue : l'ordre est retrouvé

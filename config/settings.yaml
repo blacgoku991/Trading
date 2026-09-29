@@ -145,21 +145,22 @@ scalping:
   extra_slippage_points: 10     # bilan séparé « simulation avec glissement supplémentaire »
   max_hold_s: 600               # durée maximale (10 min, le temps d'atteindre 3 x le stop) : fermeture même en perte
   # Compte (communs aux deux stratégies).
-  # Lot calculé : 0,25 % de l'equity perdus au stop (environ 0,04 lot ; plus gros quand le stop est court). Rejeu
-  # v3 : tient les 4 semaines (+175 €) alors que le lot fixe 0,1 atteint l'arrêt à -10 % au 3e jour. Pour revenir
-  # au lot fixe (choix de l'utilisateur du 29/09) : ajouter « fixed_volume: 0.1 » et mettre risk_per_trade_pct à 1.0
-  # (le risque MAXIMAL d'un trade, plafond dur 1 % : un trade qui risquerait plus est refusé).
-  risk_per_trade_pct: 0.25
+  # v4 : lot calculé, 0,1 % de l'equity perdus au stop (0,01 à 0,03 lot ; plus gros quand le stop est court ou que
+  # le compte grandit, sans plafond de lot autre que le risque). Avec 0,25 % et le sens libre, le rejeu atteint
+  # l'arrêt à -10 % dès le 5e jour. Pour le lot fixe (choix de l'utilisateur du 29/09) : ajouter
+  # « fixed_volume: 0.1 » et mettre risk_per_trade_pct à 1.0 (risque MAXIMAL d'un trade, plafond dur 1 %).
+  risk_per_trade_pct: 0.1
   max_open_positions: 20        # trades ouverts en même temps : le risque cumulé (2 %) limite avant
   max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
   max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
   min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s (base)
   daily_loss_pct: 2.0           # plus d'entrée pour la journée au-delà de -2 % (démo, latent compris ; CLAUDE.md §3.5)
   max_drawdown_pct: 10.0        # -10 % depuis le plus haut de l'expérience : arrêt total, relance manuelle
-  # « Toujours dans le bon sens » : trades seulement dans le sens du mouvement du jour (prix - ouverture du jour)
-  # quand il atteint 0,5 x l'ATR journalier (moyenne simple de 14 jours) ; aucun trade sinon. Idée du S7, seul
-  # avantage validé hors échantillon. Rejeu 4 semaines : +208 pips, PF 1,07, trop court pour être une preuve.
-  direction_filter: true
+  # Sens du jour (v3) : trades seulement dans le sens du mouvement du jour quand il atteint 0,5 x l'ATR journalier.
+  # Désactivé en v4 à la demande de l'utilisateur (« pas seulement des achats ou des ventes, en fonction du
+  # marché ») : le sens vient de la tendance M1 (EMA20 / EMA50) et de la cassure des 60 s, il change en quelques
+  # minutes. Sur 5 ans de M1 Axi, le sens du jour ne bat pas les coûts à l'échelle de quelques minutes (PF 0,74).
+  direction_filter: false
   direction_min_move_atr: 0.5
   min_free_margin_pct: 50       # marge libre après l'ordre >= 50 % de l'equity, sinon refus
   experiment_days: 10           # durée annoncée de la collecte (jours de cotation)
@@ -194,7 +195,8 @@ scalping:
     # fermé, le score de la variante est mis à jour (les trades récents pèsent plus), séparément pour les achats et
     # les ventes de chaque stratégie. Au signal suivant : la meilleure variante du moment, ou aucun trade si toutes
     # perdent. Rejeu sur 4 semaines : perd moins que sans apprentissage, mais perd (docs/STRATEGIES.md).
-    enabled: true
+    # Désactivé en v4 : avec le sens libre il refuse des trades sans améliorer le résultat (PF 0,90 contre 0,91).
+    enabled: false
     version: 2                    # v1 : objectifs 0,8 / 1,2 / 2 R
     by_side: true
     allow_invert: true

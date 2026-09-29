@@ -547,13 +547,13 @@ _V1_EXITS = [
     ("version: 2                    # v1", "version: 1                    # v1"),
     ("target_ratios: [2.0, 3.0, 4.0]", "target_ratios: [0.8, 1.2, 2.0]"),
     ("    enabled: false\n    version: 1\n    impulse_atr", "    enabled: true\n    version: 1\n    impulse_atr"),
-    ("  risk_per_trade_pct: 0.25\n", "  risk_per_trade_pct: 0.1\n"),
     ("  max_total_risk_pct: 2.0 ", "  max_total_risk_pct: 0.5 "),
     ("  daily_loss_pct: 2.0 ", "  daily_loss_pct: 1.0 "),
     ("    ceiling_total_risk_pct: 2.0 ", "    ceiling_total_risk_pct: 1.0 "),
     ("  max_open_positions: 20 ", "  max_open_positions: 5 "),
     ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
-    ("  direction_filter: true\n", "  direction_filter: false\n"),
+    ("  risk_per_trade_pct: 0.1\n", "  risk_per_trade_pct: 0.1\n"),
+    ("résultat (PF 0,90 contre 0,91).\n    enabled: false\n", "résultat (PF 0,90 contre 0,91).\n    enabled: true\n"),
 ]
 
 

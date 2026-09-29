@@ -393,6 +393,13 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   levée par l'utilisateur ; une par bougie de 5 s), lot calculé à 0,25 % (le lot fixe 0,1 atteignait l'arrêt au
   3e jour, 0,25 % tient les 4 semaines, +175 €) ; retour au lot fixe en une ligne. Affichage en pips ; stop fixe en
   pips testé (pire), gardé en option désactivée.
+  Puis « pas seulement des achats ou des ventes, en fonction du marché et de la réaction des bougies », positions
+  de quelques minutes, « une version fonctionnelle qui envoie des positions » : **v4** = sens libre (tendance M1 +
+  cassure des 60 s, change en quelques minutes), sans apprentissage, 0,1 % par trade (0,25 % atteignait l'arrêt au
+  5e jour). Banc d'essai sur 5 ans de M1 : aucun sens simple ne bat les coûts à quelques minutes (sens du jour PF
+  0,74, 0/5 années) ; le +175 € de la v3 était de la chance. Rejeu v4 : 78 trades par jour, PF 0,91, arrêt à −10 %
+  en 1 à 2 semaines, annoncé avant lancement. « Lecture du marché » (`scalping/market_read.py`) branchée, désactivée :
+  5 familles de lecture des bougies en recherche, règles fixées d'avance.
 
 ---
 

@@ -607,6 +607,44 @@ le bot la cherche, l'ordre est retrouvé dans l'historique des deals (même magi
 vrai résultat entre dans les bilans, la perte du jour et la cadence, au lieu d'être noté « échec ». Même
 correction dans le bot principal.
 
+### v4 : sens libre, qui change en quelques minutes (demande du 29/09/2026, soir)
+
+Demande de l'utilisateur : « pas seulement des achats ou des ventes, en fonction du marché et de la réaction des
+bougies », des positions tenues quelques minutes, « une version fonctionnelle qui envoie des positions ».
+
+Constat sur 5 ans de M1 Axi (2019-07 → 2023, banc d'essai commun : entrée à l'ouverture suivante, stop ATR M1
+borné à 2-6 $, objectif 3 x, sortie à 10 minutes) : le mouvement prévisible à quelques minutes est d'environ
+0,01 $ par once, le coût d'un aller-retour d'environ 0,19 $.
+
+| Sens | Mouvement brut à 15 min | Net après coût | PF (trades de 10 min) | Années positives |
+|---|---|---|---|---|
+| hasard | +0,001 $ | −0,196 $ | 0,65 | 0/5 |
+| sens du jour (v3) | +0,013 $ | −0,176 $ | 0,74 | 0/5 |
+| tendance EMA20/50 M1 | −0,006 $ | −0,202 $ | 0,65 | 0/5 |
+
+Le +175 € de la v3 sur les 4 semaines de ticks était donc très probablement de la chance. Rejeu des 4 semaines
+avec toutes les limites démo (−2 % par jour, arrêt à −10 %) :
+
+| Version | Trades par jour | Achats | Résultat | Arrêt total |
+|---|---|---|---|---|
+| v3 (sens du jour, 0,25 %) | 28 | 56 % | +175 € (−320 € avec 1 pip de glissement) | non (le 16/09 avec glissement) |
+| sens libre, 0,25 % | 15 | 9 % | −134 € | 04/09 |
+| sens libre, 0,1 % | 56 | 41 % | −263 € | 08/09 |
+| sens libre, 0,1 %, stop mini 15 pips | 44 | 27 % | −416 € | 07/09 |
+| **sens libre, 0,1 %, sans apprentissage (v4)** | **78** | **48 %** | **−357 €, PF 0,91** | **14/09 (09/09 avec glissement)** |
+
+Stop derrière la structure des 2 ou 5 dernières minutes au lieu de 30 s : moins de refus « stop trop proche »,
+mais pire (PF 0,86 et 0,80). Gardé à 30 s ; le détecteur garde désormais assez d'historique pour un stop plus
+ancien que la fenêtre de cassure (il était tronqué à 60 s).
+
+**v4 mise en démo** (choix de l'utilisateur : une version qui envoie des positions dans les deux sens) : sens libre
+(tendance M1 + cassure des 60 s, change en quelques minutes), sans apprentissage (il refusait des trades sans
+améliorer le résultat), 0,1 % par trade, 12 entrées par minute et 20 positions au plus, stop derrière la structure
+(20 à 60 pips), objectif 3 x, 10 minutes au plus, −2 % par jour, arrêt total à −10 %. **Perdante au rejeu** : elle
+envoie beaucoup de positions et atteint l'arrêt à −10 % en 1 à 2 semaines. La « lecture du marché »
+(`scalping/market_read.py`) est prête pour un modèle qui battrait les coûts ; recherche en cours (5 familles de
+lecture des bougies, testées ensemble sur 2019-2023, validation une seule fois).
+
 ### Historique des réglages
 
 - 29/09/2026 matin (cassure seule, avant versionnage) : 3 positions, 0,3 % de risque cumulé, 10 s entre deux
@@ -619,3 +657,5 @@ correction dans le bot principal.
 - 29/09/2026 fin de journée : « + cadence v1 » (cadence liée au bénéfice, 12 entrées par minute au plus, budget
   du jour), puis sorties v2 d'après les trades démo : stop d'au moins 2 $, objectif 3 x le stop, 10 minutes au
   plus, « + apprentissage v2 » (objectifs 2 / 3 / 4 R) ; impulsion-repli désactivée. Voir la section suivante.
+- 29/09/2026 nuit : v3 (sens du jour, lot calculé 0,25 %, 12 entrées par minute), puis **v4** (sens libre, sans
+  apprentissage, 0,1 % par trade) : voir « v4 » ci-dessus.
