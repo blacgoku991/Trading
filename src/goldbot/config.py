@@ -218,6 +218,13 @@ class SessionMomentumConfig(_Section):
 class ScalpingConfig(_Section):
     """Expérience de scalping (démo uniquement), séparée de la stratégie principale."""
 
+    strategy: Literal["breakout", "pullback"] = "breakout"
+    experiment_name: str = Field(default="scalp", pattern=r"^[a-z][a-z0-9_]{0,30}$")
+    max_entries_per_minute: int = Field(default=5, ge=1, le=5)
+    pullback_impulse_ratio: float = Field(default=2.0, ge=1)
+    pullback_min_fraction: float = Field(default=0.2, gt=0, lt=1)
+    pullback_max_fraction: float = Field(default=0.7, gt=0, lt=1)
+    pullback_expiry_s: int = Field(default=45, ge=10)
     magic: int = Field(gt=0, lt=2**63)
     candle_seconds: int = Field(ge=1, le=60)
     breakout_lookback_s: int = Field(ge=10)
@@ -245,6 +252,8 @@ class ScalpingConfig(_Section):
 
     @model_validator(mode="after")
     def _consistent(self) -> ScalpingConfig:
+        if self.pullback_min_fraction >= self.pullback_max_fraction:
+            raise ValueError("repli minimum doit être inférieur au maximum")
         if self.ema_fast >= self.ema_slow:
             raise ValueError("ema_fast doit être inférieur à ema_slow")
         if self.min_stop_points >= self.max_stop_points:

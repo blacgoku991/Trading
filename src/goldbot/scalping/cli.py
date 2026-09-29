@@ -28,8 +28,9 @@ from goldbot.execution.orders import OrderRejected, filling_candidates, select_f
 from goldbot.live.lock import InstanceLock
 from goldbot.monitoring.logging_setup import setup_logging
 from goldbot.scalping.backtest import Instrument, run_backtest, summary
-from goldbot.scalping.live import ScalpRunner
+from goldbot.scalping.live import DemoAccountChanged, ScalpRunner
 from goldbot.scalping.store import CLOSED, OPEN, VERIFY_PREFIX, ScalpStore, params_hash
+from goldbot.scalping.learning import SignalModel, strategy_signature
 
 log = logging.getLogger("goldbot.scalp")
 
@@ -56,9 +57,11 @@ def _resolve(root: Path, path: Path) -> Path:
     return path if path.is_absolute() else root / path
 
 
-def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Callable[[str], None]) -> ScalpStore:
+def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Callable[[str], None],
+                model_key: str = "none") -> ScalpStore:
     """Réglages figés pendant l'expérience : un changement exige --nouvelle-experience (l'ancienne est archivée)."""
-    current = params_hash(settings.scalping.model_dump())
+    current = params_hash({**settings.scalping.model_dump(), "model": model_key,
+                           "strategy_signature": strategy_signature(settings)})
     store = ScalpStore(path)
     saved = store.meta("params_hash")
     if saved is not None and saved != current and store.has_activity():
@@ -68,6 +71,9 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
                 "les réglages de l'expérience ont changé en cours de collecte. Remets-les comme avant, ou lance "
                 "une nouvelle expérience avec --nouvelle-experience (l'ancienne sera archivée)"
             )
+        if store.demo_trades(OPEN, "envoi"):
+            store.close()
+            raise Refused("positions encore ouvertes : terminer l'expérience avant d'archiver ses réglages")
         store.close()
         archive = path.with_name(f"{path.stem}_{datetime.now(UTC):%Y%m%dT%H%M%SZ}{path.suffix}")
         path.rename(archive)
@@ -76,6 +82,7 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
     if store.meta("params_hash") != current:
         store.set_meta("params_hash", current)
         store.set_meta("started_utc", datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        store.set_meta("strategy_signature", strategy_signature(settings))
     return store
 
 
@@ -198,6 +205,7 @@ def live_main(
     sleep: Callable[[float], None] = time.sleep,
     echo: Callable[[str], None] = print,
     max_steps: int | None = None,
+    default_config: Path | None = None,
 ) -> int:
     root = root or Path.cwd()
     parser = argparse.ArgumentParser(prog="run_scalp.py", description="Expérience de scalping sur compte DÉMO.")
@@ -208,11 +216,18 @@ def live_main(
     mode.add_argument("--simulation", action="store_true", help="tout est calculé, aucun ordre n'est envoyé")
     parser.add_argument("--bilan", action="store_true", help="affiche les deux bilans et s'arrête")
     parser.add_argument("--nouvelle-experience", action="store_true", help="archive l'expérience en cours")
-    parser.add_argument("--config", type=Path, default=root / "config" / "settings.yaml")
+    parser.add_argument("--config", type=Path, default=default_config or root / "config" / "settings.yaml")
     parser.add_argument("--env", type=Path, default=root / ".env")
+    parser.add_argument("--minutes", type=float, help="arrête les entrées et ferme les positions après cette durée")
+    parser.add_argument("--model", type=Path, help="JSON entraîné : affiche ses scores, sans filtrer par défaut")
+    parser.add_argument("--filter-model", action="store_true", help="applique le modèle admissible au filtre démo")
     args = parser.parse_args(argv)
     if args.bilan and args.verification:
         parser.error("--bilan ne se combine pas avec --verification")
+    if args.minutes is not None and (not 0 < args.minutes <= 1440):
+        parser.error("--minutes doit être compris entre 0 et 1440")
+    if args.filter_model and args.model is None:
+        parser.error("--filter-model nécessite --model")
     try:
         settings = load_settings(args.config)
         secrets = load_secrets(args.env)
@@ -239,7 +254,9 @@ def live_main(
         return EXIT_LOCKED
     broker = broker_factory(settings, secrets)
     supervisor = ConnectionSupervisor(broker, settings.mt5.reconnect, sleep=sleep)
-    store_path = root / "data" / ("scalp_simulation.sqlite" if args.simulation else "scalp.sqlite")
+    name = settings.scalping.experiment_name
+    store_path = root / "data" / (f"{name}_simulation.sqlite" if args.simulation else f"{name}.sqlite")
+    store = None
     say(f"=== Expérience de scalping - goldbot {__version__} - réglages expérimentaux, pas une stratégie rentable ===")
     try:
         try:
@@ -260,10 +277,20 @@ def live_main(
             if not broker.terminal().trade_allowed:
                 raise Refused("bouton Algo Trading désactivé dans MT5 : active-le (il doit être vert)")
         spec, _ = resolve_gold_symbol(broker, settings.symbol)
+        model = None
+        if args.model:
+            try:
+                model = SignalModel.load(_resolve(root, args.model), settings)
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise Refused(f"modèle inutilisable : {exc}") from exc
+            if args.filter_model and not model.approved:
+                raise Refused("ce modèle n'a pas amélioré le test réservé : observation seule possible")
         if args.bilan or args.verification:
             store = ScalpStore(store_path)  # lecture des bilans / test technique : pas de contrôle des réglages
         else:
-            store = _open_store(store_path, settings, new_experiment=args.nouvelle_experience, say=say)
+            model_key = f"{model.digest}:{args.filter_model}" if model else "none"
+            store = _open_store(store_path, settings, new_experiment=args.nouvelle_experience, say=say,
+                                model_key=model_key)
             if store.meta("start_equity") is None:
                 store.set_meta("start_equity", str(account.equity))
         if not args.bilan:
@@ -271,7 +298,10 @@ def live_main(
             if interrupted:
                 say(f"{interrupted} trade(s) simulé(s) interrompu(s) par l'arrêt précédent (exclus du bilan 2).")
         runner = ScalpRunner(broker, supervisor, store, settings=settings, spec=spec, local_only=args.simulation,
-                             now_utc=now_utc, say=say, sleep=sleep)  # fmt: skip
+                             now_utc=now_utc, say=say, sleep=sleep, model=model,
+                             filter_model=args.filter_model)  # fmt: skip
+        if model and model.payload["data_through_ms"] > runner.server_now_ms():
+            raise Refused("modèle contenant des observations postérieures à l'horloge du terminal")
         if args.bilan:
             for line in runner.reports():
                 echo(line)
@@ -279,6 +309,9 @@ def live_main(
         if args.verification:
             return EXIT_OK if _verify(runner, store_path, settings, say) else EXIT_FAILED
         cfg = settings.scalping
+        say(f"Stratégie {cfg.strategy} ; plafond {cfg.max_entries_per_minute} entrées / 60 s (pas un quota).")
+        say("Apprentissage : " + ("filtre figé actif" if args.filter_model else
+            "scores du modèle en observation" if model else "collecte des indicateurs et résultats, aucun modèle entraîné chargé"))
         day = store.trading_days()
         say(
             f"Compte DÉMO, equity {account.equity:.2f} {account.currency}. Risque {cfg.risk_per_trade_pct:g} % "
@@ -289,14 +322,26 @@ def live_main(
         )
         if not cfg.cadence_verified and not args.simulation:
             say(
-                f"Cadence d'envoi Axi non vérifiée : au plus un ordre toutes les "
-                f"{cfg.broker_min_seconds_between_orders:g} s, les autres signaux sont simulés localement."
+                f"Plafond d'envoi configuré : une entrée toutes les {cfg.broker_min_seconds_between_orders:g} s. "
+                "Ce réglage ne constitue pas une confirmation des conditions Axi."
             )
         say("Ctrl+C pour arrêter (les positions de l'expérience sont alors fermées). Bilans toutes les 15 minutes.")
         steps = 0
         last_report = last_status = pd.Timestamp(now_utc())
+        deadline = last_status + pd.Timedelta(minutes=args.minutes) if args.minutes is not None else None
         try:
             while max_steps is None or steps < max_steps:
+                if deadline is not None and pd.Timestamp(now_utc()) >= deadline:
+                    say("Durée de l'essai terminée : fermeture des positions de l'expérience...")
+                    try:
+                        left = runner.close_all("fin de l'essai")
+                    except BrokerError as exc:
+                        say(f"Fermeture non confirmée : {exc}. Relance le bot pour reprendre les positions.")
+                        return EXIT_FAILED
+                    if left:
+                        say(f"{left} position(s) encore ouverte(s), stop serveur conservé ; relance pour les gérer.")
+                        return EXIT_FAILED
+                    break
                 try:
                     runner.step()
                     now = pd.Timestamp(now_utc())
@@ -327,13 +372,18 @@ def live_main(
         except BrokerError as exc:
             echo(f"Bilans indisponibles ({exc}) : relance avec --bilan.")
         return EXIT_OK
-    except (Refused, SymbolSelectionError) as exc:
+    except (Refused, DemoAccountChanged, SymbolSelectionError) as exc:
         echo(f"REFUS : {exc}")
         return EXIT_REFUSED
     except KeyboardInterrupt:
         echo("Arrêt demandé : les positions ouvertes gardent leur stop sur le serveur ; relance pour leur sortie.")
         return EXIT_OK
     finally:
+        if store is not None:
+            try:
+                store.close()
+            except Exception:
+                pass  # --verification ferme déjà l'ancien store avant de le rouvrir
         broker.shutdown()
         lock.release()
 

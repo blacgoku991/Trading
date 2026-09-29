@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS sims (
     closed_ms INTEGER,
     state TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS features (
+    tag TEXT PRIMARY KEY,
+    values_json TEXT NOT NULL,
+    model_score REAL,
+    model_hash TEXT
+);
 """
 
 
@@ -209,6 +215,40 @@ class ScalpStore:
     def status_counts(self) -> dict[str, int]:
         query = f"SELECT status, COUNT(*) FROM signals WHERE {_EXPERIMENT} GROUP BY status"
         return dict(self._db.execute(query).fetchall())
+
+    def record_features(self, tag: str, values: list[float], score: float | None, model_hash: str | None) -> None:
+        with self._db:
+            self._db.execute("INSERT OR IGNORE INTO features VALUES (?, ?, ?, ?)",
+                             (tag, json.dumps(values, allow_nan=False), score, model_hash))
+
+    def learning_rows(self) -> list[dict]:
+        """Résultats simulés stressés, clôturés ; jamais mélangés aux exécutions démo.
+
+        Le résultat en R utilise la même distance au stop que les features d'entrée.
+        Les trades interrompus ou encore ouverts sont exclus et doivent être signalés.
+        """
+        from goldbot.scalping.learning import FEATURES
+
+        rows = self._db.execute(
+            "SELECT s.tag, m.time_ms, m.closed_ms, m.entry, m.exit_price, m.side, s.entry, s.sl, f.values_json "
+            "FROM signals s JOIN sims m USING(tag) JOIN features f USING(tag) WHERE m.state = 'fermé'"
+        ).fetchall()
+        fee = float(self.meta("fee_per_oz") or "0")
+        result = []
+        for tag, opened, closed, entry, exit_price, side, requested_entry, sl, encoded in rows:
+            risk = abs(requested_entry - sl)
+            if risk > 0:
+                result.append({"tag": tag, "open_ms": opened, "exit_ms": closed,
+                               "net_r": ((exit_price - entry) * side - fee) / risk,
+                               **dict(zip((f"f_{x}" for x in FEATURES), json.loads(encoded), strict=True))})
+        return result
+
+    def latest_entry_ms(self) -> int:
+        row = self._db.execute("SELECT MAX(time_ms) FROM sims").fetchone()
+        return int(row[0]) if row[0] is not None else -(2**62)
+
+    def recent_entry_count(self, after_ms: int) -> int:
+        return self._db.execute("SELECT COUNT(*) FROM sims WHERE time_ms > ?", (after_ms,)).fetchone()[0]
 
 
 def utc_now_text() -> str:

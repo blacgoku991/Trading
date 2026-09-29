@@ -19,7 +19,9 @@ from goldbot.config import ScalpingConfig
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.quality import server_index
 from goldbot.risk.sizing import position_size
-from goldbot.scalping.engine import BreakoutDetector, CandleBuilder, SimTrade, plan_trade
+from goldbot.scalping.engine import CandleBuilder, SimTrade, plan_trade
+from goldbot.scalping.pullback import make_detector
+from goldbot.scalping.learning import FEATURES, signal_features
 
 _EPOCH = datetime(1970, 1, 1)
 
@@ -87,7 +89,7 @@ def run_backtest(
     spacing_ms = 1000 * (config.min_seconds_between_entries if min_seconds_between_entries is None
                          else min_seconds_between_entries)  # fmt: skip
     size_ms = config.candle_seconds * 1000
-    builder, detector = CandleBuilder(config.candle_seconds), BreakoutDetector(config)
+    builder, detector = CandleBuilder(config.candle_seconds), make_detector(config)
     recent: deque = deque()
     equity = low = initial_equity
     open_trades: list[tuple[SimTrade, float]] = []  # (trade, risque en USD)
@@ -97,9 +99,17 @@ def run_backtest(
     signals = 0
     last_entry = -(10**18)
     day, day_pnl = None, 0.0
+    day_start_equity = initial_equity
+    feature_rows: dict[str, list[float]] = {}
+    entry_times: deque[int] = deque()
 
     for i in range(len(times)):
         now, bid, ask = int(times[i]), float(bids[i]), float(asks[i])
+        if bid <= 0 or ask < bid or not np.isfinite([bid, ask]).all():
+            continue
+        today = now // 86_400_000
+        if today != day:
+            day, day_pnl, day_start_equity = today, 0.0, equity
         # 1. Positions ouvertes : stop, objectif, durée maximale.
         if open_trades:
             still = []
@@ -123,6 +133,8 @@ def run_backtest(
                             "lots": trade.volume,
                             "risk": risk,
                             "pnl": pnl,
+                            "net_r": trade.move / abs(trade.entry - trade.side * slip - trade.sl),
+                            **dict(zip((f"f_{name}" for name in FEATURES), feature_rows.pop(trade.tag), strict=True)),
                         }
                     )
                 else:
@@ -139,20 +151,23 @@ def run_backtest(
             if setup is None:
                 continue
             signals += 1
-            today = now // 86_400_000
-            if today != day:
-                day, day_pnl = today, 0.0
             if now > candle.start_ms + 2 * size_ms:
                 refusals["signal périmé"] += 1
                 continue
             if not schedule.is_open(_EPOCH + timedelta(milliseconds=now + config.max_hold_s * 1000)):
                 refusals["le marché ferme avant la durée max"] += 1
                 continue
-            if day_pnl <= -config.daily_loss_pct / 100 * equity:
+            floating = sum(t.move_at(bid, ask) * t.volume * instrument.contract_size for t, _ in open_trades)
+            if day_pnl + floating <= -config.daily_loss_pct / 100 * day_start_equity:
                 refusals["perte du jour atteinte"] += 1
                 continue
             if now - last_entry < spacing_ms:
                 refusals["délai entre deux entrées"] += 1
+                continue
+            while entry_times and entry_times[0] <= now - 60_000:
+                entry_times.popleft()
+            if len(entry_times) >= config.max_entries_per_minute:
+                refusals["plafond d'entrées sur 60 secondes"] += 1
                 continue
             if len(open_trades) >= config.max_open_positions:
                 refusals["positions ouvertes au maximum"] += 1
@@ -190,9 +205,25 @@ def run_backtest(
                 continue
             trade = SimTrade.open(setup.tag, plan, bid, ask, now, config.max_hold_s, slip, volume=lots, fee=fee)
             open_trades.append((trade, risk))
+            feature_rows[trade.tag] = signal_features(setup, list(recent), plan)
+            entry_times.append(now)
             last_entry = now
             per_minute[now // 60_000] += 1
 
+    # La fin du fichier n'est pas une sortie gagnante implicite : liquidation au dernier prix disponible.
+    if open_trades:
+        for trade, risk in open_trades:
+            exit_price = bid - slip if trade.side > 0 else ask + slip
+            trade._close(now, exit_price, "fin des données")
+            pnl = trade.move * trade.volume * instrument.contract_size
+            equity += pnl
+            low = min(low, equity)
+            closed.append({"tag": trade.tag, "side": trade.side, "open_ms": trade.open_ms,
+                           "exit_ms": now, "entry": trade.entry, "sl": trade.sl, "tp": trade.tp,
+                           "exit": exit_price, "reason": trade.reason, "lots": trade.volume,
+                           "risk": risk, "pnl": pnl,
+                           "net_r": trade.move / abs(trade.entry - trade.side * slip - trade.sl),
+                           **dict(zip((f"f_{name}" for name in FEATURES), feature_rows.pop(trade.tag), strict=True))})
     frame = pd.DataFrame(closed)
     return ScalpResult(frame, refusals, signals, initial_equity, equity, low, Counter(per_minute.values()))
 

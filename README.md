@@ -9,6 +9,11 @@ La recherche préalable est dans [`docs/RESEARCH.md`](docs/RESEARCH.md).
 À part : une **expérience de scalping** (bougies de 5 s), compte démo uniquement, pour observer de vraies
 exécutions (section 9). Elle est perdante sur le rejeu des ticks Axi : ce n'est pas une stratégie rentable.
 
+**Nouveau candidat démo avec apprentissage :** `scripts/run_learning_demo.py --minutes 20`.
+Impulsion / repli / reprise, jusqu'à 5 entrées par minute sur signaux distincts, clôture automatique
+en fin d'essai, collecte des indicateurs et entraînement statistique hors ligne. Rentabilité **non établie**,
+modèle non fourni comme déjà entraîné. [Commandes Windows et méthode](docs/LEARNING_DEMO.md).
+
 ## Principes de sécurité
 
 - **Démo d'abord.** L'ordre de test refuse tout compte qui n'est pas un compte démo. Plus tard, le bot refusera

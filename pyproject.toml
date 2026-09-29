@@ -38,6 +38,8 @@ dependencies = [
 [project.optional-dependencies]
 # Tests unitaires.
 dev = ["pytest>=9.1,<10"]
+# Entraînement statistique hors ligne ; aucune dépendance ML dans la boucle MT5.
+ml = ["scikit-learn>=1.5,<2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -131,7 +131,7 @@ def test_second_signal_within_the_unverified_cadence_is_only_simulated(world):
     _second_breakout(broker, clock, quote, live)  # 37 s après le premier ordre : cadence de 60 s non écoulée
     assert live.store.status_counts() == {OPEN: 1, NOT_SENT: 1}
     assert len(broker.positions()) == 1  # un seul ordre envoyé au broker
-    assert any("cadence d'envoi Axi non vérifiée" in line for line in lines)
+    assert any("plafond d'envoi configuré" in line for line in lines)
 
 
 def test_position_limit_also_counts_the_simulated_trades(world):
@@ -388,3 +388,118 @@ def test_ctrl_c_closes_the_experiment_positions_then_prints_the_reports(tmp_path
     (trade,) = [r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL and "position" not in r]
     row = store.signal(trade["comment"])
     assert row["status"] == CLOSED and row["exit_reason"] == "arrêt du bot"
+
+
+def test_demo_account_switch_stops_without_touching_the_new_account(world):
+    from goldbot.scalping.live import DemoAccountChanged
+    broker, clock, quote, runner, _ = world
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    sent = len(broker.sent)
+    broker.account_state = replace(broker.account_state, trade_mode=C.ACCOUNT_TRADE_MODE_REAL)
+    with pytest.raises(DemoAccountChanged):
+        live.step()
+    with pytest.raises(DemoAccountChanged):
+        live.close_all("test")
+    assert len(broker.sent) == sent
+
+
+def test_simulation_never_closes_existing_broker_positions(world, tmp_path):
+    broker, clock, quote, runner, _ = world
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    sent = len(broker.sent)
+    simulated = runner(local_only=True, store=ScalpStore(tmp_path / "separate_sim.sqlite"))
+    simulated.step()
+    assert simulated.close_all("test") == 0
+    assert len(broker.sent) == sent and len(broker.positions()) == 1
+
+
+def test_restart_preserves_daily_reference_and_recent_entry_cadence(world):
+    broker, clock, quote, runner, _ = world
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    broker.account_state = replace(broker.account_state, equity=9900)
+    restarted = runner()
+    restarted.step()
+    assert restarted.day_start_equity == 10000
+    assert restarted.last_entry_ms == live.last_entry_ms
+    assert restarted.last_broker_order_ms == live.last_broker_order_ms
+    assert restarted.store.recent_entry_count(clock.server_ms - 60000) == 1
+
+
+def test_five_entries_cap_uses_a_rolling_minute_even_after_restart(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    live.step()
+    for k in range(5):
+        # Cinq anciens trades déjà clos : pas de blocage par le nombre de positions ouvertes.
+        live.store.record_sim(f"previous-{k}", clock.server_ms - 20000 - k * 1000, 1, 4000, 3999, 4002, .01, True)
+        live.store.close_sim(f"previous-{k}", 4001, "objectif", 1, clock.server_ms - 1000)
+    restarted = runner()
+    restarted.step()
+    quote(4000.50)
+    _signal_at(restarted, clock.server_ms, candle_end_ms=clock.server_ms - 1000)
+    assert not broker.sent
+    assert any("plafond d'entrées sur 60 secondes" in line for line in lines)
+
+
+def test_timed_demo_trial_closes_positions_and_shadow_and_records_training_features(tmp_path, env_file, world):
+    broker, clock, quote, *_ = world
+    calls = 0
+    def sleep(seconds):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            broker.history_ticks = range_then_breakout(BASE_MS)
+            clock.server_ms = BASE_MS + 16_500
+            quote(4000.50)
+        else:
+            clock.advance(seconds)
+            quote(4000.50)
+    lines = []
+    code = live_main(["--config", str(CONFIG_PATH), "--env", str(env_file), "--minutes", "0.4"],
+                    root=tmp_path / "project", broker_factory=lambda *_: broker,
+                    now_utc=clock, sleep=sleep, echo=lines.append)
+    assert code == EXIT_OK, lines
+    assert any("entrée démo" in line for line in lines)
+    assert any("Durée de l'essai terminée" in line for line in lines)
+    broker.connect()
+    assert not broker.positions()
+    store = ScalpStore(tmp_path / "project" / "data" / "scalp.sqlite")
+    assert not store.open_sims()
+    assert len(store.learning_rows()) == 1
+
+
+def test_pullback_strategy_opens_and_closes_on_the_demo_runner(world):
+    from goldbot.scalping.pullback import PullbackDetector
+    from tests.test_scalping_learning import sequence
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    live.cfg = live.cfg.model_copy(update={"strategy": "pullback"})
+    live.detector = PullbackDetector(live.cfg)
+    live.trend, live.trading_from_ms = 1, BASE_MS
+    live._new_day(BASE_MS)
+    for c in sequence():
+        c = replace(c, start_ms=BASE_MS + c.start_ms)
+        clock.server_ms = c.start_ms + 5500
+        quote(c.close)
+        live._on_candle(c, clock.server_ms)
+    assert len(broker.positions()) == 1
+    assert broker.positions()[0].comment.startswith("PB-")
+    assert live.close_all("fin de l'essai") == 0
+    assert any("sortie PB-" in line for line in lines)
+
+
+@pytest.mark.parametrize("filtering", [False, True])
+def test_model_observation_does_not_filter_but_active_filter_refuses_a_low_score(world, settings, filtering):
+    from goldbot.scalping.learning import FEATURES, SignalModel
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    live.model = SignalModel({"eligible_for_demo_filter": True, "mean": [0] * len(FEATURES),
+        "scale": [1] * len(FEATURES), "coefficients": [0] * len(FEATURES), "intercept": -10,
+        "calibration_slope": 1, "calibration_intercept": 0, "threshold": .6})
+    live.filter_model = filtering
+    _breakout(broker, clock, quote, live)
+    assert len(broker.positions()) == (0 if filtering else 1)
+    assert any("score statistique" in line for line in lines)

@@ -35,7 +35,6 @@ from goldbot.execution.orders import (
 from goldbot.risk.sizing import position_size
 from goldbot.scalping.engine import (
     LONG,
-    BreakoutDetector,
     Candle,
     CandleBuilder,
     Plan,
@@ -45,6 +44,8 @@ from goldbot.scalping.engine import (
     plan_trade,
 )
 from goldbot.scalping.store import CLOSED, FAILED, NOT_SENT, OPEN, REFUSED, SENDING, DemoTrade, ScalpStore
+from goldbot.scalping.pullback import make_detector
+from goldbot.scalping.learning import SignalModel, signal_features
 
 log = logging.getLogger("goldbot.scalp")
 _EPOCH = datetime(1970, 1, 1)
@@ -61,6 +62,10 @@ _DEAL_REASONS = {
 }
 
 
+class DemoAccountChanged(Exception):
+    """Le compte / type de compte a changé pendant l'exécution : arrêt sans aucun ordre."""
+
+
 class ScalpRunner:
     def __init__(
         self,
@@ -74,6 +79,8 @@ class ScalpRunner:
         now_utc: Callable[[], datetime],
         say: Callable[[str], None],
         sleep: Callable[[float], None] = time.sleep,
+        model: SignalModel | None = None,
+        filter_model: bool = False,
     ) -> None:
         self.broker = broker
         self.supervisor = supervisor
@@ -85,11 +92,15 @@ class ScalpRunner:
         self.now_utc = now_utc
         self.say = say
         self.sleep = sleep
+        self.model = model
+        self.filter_model = filter_model
+        if filter_model and (model is None or not model.approved):
+            raise ValueError("modèle non admissible au filtre démo")
         self.rule = ServerTimeRule.from_config(settings.server_time)
         self.schedule = MarketSchedule.from_config(settings.market_hours)
         self.zone = settings.bot.display_timezone
         self.builder = CandleBuilder(self.cfg.candle_seconds)
-        self.detector = BreakoutDetector(self.cfg)
+        self.detector = make_detector(self.cfg)
         self.recent: deque = deque()
         self.cursor_ms: int | None = None
         self._at_cursor: set[tuple[int, float, float]] = set()
@@ -97,11 +108,12 @@ class ScalpRunner:
         self.trend = 0
         self._trend_minute: int | None = None
         self.shadow: dict[str, tuple[SimTrade, float, bool]] = {}  # tag -> (trade simulé, risque, envoyé ?)
-        self.last_entry_ms = -(2**62)
-        self.last_broker_order_ms = -(2**62)
+        self.last_entry_ms = store.latest_entry_ms()
+        self.last_broker_order_ms = int(store.meta("last_broker_order_ms") or -(2**62))
         self.day: int | None = None
         self.day_start_ms = 0
         account = broker.account()
+        self.account_identity = (account.login, account.server)
         self.currency = account.currency
         self.day_start_equity = account.equity
         self._close_attempts: dict[int, int] = {}
@@ -114,6 +126,7 @@ class ScalpRunner:
         commission = settings.backtest.commission_per_lot_side
         self.fee_per_oz = 2 * commission / spec.trade_contract_size
         self.exit_commission_per_lot = commission * self.value_per_dollar_oz
+        self.store.set_meta("fee_per_oz", str(self.fee_per_oz))
 
     # --- affichage ----------------------------------------------------------------------------
 
@@ -134,6 +147,7 @@ class ScalpRunner:
 
     def step(self) -> None:
         self.supervisor.ensure_connected()
+        self._assert_demo_account()
         now_ms = self.server_now_ms()
         self._new_day(now_ms)
         self._refresh_trend(now_ms)
@@ -153,7 +167,20 @@ class ScalpRunner:
         day = now_ms // 86_400_000
         if day != self.day:
             self.day, self.day_start_ms = day, day * 86_400_000
-            self.day_start_equity = self.broker.account().equity
+            stored_day = self.store.meta("risk_day")
+            if stored_day == str(day):
+                self.day_start_equity = float(self.store.meta("day_start_equity"))
+            else:
+                self.day_start_equity = self.broker.account().equity
+                self.store.set_meta("risk_day", str(day))
+                self.store.set_meta("day_start_equity", str(self.day_start_equity))
+
+    def _assert_demo_account(self) -> None:
+        account = self.broker.account()
+        if (account.trade_mode != C.ACCOUNT_TRADE_MODE_DEMO
+                or account.margin_mode != C.ACCOUNT_MARGIN_MODE_RETAIL_HEDGING
+                or (account.login, account.server) != self.account_identity):
+            raise DemoAccountChanged("compte changé ou non démo : arrêt immédiat, aucun nouvel ordre")
 
     def _refresh_trend(self, now_ms: int) -> None:
         minute = now_ms // 60_000
@@ -171,7 +198,7 @@ class ScalpRunner:
         fresh = []
         for time_ms, bid, ask in zip(raw["time_msc"].tolist(), raw["bid"].tolist(), raw["ask"].tolist(), strict=True):
             key = (time_ms, bid, ask)
-            if bid <= 0 or ask <= 0 or (self.cursor_ms is not None and time_ms < self.cursor_ms):
+            if bid <= 0 or ask < bid or (self.cursor_ms is not None and time_ms < self.cursor_ms):
                 continue
             if time_ms == self.cursor_ms and key in self._at_cursor:
                 continue
@@ -207,7 +234,7 @@ class ScalpRunner:
         side_text = "ACHAT" if setup.side == LONG else "VENTE"
         trend_text = "haussière" if self.trend > 0 else "baissière"
         self.say(
-            f"{self._clock(now_ms)} signal {side_text} : cassure de {setup.level:.2f} confirmée "
+            f"{self._clock(now_ms)} signal {side_text} ({cfg.strategy}) : niveau {setup.level:.2f} confirmé "
             f"(tendance M1 {trend_text}), spread {spread:.2f} $"
         )
         age_ms = now_ms - (setup.candle.start_ms + self.builder.size_ms)
@@ -216,6 +243,9 @@ class ScalpRunner:
             return
         if not self._is_open(now_ms + cfg.max_hold_s * 1000):
             self._refuse(setup, spread, f"le marché ferme avant la durée max ({cfg.max_hold_s} s)")
+            return
+        if now_ms - tick.time_msc > max(5000, cfg.candle_seconds * 1000) or tick.time_msc > now_ms + 2000:
+            self._refuse(setup, spread, "cotation périmée ou horloge désynchronisée")
             return
         plan = plan_trade(
             setup,
@@ -232,6 +262,14 @@ class ScalpRunner:
         if isinstance(plan, str):
             self._refuse(setup, spread, plan)
             return
+        features = signal_features(setup, list(self.recent), plan)
+        score = float(self.model.probability(features)) if self.model else None
+        self.store.record_features(setup.tag, features, score, self.model.digest if self.model else None)
+        if score is not None:
+            self.say(f"   score statistique {score:.0%} (estimation, pas une certitude)")
+            if self.filter_model and score < self.model.payload["threshold"]:
+                self._refuse(setup, spread, "score inférieur au seuil du modèle figé")
+                return
         order_type = C.ORDER_TYPE_BUY if setup.side == LONG else C.ORDER_TYPE_SELL
         worst = plan.sl - setup.side * cfg.expected_slippage_points * spec.point
         loss_per_lot = -self.broker.calc_profit(order_type, spec.name, 1.0, plan.entry, worst)
@@ -272,6 +310,9 @@ class ScalpRunner:
         if now_ms - self.last_entry_ms < cfg.min_seconds_between_entries * 1000:
             self._refuse(setup, spread, f"moins de {cfg.min_seconds_between_entries:g} s depuis la dernière entrée")
             return
+        if self.store.recent_entry_count(now_ms - 60_000) >= cfg.max_entries_per_minute:
+            self._refuse(setup, spread, "plafond d'entrées sur 60 secondes atteint")
+            return
         self.last_entry_ms = now_ms
         details = (
             f"{volume:g} lot à {plan.entry:.2f} | spread {plan.spread:.2f} | stop {plan.sl:.2f} "
@@ -285,7 +326,7 @@ class ScalpRunner:
         fields = dict(level=setup.level, spread=plan.spread, volume=volume, entry=plan.entry, sl=plan.sl, tp=plan.tp,
                       risk=risk)  # fmt: skip
         if not sent:
-            why = "mode --simulation" if self.local_only else "cadence d'envoi Axi non vérifiée"
+            why = "mode --simulation" if self.local_only else "plafond d'envoi configuré"
             self.store.record(setup.tag, setup.candle.start_ms, setup.side, NOT_SENT, detail=why, **fields)
             self.say(f"   non envoyé au broker ({why}), simulé seulement : {details}")
             return
@@ -309,6 +350,7 @@ class ScalpRunner:
 
     def _send(self, setup: Setup, plan: Plan, order_type: int, volume: float, now_ms: int,
               fields: dict[str, object], details: str) -> None:  # fmt: skip
+        self._assert_demo_account()
         spec = self.spec
         request = {
             "action": C.TRADE_ACTION_DEAL,
@@ -325,6 +367,7 @@ class ScalpRunner:
         if not self.store.record(setup.tag, setup.candle.start_ms, setup.side, SENDING, **fields):
             return
         self.last_broker_order_ms = now_ms
+        self.store.set_meta("last_broker_order_ms", str(now_ms))
         try:
             filling, _ = select_filling(self.broker, {**request, "price": plan.entry}, spec.filling_mode)
             candidates = filling_candidates(spec.filling_mode)
@@ -363,6 +406,9 @@ class ScalpRunner:
     # --- positions --------------------------------------------------------------------------------
 
     def _manage_positions(self, now_ms: int) -> None:
+        if self.local_only:
+            return  # --simulation n'envoie jamais d'ordre, même si le même magic existe sur le compte
+        self._assert_demo_account()
         mine = {p.ticket: p for p in self.broker.positions(self.spec.name) if p.magic == self.cfg.magic}
         for trade in self.store.demo_trades(SENDING):
             match = next((p for p in mine.values() if p.comment == trade.tag), None)
@@ -391,6 +437,7 @@ class ScalpRunner:
 
     def _close(self, position: Position, trade: DemoTrade | None, now_ms: int, reason: str) -> None:
         """Clôture au marché ; la sortie est enregistrée au passage suivant, une fois la position disparue."""
+        self._assert_demo_account()
         if not self._is_open(now_ms):
             return  # marché fermé : le stop serveur reste en place, nouvel essai à la réouverture
         last = self._close_attempts.get(position.ticket)
@@ -431,6 +478,7 @@ class ScalpRunner:
             self.store.update(trade.tag, est_pnl=estimate, exit_reason=reason)
 
     def _restore_stop(self, trade: DemoTrade, position: Position, now_ms: int) -> None:
+        self._assert_demo_account()
         last = self._stop_attempts.get(position.ticket)
         if not self._is_open(now_ms) or (last is not None and now_ms - last < CLOSE_RETRY_MS):
             return  # marché fermé ou essai récent
@@ -480,6 +528,16 @@ class ScalpRunner:
     def close_all(self, reason: str) -> int:
         """Ferme les positions de l'expérience (arrêt du bot) ; renvoie le nombre de positions encore ouvertes."""
         now_ms = self.server_now_ms()
+        tick = self.broker.tick(self.spec.name)
+        for tag, (trade, _, _) in list(self.shadow.items()):
+            price = tick.bid - trade.slip if trade.side > 0 else tick.ask + trade.slip
+            trade._close(now_ms, price, reason)
+            pnl = trade.move * trade.volume * self.spec.trade_contract_size * self.value_per_dollar_oz
+            self.store.close_sim(tag, price, reason, pnl, now_ms)
+            del self.shadow[tag]
+        if self.local_only:
+            return 0
+        self._assert_demo_account()
         trades = {t.position: t for t in self.store.demo_trades(OPEN)}
         for position in [p for p in self.broker.positions(self.spec.name) if p.magic == self.cfg.magic]:
             self._close_attempts.pop(position.ticket, None)

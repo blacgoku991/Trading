@@ -1,0 +1,174 @@
+# Profil expérimental impulsion / repli / reprise, compte démo obligatoire.
+# Configuration du bot XAUUSD. Aucun secret ici : ils sont dans .env.
+# « Heure serveur » = heure du serveur MT5 d'Axi (voir server_time).
+
+bot:
+  # Magic number unique : le bot ne touche jamais une position ou un ordre sans ce magic.
+  magic: 20260928
+  # Fuseau d'affichage (console, rapports). Stockage interne en UTC.
+  display_timezone: Europe/Paris
+
+mt5:
+  # Délai d'établissement de la connexion, en ms (défaut officiel : 60000).
+  timeout_ms: 60000
+  # true seulement si le terminal est lancé avec /portable (check_connection.py le détecte).
+  portable: false
+  # Reconnexion : attente doublée à chaque échec (1 s, 2 s, 4 s…), plafonnée.
+  reconnect:
+    base_delay_s: 1.0
+    max_delay_s: 60.0
+    max_attempts: 8
+
+symbol:
+  # "auto" : détection parmi les symboles trouvés par search_group.
+  # Sinon, nom exact du symbole (ex. XAUUSD.pro).
+  name: auto
+  search_group: "*XAU*,*GOLD*"
+
+server_time:
+  # Axi : GMT+2 quand New York est en heure d'hiver, GMT+3 en heure d'été
+  # => heure serveur = heure de New York + 7 h (docs/RESEARCH.md §1.12).
+  reference_timezone: America/New_York
+  offset_hours: 7
+
+market_hours:
+  # Horaires Axi des métaux, en heure serveur (docs/RESEARCH.md §2.5). Annoncés : reprise à 01:01 ;
+  # l'historique Axi 2019-2026 montre une première barre chaque jour à 01:00 : on retient 01:00.
+  week_open: "01:00"          # lundi
+  week_close: "23:58"         # vendredi
+  daily_break_start: "23:59"
+  daily_break_end: "01:00"
+  # Jours fermés (dates serveur AAAA-MM-JJ), d'après le calendrier Axi.
+  closed_dates: []
+
+feed:
+  # Pendant les heures de cotation, un tick plus vieux que ce seuil = flux figé.
+  stale_after_s: 60
+  # Tolérance après chaque ouverture (lundi et fin de la pause quotidienne).
+  grace_after_open_s: 300
+
+risk:
+  # Défauts du CLAUDE.md §3 (ajustables). Plafond dur : 1 % par trade.
+  risk_per_trade_pct: 0.5
+  max_daily_loss_pct: 2.0
+  max_drawdown_pct: 10.0
+  max_open_positions: 2
+  max_trades_per_day: 4
+  max_consecutive_losses: 3
+
+test_order:
+  # check_connection.py --test-order (compte démo uniquement).
+  volume: 0.01
+  # Distance du SL et du TP, en prix (USD par once). 0,01 lot = 1 oz => 5 USD de risque.
+  stop_distance: 5.0
+  deviation_points: 20
+
+paths:
+  logs: logs
+  reports: reports
+
+export:
+  # scripts/export_history.py (Windows) : fichiers à m'envoyer ensuite.
+  directory: data/export
+  # Barres M1 : on remonte mois par mois jusqu'à cette date au plus loin (AAAA-MM-JJ, heure serveur).
+  bars_since: "2000-01-01"
+  # Ticks : nombre de jours récents exportés (environ 1 Mo par jour de cotation).
+  tick_days: 30
+
+backtest:
+  # scripts/run_backtest.py. Capital en USD (devise de cotation) : 5 000 € ≈ 5 700 $.
+  initial_equity: 5700
+  # Les 12 derniers mois sont mis de côté pour la validation finale (utilisés une seule fois).
+  out_of_sample_start: "2025-10-01"
+  # Spread des barres = spread minimal de la minute (docs/RESEARCH.md annexe E) :
+  # plancher à 15 points (spreads nuls en 2019) et glissement de 5 points à chaque exécution défavorable.
+  spread_multiplier: 1.0
+  min_spread_points: 15
+  slippage_points: 5
+  # Compte Standard : aucune commission (mesuré en Phase 1).
+  commission_per_lot_side: 0.0
+
+strategies:
+  asian_breakout:
+    # S1 : cassure du range asiatique, heures de Londres.
+    range_start: "00:00"
+    range_end: "07:00"
+    entry_end: "11:00"
+    exit_time: "20:00"
+    # Paramètres libres (docs/STRATEGIES.md) :
+    buffer_atr: 0.05        # marge au-delà du range, en fraction de l'ATR journalier
+    tp_r: 1.5               # objectif en multiple du risque
+    min_range_atr: 0.15     # range trop étroit : faux signaux
+    max_range_atr: 0.8      # range trop large : risque trop grand
+  session_momentum:
+    # Portefeuille retenu le 29/09/2026 sur la période d'étude, AVANT le test hors échantillon
+    # (docs/STRATEGIES.md). Réglages pris au milieu des zones stables, jamais sur le meilleur résultat.
+    asie:
+      # S8 : pendant la session asiatique, le mouvement du matin a tendance à se retourner.
+      # DÉSACTIVÉE : échec hors échantillon (-0,06 R sur 44 trades), hypothèse tirée des données.
+      enabled: false
+      zone: Asia/Tokyo
+      signal_time: "11:00"
+      exit_time: "15:00"
+      min_move_atr: 0.25    # mouvement minimal depuis l'ouverture, en fraction de l'ATR journalier
+      sl_atr: 0.3           # distance du SL, en fraction de l'ATR journalier
+      tp_r: 0               # pas de TP : sortie à l'heure
+      fade: true
+    londres:
+      # S7 : le mouvement du matin se prolonge (momentum intraday).
+      zone: Europe/London
+      signal_time: "10:00"
+      exit_time: "16:00"
+      min_move_atr: 0.5
+      sl_atr: 0.3
+      tp_r: 0
+    new_york:
+      zone: America/New_York
+      signal_time: "09:30"
+      exit_time: "16:00"
+      min_move_atr: 0.5
+      sl_atr: 0.3
+      tp_r: 0
+
+scalping:
+  # EXPÉRIENCE de scalping sur compte DÉMO (scripts/run_scalp.py), séparée de la stratégie Londres / New York.
+  # Point de départ expérimental, PAS une stratégie annoncée comme rentable. Ne pas modifier pendant
+  # la période de collecte : le bot refuse de repartir si ces réglages changent en cours d'expérience.
+  strategy: pullback
+  experiment_name: learning_demo
+  max_entries_per_minute: 5
+  pullback_impulse_ratio: 2.0
+  pullback_min_fraction: 0.2
+  pullback_max_fraction: 0.7
+  pullback_expiry_s: 45
+  magic: 20260930               # expérience distincte
+  candle_seconds: 5             # bougies de 5 s construites à partir des ticks bid/ask (prix médian)
+  breakout_lookback_s: 60       # cassure du plus haut / plus bas des 60 s précédentes (bougie de signal exclue)
+  min_window_candles: 6         # au moins 6 bougies dans ces 60 s (sinon marché trop calme ou trou)
+  confirm_closes: 2             # clôtures de 5 s au-delà du niveau
+  ema_fast: 20                  # filtre de tendance sur les barres M1 clôturées : EMA20 > EMA50 pour acheter
+  ema_slow: 50
+  stop_lookback_s: 30           # stop derrière la structure des 30 dernières secondes
+  stop_buffer_points: 5         # marge au-delà de cette structure
+  min_stop_points: 50           # stop d'au moins 0,50 $
+  max_stop_points: 600          # et d'au plus 6,00 $ (au-delà, le lot minimal dépasse le budget)
+  target_ratio: 1.2             # objectif = 1,2 x la distance du stop
+  min_target_cost_ratio: 3.0    # objectif >= 3 x le coût estimé (spread + glissements), sinon refus
+  expected_slippage_points: 5   # glissement supposé par exécution (filtre de coût)
+  extra_slippage_points: 10     # simulation parallèle « avec glissement supplémentaire »
+  max_hold_s: 120               # durée maximale : fermeture même en perte
+  min_seconds_between_entries: 12  # délai entre deux entrées (en plus du réarmement du signal)
+  risk_per_trade_pct: 0.1       # 5 € par trade sur 5 000 €
+  max_open_positions: 5
+  max_total_risk_pct: 0.5       # risque cumulé des positions ouvertes
+  daily_loss_pct: 1.0           # l'expérience s'arrête pour la journée au-delà de -1 %
+  # Plafond expérimental demandé : 5 entrées/minute. Ce réglage n'est pas une confirmation des conditions Axi.
+  # Le plafond reste appliqué (cadence_verified=false) ; aucune répétition du même signal.
+  cadence_verified: false
+  broker_min_seconds_between_orders: 12
+  experiment_days: 10           # durée annoncée de la collecte (jours de cotation)
+
+logging:
+  level: INFO
+  max_bytes: 5000000
+  backup_count: 10
