@@ -645,6 +645,34 @@ envoie beaucoup de positions et atteint l'arrêt à −10 % en 1 à 2 semaines. 
 (`scalping/market_read.py`) est prête pour un modèle qui battrait les coûts ; recherche en cours (5 familles de
 lecture des bougies, testées ensemble sur 2019-2023, validation une seule fois).
 
+### Idée de l'utilisateur : « deux bougies » (29/09/2026, nuit)
+
+Règle : une bougie dans un sens, puis une bougie contraire ; à l'ouverture de la bougie suivante, entrée dans le
+sens de la première (vente après baissière puis haussière), stop au-delà des deux bougies (au-dessus pour une
+vente), objectif fixe de 2 ou 3 $ (« 4000 > 4003 »), 2 à 3 positions par signal. Mesure trade par trade sur les
+barres M1 Axi (bid, spread de la barre avec plancher 0,15 $, stop avant objectif dans la même minute, sortie au plus
+tard après 30 minutes en M1 et 60 en M5, jamais à travers la coupure du jour). 2 à 3 positions avec le même stop
+donnent le même résultat en R qu'une seule ; avec des objectifs de 2 et 3 $, la moyenne des deux lignes.
+
+| Variante | Période | Trades par jour | Gagnants | Stop moyen | Net par trade | PF | t | Années positives |
+|---|---|---|---|---|---|---|---|---|
+| M1, objectif 3 $ | 2019-2023 | 659 | 13 % | 5,1 pips | −1,8 pips | 0,57 | −58 | 0/5 |
+| M1, objectif 2 $ | 2019-2023 | 659 | 15 % | 5,1 pips | −1,8 pips | 0,56 | −62 | 0/5 |
+| M1, objectif 3 $, stop au moins 1 $ | 2019-2023 | 662 | 31 % | 10,3 pips | −1,9 pips | 0,70 | −58 | 0/5 |
+| M5, objectif 3 $ | 2019-2023 | 138 | 20 % | 8,5 pips | −1,7 pips | 0,72 | −43 | 0/5 |
+| M5, objectif 2 $ | 2019-2023 | 138 | 23 % | 8,5 pips | −1,7 pips | 0,70 | −50 | 0/5 |
+| M1, objectif 3 $ | 2024 → 09/2025 | 675 | 15 % | 6,3 pips | −1,4 pips | 0,71 | −56 | 0/2 |
+| M1, objectif 3 $ | 10/2025 → 09/2026 | 680 | 24 % | 12,8 pips | −1,3 pips | 0,84 | −24 | 0/2 |
+| M1, objectif 3 $, stop au moins 1 $ | 10/2025 → 09/2026 | 684 | 29 % | 14,9 pips | −1,4 pips | 0,86 | −26 | 0/2 |
+| M5, objectif 3 $ | 10/2025 → 09/2026 | 124 | 35 % | 21,8 pips | −1,8 pips | 0,85 | −13 | 0/2 |
+| M5, objectif 2 $ | 10/2025 → 09/2026 | 124 | 42 % | 21,8 pips | −2,1 pips | 0,80 | −17 | 0/2 |
+
+Avec 1 pip de glissement, tout est deux fois pire (PF 0,36-0,53 sur 2019-2023). Le motif se présente à une minute sur
+deux ; chaque trade perd en moyenne à peu près le spread (1,3 à 2 pips) : le sens donné par les deux bougies ne
+prévoit rien. À 0,01 lot et 680 trades par jour, environ −80 € par jour ; avec 2 à 3 positions par signal, la limite de
+−2 % par jour serait atteinte presque chaque jour. Non mis en démo sans l'accord de l'utilisateur (CLAUDE.md :
+« trader chaque minute sans avantage mesuré est exclu »).
+
 ### Historique des réglages
 
 - 29/09/2026 matin (cassure seule, avant versionnage) : 3 positions, 0,3 % de risque cumulé, 10 s entre deux
