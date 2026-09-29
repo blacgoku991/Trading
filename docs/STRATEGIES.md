@@ -470,6 +470,25 @@ démontrés) et perdante avec 10 points de glissement. L'impulsion-repli perd da
 début : **elle est désactivée en démo** (`pullback.enabled: false`, code conservé). Les prochains jours de démo,
 sur des données jamais vues et avec le vrai glissement, diront si ce classement tient.
 
+**TP fixe en dollars et lots plus gros** (question de l'utilisateur, 29/09 au soir : « le TP est loin avec un petit
+lot ; un prix fixe avec un plus gros lot ? »). Rejeu de la cassure seule, sans apprentissage pour isoler l'effet
+(6 essais de plus, total 27) :
+
+| Objectif | Gagnants | Gain moyen / perte moyenne | PF | Résultat | +10 pts |
+|---|---|---|---|---|---|
+| TP fixe 1 $ | 68 % | +1,27 / −3,52 € | 0,76 | −812 € | PF 0,63 |
+| TP fixe 2 $ | 55 % | +2,53 / −3,53 € | 0,86 | −688 € | PF 0,75 |
+| TP fixe 3 $ | 46 % | +3,68 / −3,51 € | 0,89 | −570 € | PF 0,82 |
+| TP fixe 5 $ | 38 % | +5,23 / −3,52 € | 0,92 | −411 € | PF 0,82 |
+| 3 x le stop (sans apprentissage) | 35 % | +6,18 / −3,57 € | 0,95 | −234 € | PF 0,86 |
+| réglages démo (3 x le stop, apprentissage) | 41 % | +4,66 / −3,36 € | 0,97 | −145 € | PF 0,87 |
+
+Un TP proche fait gagner plus souvent, mais le gain moyen fond plus vite que la fréquence ne monte : plus il est
+proche, plus la perte est grande. Les réglages démo restent les moins mauvais. La taille du lot ne change rien à
+ce classement : elle multiplie gains et pertes par le même nombre (même espérance en R), et plusieurs positions
+sur le même signal reviennent à un seul lot plus gros. Tant que l'espérance est négative, un lot plus gros fait
+seulement perdre plus vite ; il ne s'augmente (en % de risque, plafond dur 1 %) qu'une fois un avantage démontré.
+
 Réponse du serveur perdue (relevé par la relecture critique, corrigé) : si la position a déjà touché son stop quand
 le bot la cherche, l'ordre est retrouvé dans l'historique des deals (même magic, même commentaire `tag#n`) et son
 vrai résultat entre dans les bilans, la perte du jour et la cadence, au lieu d'être noté « échec ». Même
