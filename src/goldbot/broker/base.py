@@ -303,6 +303,10 @@ class Broker(ABC):
     def deals_for_position(self, position_id: int) -> list[Deal]: ...
 
     @abstractmethod
+    def deals_between(self, start: int, end: int) -> list[Deal]:
+        """history_deals_get(date_from, date_to) : deals du compte entre start et end (secondes, epoch SERVEUR)."""
+
+    @abstractmethod
     def calc_margin(self, order_type: int, symbol: str, volume: float, price: float) -> float: ...
 
     @abstractmethod

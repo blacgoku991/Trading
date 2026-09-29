@@ -53,6 +53,10 @@ class StubMT5(SimpleNamespace):
         self.calls.append(("copy_ticks_range", args, {}))
         return self.history
 
+    def history_deals_get(self, *args, **kwargs):
+        self.calls.append(("history_deals_get", args, kwargs))
+        return self.history
+
 
 def _broker(stub, path=r"C:\MT5\terminal64.exe"):
     broker = MT5Broker(login=123, password="pw", server="Srv-Demo", path=path, timeout_ms=60_000)
@@ -155,3 +159,24 @@ def test_history_failure_raises_with_last_error():
     stub.error = (C.RES_E_INVALID_PARAMS, "Invalid params")
     with pytest.raises(BrokerError, match="copy_ticks_range"):
         _broker(stub).ticks_range("XAUUSD", 0, 60, C.COPY_TICKS_ALL)
+
+
+def test_deals_between_passes_positional_utc_dates_and_reads_the_deals():
+    from collections import namedtuple
+
+    from goldbot.broker.base import Deal
+
+    fields = [f for f in Deal.__dataclass_fields__] + ["external_id"]  # champ en plus, ignoré
+    TradeDeal = namedtuple("TradeDeal", fields)
+    values = dict(ticket=7, order=6, position_id=6, symbol="XAUUSD", type=C.DEAL_TYPE_BUY, entry=C.DEAL_ENTRY_IN,
+                  reason=C.DEAL_REASON_EXPERT, volume=0.02, price=4150.12, commission=0.0, swap=0.0, fee=0.0,
+                  profit=0.0, magic=20260929, comment="SC-B-1-L#1", time_msc=1_767_700_800_123, external_id="")  # fmt: skip
+    stub = StubMT5(logged_in_as=123)
+    stub.history = (TradeDeal(**values),)
+    (deal,) = _broker(stub).deals_between(1_767_700_000, 1_767_787_200)
+    assert deal.comment == "SC-B-1-L#1" and deal.position_id == 6 and deal.entry == C.DEAL_ENTRY_IN
+    name, args, kwargs = stub.calls[-1]
+    assert name == "history_deals_get" and kwargs == {}  # dates en positionnel seulement
+    assert args[0] == datetime(2026, 1, 6, 11, 46, 40, tzinfo=UTC) and args[1].timestamp() == 1_767_787_200
+    stub.history = None
+    assert _broker(stub).deals_between(0, 60) == []  # rien trouvé, code de succès

@@ -311,7 +311,8 @@ Garde-fous : compte **démo obligatoire, sans exception** (aucune option ne perm
 Algo Trading actif, un seul exemplaire à la fois ; 0,1 % de risque par trade (signal ignoré si le lot minimal
 dépasse ce budget) ; plus d'entrée pour la journée à −1 % (démo, latent compris) ; marge libre d'au moins 50 % de
 l'equity après l'ordre ; pas d'entrée si le marché ferme avant la durée maximale ; pas d'entrée si, tous les
-stops touchés, la journée dépasserait −1 % (budget du jour) ; stop manquant reposé, sinon
+stops touchés, la journée dépasserait −1 % (budget du jour) ; réponse du serveur perdue : l'ordre est retrouvé
+dans l'historique des deals (magic et commentaire), jamais renvoyé ; stop manquant reposé, sinon
 position fermée ; si le serveur répond « trop de requêtes », plus d'envoi pendant 60 s. Magic `20260929` : le bot
 principal (`20260928`) et tes trades manuels ne sont jamais touchés. D'après le centre d'aide d'Axi, le scalping
 est permis sur les comptes Standard et le trading haute fréquence ne l'est pas (sans seuil chiffré) : avant tout

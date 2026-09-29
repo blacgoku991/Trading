@@ -181,6 +181,13 @@ class MT5Broker(Broker):
         found = self._listing("history_deals_get", self._module().history_deals_get(position=position_id))
         return [Deal.from_mt5(item._asdict()) for item in found]
 
+    def deals_between(self, start: int, end: int) -> list[Deal]:
+        # Dates en arguments positionnels seulement (docs/RESEARCH.md §1.6 et annexe : pas de mot-clé date_from).
+        found = self._listing(
+            "history_deals_get", self._module().history_deals_get(_as_datetime(start), _as_datetime(end))
+        )
+        return [Deal.from_mt5(item._asdict()) for item in found]
+
     def calc_margin(self, order_type: int, symbol: str, volume: float, price: float) -> float:
         margin = self._module().order_calc_margin(order_type, symbol, volume, price)
         return float(self._required("order_calc_margin", margin))

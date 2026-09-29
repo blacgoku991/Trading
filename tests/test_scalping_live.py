@@ -15,7 +15,7 @@ from goldbot.broker.supervisor import ConnectionSupervisor
 from goldbot.scalping.cli import EXIT_OK, EXIT_REFUSED, live_main
 from goldbot.scalping.engine import BREAKOUT, LONG, PULLBACK, Candle, Setup
 from goldbot.scalping.live import ScalpRunner, strategy_versions
-from goldbot.scalping.store import CLOSED, FAILED, NOT_SENT, OPEN, REFUSED, SENT, ScalpStore
+from goldbot.scalping.store import CLOSED, FAILED, NOT_SENT, OPEN, REFUSED, SENDING, SENT, ScalpStore
 from tests.conftest import CONFIG_PATH, server_epoch_of
 
 MAGIC = 20260929
@@ -254,6 +254,49 @@ def test_uncertain_reply_is_reconciled_with_the_positions_not_sent_twice(world):
     (order,) = live.store.orders(OPEN)
     assert order.position == broker.positions()[0].ticket
     assert len(_deals(broker)) == 1  # ni renvoyé, ni fermé
+
+
+def test_lost_reply_then_stop_hit_before_the_bot_sees_it_is_recovered_from_the_deals(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    broker.lose_next_reply = True  # ordre exécuté, réponse perdue (TIMEOUT)...
+    opened = []
+    send = broker.order_send
+
+    def send_then_stop(request):
+        result = send(request)
+        for position in broker.positions():
+            if position.comment == request.get("comment") and "position" not in request:
+                opened.append(position)
+                broker.hit_stop(position.ticket, position.sl)  # ...et stop touché avant que le bot la voie
+        return result
+
+    broker.order_send = send_then_stop
+    _breakout(broker, clock, quote, live)
+    (position,) = opened
+    assert broker.positions() == [] and any("réponse incertaine" in line for line in lines)
+    order = live.store.order(broker.sent[0]["comment"].split("#")[0], 1)
+    assert order["status"] == CLOSED and order["exit_reason"] == "stop" and order["real_pnl"] < 0
+    assert order["position"] == position.ticket and order["open_price"] == position.price_open
+    assert any("retrouvé dans l'historique des deals" in line for line in lines)
+    assert live.store.realized_since(0) == pytest.approx(order["real_pnl"])  # perte du jour et bilans
+    assert list(live.policy.cadence.results) == [pytest.approx(order["real_pnl"])]  # compté une seule fois
+    live.step()
+    assert len(live.policy.cadence.results) == 1 and len(_deals(broker)) == 1  # jamais renvoyé
+
+
+def test_an_uncertain_order_that_never_executed_fails_after_two_minutes(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    broker.send_retcodes = [C.TRADE_RETCODE_TIMEOUT]  # réponse incertaine, rien d'exécuté
+    _breakout(broker, clock, quote, live)
+    assert broker.positions() == [] and any("réponse incertaine" in line for line in lines)
+    live.step()
+    (order,) = live.store.orders(SENDING)  # pas encore jugé : ni position ni deal, moins de 2 minutes
+    clock.advance(121)
+    live.step()
+    assert live.store.orders(SENDING) == [] and live.store.closed_orders() == []
+    assert live.store.order(order.tag, 1)["detail"] == "envoi incertain, aucune position ni aucun deal trouvés"
 
 
 def test_too_many_requests_pauses_sending(world):

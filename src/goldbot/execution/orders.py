@@ -8,7 +8,7 @@ from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
 from typing import Any
 
 from goldbot.broker import mt5_constants as C
-from goldbot.broker.base import Broker, CheckResult, TradeResult
+from goldbot.broker.base import Broker, CheckResult, Deal, TradeResult
 
 # Libellés des codes retour (docs/RESEARCH.md §1.9).
 RETCODE_TEXT = {
@@ -63,6 +63,21 @@ RETRY_WITH_FRESH_PRICE = frozenset(
 )
 # L'ordre a peut-être été exécuté : réconcilier avant tout renvoi, jamais de renvoi aveugle.
 UNCERTAIN = frozenset({C.TRADE_RETCODE_TIMEOUT, C.TRADE_RETCODE_CONNECTION, C.TRADE_RETCODE_ERROR})
+
+
+# Plage de recherche d'un ordre dont la réponse s'est perdue : large, car la date passée à MT5 et l'heure serveur des
+# deals peuvent être décalées (docs/RESEARCH.md §1.6) ; le magic et le commentaire font le tri.
+LOST_REPLY_MARGIN_S = 86_400
+
+
+def find_entry_deal(broker: Broker, *, magic: int, comment: str, sent_s: int, now_s: int) -> Deal | None:
+    """Deal d'entrée d'un ordre envoyé à sent_s (epoch serveur) dont la réponse s'est perdue : même magic, même
+    commentaire (Axi conserve le commentaire de l'ordre). None si l'ordre n'a pas été exécuté."""
+    deals = broker.deals_between(sent_s - LOST_REPLY_MARGIN_S, now_s + LOST_REPLY_MARGIN_S)
+    for deal in deals:
+        if deal.magic == magic and deal.comment == comment and deal.entry == C.DEAL_ENTRY_IN:
+            return deal
+    return None
 
 
 def describe_retcode(code: int) -> str:

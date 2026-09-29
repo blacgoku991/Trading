@@ -165,6 +165,30 @@ def test_unknown_bot_position_is_closed_but_manual_trades_are_untouched(world):
     assert [p.comment for p in remaining] == ["manuel"]
 
 
+def test_lost_reply_then_stop_hit_is_recovered_from_the_deal_history(world):
+    broker, clock, set_time, runner = world
+    live = runner(Scripted([_intent(_signal_time(clock))]))
+    broker.lose_next_reply = True  # ordre exécuté, réponse perdue (TIMEOUT)...
+    send = broker.order_send
+
+    def send_then_stop(request):
+        result = send(request)
+        for position in broker.positions():
+            if position.comment == request.get("comment") and "position" not in request:
+                broker.hit_stop(position.ticket, position.sl)  # ...et stop touché avant que le bot la voie
+        return result
+
+    broker.order_send = send_then_stop
+    live.step()
+    assert broker.positions() == [] and live.store.detail("T-1")["status"] == "envoi"
+    set_time(clock.now + pd.Timedelta(seconds=10))
+    live.step()
+    detail = live.store.detail("T-1")
+    assert detail["status"] == CLOSED and detail["detail"] == "SL" and detail["pnl"] < 0
+    assert live.limits.trades_today == 1 and live.limits.consecutive_losses == 1  # compté dans les limites
+    assert len([r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL]) == 1  # jamais renvoyé
+
+
 def test_stale_signal_after_a_late_restart_is_ignored(world):
     broker, clock, _, runner = world
     old = _intent(_signal_time(clock) - pd.Timedelta(minutes=10))

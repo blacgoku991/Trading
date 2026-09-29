@@ -34,6 +34,7 @@ from goldbot.execution.orders import (
     UNCERTAIN,
     OrderRejected,
     filling_candidates,
+    find_entry_deal,
     round_to_tick,
     select_filling,
     send_market_order,
@@ -124,9 +125,28 @@ class LiveRunner:
                                   entry_price=position.price_open)  # fmt: skip
                 self.limits.on_entry()
                 log.warning("signal %s : position %d retrouvée après un envoi incertain", row.tag, position.ticket)
+                continue
+            # Position peut-être déjà fermée (stop touché) avant d'être vue : l'historique des deals le dit.
+            try:
+                deal = find_entry_deal(
+                    self.broker,
+                    magic=self.magic,
+                    comment=row.tag,
+                    sent_s=int(self.rule.server_epoch(row.signal_time.to_pydatetime())),
+                    now_s=int(self.rule.server_epoch(now.to_pydatetime())),
+                )
+            except BrokerError as exc:
+                log.warning("signal %s : historique des deals illisible (%s), revu au prochain passage", row.tag, exc)
+                continue
+            if deal is not None:
+                self.store.update(row.tag, status=OPEN, position=deal.position_id, volume=deal.volume,
+                                  entry_price=deal.price)  # fmt: skip
+                self.limits.on_entry()
+                log.warning("signal %s : ordre retrouvé dans l'historique des deals (position %d)", row.tag,
+                            deal.position_id)  # fmt: skip
             elif now - row.signal_time > pd.Timedelta(minutes=10):
-                self.store.update(row.tag, status=FAILED, detail="envoi incertain, aucune position trouvée")
-                log.error("signal %s : envoi incertain et aucune position trouvée", row.tag)
+                self.store.update(row.tag, status=FAILED, detail="envoi incertain, aucune position ni aucun deal")
+                log.error("signal %s : envoi incertain, aucune position ni aucun deal trouvés", row.tag)
         for row in self.store.with_status(OPEN):
             position = positions.pop(row.position, None)
             if position is None:

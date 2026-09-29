@@ -399,6 +399,10 @@ class FakeBroker(Broker):
         self._require_connection("history_deals_get")
         return [deal for deal in self._deals if deal.position_id == position_id]
 
+    def deals_between(self, start: int, end: int) -> list[Deal]:
+        self._require_connection("history_deals_get")
+        return [deal for deal in self._deals if start * 1000 <= deal.time_msc <= end * 1000]
+
     def calc_margin(self, order_type: int, symbol: str, volume: float, price: float) -> float:
         self._require_connection("order_calc_margin")
         spec = self._symbols[symbol]

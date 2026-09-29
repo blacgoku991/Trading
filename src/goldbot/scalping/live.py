@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from goldbot.broker import mt5_constants as C
-from goldbot.broker.base import Broker, BrokerError, Position, SymbolSpec
+from goldbot.broker.base import Broker, BrokerError, Deal, Position, SymbolSpec
 from goldbot.broker.supervisor import ConnectionSupervisor
 from goldbot.config import ScalpingConfig, Settings
 from goldbot.data.history import bars_frame
@@ -30,6 +30,7 @@ from goldbot.execution.orders import (
     UNCERTAIN,
     OrderRejected,
     filling_candidates,
+    find_entry_deal,
     select_filling,
     send_market_order,
 )
@@ -568,6 +569,13 @@ class ScalpRunner:
                                 open_ms=open_ms, deadline_ms=open_ms + hold_ms, volume=position.volume,
                                 entry_fees=entry_fees)  # fmt: skip
 
+    def _mark_open_from_deal(self, tag: str, part: int, deal: Deal) -> None:
+        """Ordre retrouvé par son deal d'entrée : ouvert (la sortie éventuelle est lue ensuite dans les deals)."""
+        open_ms = int(deal.time_msc)
+        self.store.update_order(tag, part, status=OPEN, position=deal.position_id, open_price=deal.price,
+                                open_ms=open_ms, deadline_ms=open_ms + self.cfg.max_hold_s * 1000, volume=deal.volume,
+                                entry_fees=deal.commission + deal.fee)  # fmt: skip
+
     # --- positions --------------------------------------------------------------------------------
 
     def _mine(self) -> dict[int, Position]:
@@ -582,9 +590,21 @@ class ScalpRunner:
             matches = by_comment.get(order.comment, [])
             if matches:
                 self._mark_open(order.tag, order.part, matches[0])
+                continue
+            # Réponse perdue ou position déjà fermée avant d'être vue : l'historique des deals le dit.
+            try:
+                deal = find_entry_deal(self.broker, magic=self.cfg.magic, comment=order.comment,
+                                       sent_s=order.time_ms // 1000, now_s=now_ms // 1000)  # fmt: skip
+            except BrokerError as exc:
+                self.say(f"   historique des deals illisible ({exc}) : ordre {order.comment} revu au prochain passage")
+                continue
+            if deal is not None:
+                self._mark_open_from_deal(order.tag, order.part, deal)
+                self.say(f"{self._clock(now_ms)} ordre {order.comment} retrouvé dans l'historique des deals "
+                         f"(position {deal.position_id}, entrée à {deal.price:.2f}) : réponse du broker perdue")  # fmt: skip
             elif now_ms - order.time_ms > 120_000:
                 self.store.update_order(order.tag, order.part, status=FAILED,
-                                        detail="envoi incertain, aucune position trouvée")  # fmt: skip
+                                        detail="envoi incertain, aucune position ni aucun deal trouvés")  # fmt: skip
         for order in self.store.orders(OPEN):
             position = mine.pop(order.position, None)
             if position is None:

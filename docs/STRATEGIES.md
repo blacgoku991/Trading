@@ -470,9 +470,10 @@ démontrés) et perdante avec 10 points de glissement. L'impulsion-repli perd da
 début : **elle est désactivée en démo** (`pullback.enabled: false`, code conservé). Les prochains jours de démo,
 sur des données jamais vues et avec le vrai glissement, diront si ce classement tient.
 
-Limite connue (relecture critique) : si la réponse du serveur à un ordre est perdue et que la position touche son
-stop avant que le bot la voie, l'ordre est noté « échec » sans lire l'historique des deals : le stop serveur
-protège le compte, mais ce résultat manque aux bilans, à la perte du jour et à la cadence. Cas rare, à corriger.
+Réponse du serveur perdue (relevé par la relecture critique, corrigé) : si la position a déjà touché son stop quand
+le bot la cherche, l'ordre est retrouvé dans l'historique des deals (même magic, même commentaire `tag#n`) et son
+vrai résultat entre dans les bilans, la perte du jour et la cadence, au lieu d'être noté « échec ». Même
+correction dans le bot principal.
 
 ### Historique des réglages
 
