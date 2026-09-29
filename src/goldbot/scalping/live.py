@@ -57,6 +57,7 @@ from goldbot.scalping.market_read import check_model, read_direction
 from goldbot.scalping.policy import (
     EntryPolicy,
     Exposure,
+    after_open_refusal,
     drawdown_pct,
     ladder_volumes,
     opposite_plan,
@@ -93,6 +94,9 @@ DUPLICATES = "doublons_evites"
 LEARNER = "apprentissage"  # état de l'apprentissage dans la table meta (JSON)
 PEAK = "plus_haut_experience"  # plus haut de la valeur de l'expérience (drawdown maximal)
 HALT = "arret_total"  # motif de l'arrêt total au drawdown maximal : relance manuelle uniquement
+# Réglages ajoutés après coup et leur valeur neutre (comportement d'avant) : hors de l'empreinte à cette valeur.
+NEUTRAL_SETTINGS = {"opposite_signals": "garder", "max_spread_pips": None, "no_entry_after_open_min": None}
+NEUTRAL_CADENCE = {"ceiling_open_positions": None}
 # Règle des signaux contraires dans le nom affiché (« garder », le comportement d'origine : rien).
 OPPOSITE_LABELS = {"ignorer": " + sans contraires", "retourner": " + retournement",
                    "retourner_si_gain": " + retournement si gain"}  # fmt: skip
@@ -113,15 +117,31 @@ def strategy_label(code: str, config: ScalpingConfig, version: int, digest: str)
     read = config.market_read
     reading = f" + lecture {read.model} v{read.version}" if read.enabled else ""
     opposite = OPPOSITE_LABELS.get(config.opposite_signals, "")
-    return f"{STRATEGY_NAMES[code]} v{version}{learning}{cadence}{reading}{opposite} · {digest}"
+    spread = f" + spread max {config.max_spread_pips:g} pips" if config.max_spread_pips is not None else ""
+    wait = config.no_entry_after_open_min
+    pause = f" + pause {wait:g} min à la réouverture" if wait is not None else ""
+    return f"{STRATEGY_NAMES[code]} v{version}{learning}{cadence}{reading}{opposite}{spread}{pause} · {digest}"
+
+
+def settings_dump(config: ScalpingConfig) -> dict[str, object]:
+    """Réglages du scalper pour les empreintes (nom des versions, réglages figés d'une expérience).
+
+    Un réglage ajouté après coup et laissé à sa valeur neutre (le comportement d'avant) n'y figure pas : la même
+    stratégie garde la même empreinte, et l'expérience en cours continue après une mise à jour du code.
+    """
+    data = config.model_dump()
+    for section, neutral in ((data, NEUTRAL_SETTINGS), (data["cadence"], NEUTRAL_CADENCE)):
+        for key, value in neutral.items():
+            if key in section and section[key] == value:
+                del section[key]
+    return data
 
 
 def strategy_versions(config: ScalpingConfig) -> dict[str, tuple[int, str, dict[str, object]]]:
     """Code -> (version, empreinte, réglages) des stratégies actives : leurs règles et les réglages communs."""
-    exclude = {"breakout", "pullback", "two_candles", "experiment_days"}
-    if config.opposite_signals == "garder":
-        exclude.add("opposite_signals")  # comportement d'avant ce réglage : même empreinte qu'avant (expérience continuée)
-    common = config.model_dump(exclude=exclude)
+    common = settings_dump(config)
+    for name in ("breakout", "pullback", "two_candles", "experiment_days"):
+        del common[name]
     versions = {}
     sections = ((BREAKOUT, config.breakout), (PULLBACK, config.pullback), (TWO_CANDLES, config.two_candles))
     for code, section in sections:
@@ -480,6 +500,10 @@ class ScalpRunner:
             return
         if not self._is_open(now_ms + cfg.max_hold_s * 1000):
             self._refuse(setup, spread, f"le marché ferme avant la durée max : {cfg.max_hold_s} s")
+            return
+        why = after_open_refusal(self.schedule.seconds_since_open(_EPOCH + timedelta(milliseconds=now_ms)), cfg)
+        if why is not None:
+            self._refuse(setup, spread, why)
             return
         plan = plan_trade(
             setup,

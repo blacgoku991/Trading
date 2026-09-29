@@ -14,6 +14,7 @@ from goldbot.scalping.engine import (
     BreakoutDetector,
     Candle,
     CandleBuilder,
+    Plan,
     PullbackDetector,
     Setup,
     SimTrade,
@@ -1041,3 +1042,25 @@ def test_replay_handles_a_signal_opposite_to_an_open_trade(mode, minute2_close, 
     if "retournement" in reasons:
         buy = trades[trades["side"] == LONG].iloc[0]
         assert buy["reason"] == "retournement" and buy["exit_ms"] <= trades.iloc[-1]["open_ms"]
+
+
+# --- améliorations de deux bougies v1 (29/09, nuit) : spread maximal, deux positions au plus -----------------------
+
+
+def test_no_entry_when_the_spread_is_wider_than_the_limit():
+    from goldbot.scalping.engine import TWO_CANDLES
+
+    config = _two_config(min_stop_pips=10.0, target_pips=[40.0]).model_copy(update={"max_spread_pips": 2.5})
+    setup = Setup(TWO_CANDLES, SHORT, 3999.80, 4001.0, candle(0, 4000.0), key="R", reason="test")
+    assert isinstance(plan_trade(setup, 3999.92, 4000.16, config, **KWARGS), Plan)  # 2,4 pips : accepté
+    refused = plan_trade(setup, 3999.85, 4000.15, config, **KWARGS)  # 3,0 pips (heure de la coupure)
+    assert refused == "spread trop large : 3.0 pips > 2.5 pips"
+    unlimited = config.model_copy(update={"max_spread_pips": None})
+    assert isinstance(plan_trade(setup, 3999.85, 4000.15, unlimited, **KWARGS), Plan)
+
+
+def test_the_cadence_never_opens_more_positions_than_the_ceiling():
+    cadence = _cadence(window_trades=10, ceiling_open_positions=5)
+    for _ in range(60):
+        cadence.on_close(1.0)
+    assert cadence.level == 3 and cadence.limits().open_positions == 5  # x6 sans plafond : 30

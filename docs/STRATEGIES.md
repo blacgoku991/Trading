@@ -788,6 +788,48 @@ sauf pour reposer un stop manquant (ligne « stop manquant reposé », absente i
 ces deux achats en dépendent en partie.
 
 
+### Améliorer « deux bougies » dans son principe (29/09/2026, nuit)
+
+Demande de l'utilisateur : « reviens à la version 2 positions, même dans des sens différents, et essaie d'améliorer
+encore cette stratégie dans cette optique ». Dix pistes fixées avant toute mesure (`research/two_candles/improve.py`,
+journal `research/two_candles/essais.csv`), choix sur la période de développement, puis validation et final une seule
+fois. La volatilité de l'or a été multipliée par 7 depuis 2019 (ATR M1 médiane 0,31 $ en 2019, 2,16 $ en 2026) : sur
+7 ans, les distances sont en ATR M1 (stop 0,5 à 1 ATR, objectif 2 ATR : les 10 / 20 / 40 pips de la démo au niveau de
+2026) ; les distances de la démo en pips sont mesurées depuis 2025.
+
+| Piste (sur la version actuelle) | Développement 2019-2023 | Validation 2024-09/2025 | Final 10/2025 → | Démo en pips depuis 2025 |
+|---|---|---|---|---|
+| version actuelle | −0,40 R (−1,52 pip/trade) | −0,29 R | −0,09 R | −0,12 R (−1,30 pip) |
+| dans le sens du mouvement du jour (≥ 0,5 ATR jour) | −0,30 R (−1,24 pip) | −0,22 R | −0,07 R | −0,11 R (−1,24 pip) |
+| première bougie forte, deuxième plus petite | −0,33 R (−1,57 pip) | | | |
+| volatilité au-dessus de sa médiane du jour | −0,34 R (−1,52 pip) | | | |
+| heures de Londres et New York seulement | −0,36 R (−1,47 pip) | | | |
+| spread ≤ 1,5 x sa médiane | −0,39 R (−1,49 pip) | | | |
+| sens de l'EMA20 / EMA50 M1 | −0,39 R (−1,50 pip) | | | |
+| stop suiveur à 1 R dès +1 R | −0,39 R | −0,29 R | −0,09 R | −0,12 R |
+| stop à l'entrée dès +1 R ; 20 minutes ; sortie à 5 min si en gain | −0,39 à −0,40 R | | | |
+
+Tout perd, avec ou sans 1 pip de glissement. La seule piste qui aide partout (le sens du jour) supprime justement
+les positions dans les deux sens voulues par l'utilisateur, et ne gagne que 0,06 pip par trade avec les distances de
+la démo. Les sorties ne changent rien (déjà constaté sur la cassure).
+
+**Consigne de l'utilisateur : « base-toi sur des tests sur la journée d'aujourd'hui, pas sur 1 an ou 4 ans ».**
+Décisions prises sur sa séance démo du 29/09 (14 trades, +459,22 €) :
+
+- deux positions au plus (`max_open_positions: 2`, plafond aussi pour la cadence) : la séance n'en a jamais eu plus
+  de deux ouvertes, résultat identique ; empreinte `ef659bec` ;
+- spread maximal de 2,5 pips (sur 4 semaines de ticks, les trades à plus de 3 pips de spread, presque tous entre
+  23:00 et 00:00 heure serveur, perdent 7,9 pips en moyenne contre 1,7) : **pas activé**, il aurait retiré les trois
+  trades de 23:44 à 23:46 heure serveur (spread de 5 à 6 pips), +77,58 € ce jour-là ; option `max_spread_pips` ;
+- pause d'une heure après la réouverture quotidienne (option `no_entry_after_open_min`) : pas activée, à juger sur la
+  journée entière du jour.
+
+Rejeu d'une journée (`scripts/rejeu_jour.py`) : version démo et 8 variantes rejouées sur les ticks du jour, lus dans le
+terminal MT5. Sur les journées complètes du 21 au 28/09 (fichiers exportés), la version démo atteint la limite de −2 %
+chaque jour (−68 à −102 €), souvent avec deux pertes juste après la réouverture de minuit (heure de Paris), puis ne
+trade plus de la journée : 24 h/24, elle ne tradera souvent plus le soir. La pause d'une heure fait mieux 5 jours sur
+6 (−72 à −89 € ; +83 € le 28/09).
+
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 
 Demande : un sens achat / vente « en fonction du marché et de la réaction des bougies », qui change en quelques
@@ -844,4 +886,5 @@ PF 0,77, 25/35 0,80, 30/40 0,81, 30/50 0,80, 40/60 0,81 ; avec 1 pip de glisseme
   démo à sa demande malgré le test perdant).
 - 29/09/2026 nuit (suite) : deux bougies v1 « + retournement si gain » (jamais d'achat et de vente ouverts
   ensemble), voir « Signaux contraires » ci-dessus ; puis retour à la v1 telle quelle (`garder`, `f8489472`) après
-  la séance démo de l'utilisateur.
+  la séance démo de l'utilisateur ; puis deux positions au plus (`ef659bec`), décisions prises sur la journée du
+  jour (voir « Améliorer deux bougies »).

@@ -36,7 +36,7 @@ from goldbot.live.lock import InstanceLock
 from goldbot.monitoring.logging_setup import setup_logging
 from goldbot.scalping.backtest import Instrument, run_backtest, summary
 from goldbot.scalping.engine import BREAKOUT, PULLBACK, TWO_CANDLES
-from goldbot.scalping.live import ScalpRunner, strategy_label, strategy_versions
+from goldbot.scalping.live import ScalpRunner, settings_dump, strategy_label, strategy_versions
 from goldbot.scalping.store import CLOSED, FAILED, OPEN, SENDING, SENT, VERIFY_PREFIX, ScalpStore, params_hash
 
 log = logging.getLogger("goldbot.scalp")
@@ -70,7 +70,7 @@ class PendingOrders(Refused):
 
 def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Callable[[str], None]) -> ScalpStore:
     """Réglages figés pendant l'expérience : un changement exige --nouvelle-experience (l'ancienne est archivée)."""
-    current = params_hash(settings.scalping.model_dump())
+    current = params_hash(settings_dump(settings.scalping))  # réglages neutres ajoutés après coup : ignorés
     store = ScalpStore(path)
     if store.archived is not None:
         say(f"Base d'une version précédente du bot archivée : {store.archived.name}")

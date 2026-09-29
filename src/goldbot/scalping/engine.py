@@ -434,6 +434,8 @@ def plan_trade(
     """Plan de trade, ou le motif du refus. commission_per_oz : commission aller-retour, en prix par once."""
     side = setup.side
     spread = ask - bid
+    if config.max_spread_pips is not None and spread > config.max_spread_pips * config.pip_size + 1e-9:
+        return f"spread trop large : {pips(spread, config)} > {config.max_spread_pips:g} pips"
     entry = ask if side == LONG else bid
     buffer = config.stop_buffer_points * point
     two = setup.strategy == TWO_CANDLES

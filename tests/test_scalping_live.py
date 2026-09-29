@@ -553,7 +553,8 @@ _V1_EXITS = [
     ("  max_total_risk_pct: 2.0 ", "  max_total_risk_pct: 0.5 "),
     ("  daily_loss_pct: 2.0 ", "  daily_loss_pct: 1.0 "),
     ("    ceiling_total_risk_pct: 2.0 ", "    ceiling_total_risk_pct: 1.0 "),
-    ("  max_open_positions: 20 ", "  max_open_positions: 5 "),
+    ("  max_open_positions: 2 ", "  max_open_positions: 5 "),
+    ("    ceiling_open_positions: 2 ", "    # "),
     ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
     ("  risk_per_trade_pct: 1.0\n", "  risk_per_trade_pct: 0.1\n"),
     ("  lot_choices: [0.4, 0.3]\n", ""),
@@ -1057,10 +1058,41 @@ def test_strategy_label_names_the_opposite_signal_rule(settings):
     assert strategy_label("B", cfg, 1, "abcd1234").endswith(" + retournement si gain · abcd1234")
 
 
-def test_keeping_opposite_trades_keeps_the_fingerprint_of_the_versions_before_the_setting(settings):
-    # « garder » = le comportement d'avant ce réglage : même empreinte, l'expérience en cours continue sans archivage.
+@pytest.mark.parametrize(
+    ("section", "key", "value"),
+    [(None, "opposite_signals", "retourner_si_gain"), (None, "max_spread_pips", 2.5),
+     ("cadence", "ceiling_open_positions", 2)],
+)
+def test_settings_added_later_leave_the_fingerprint_unchanged_at_their_neutral_value(settings, section, key, value):
+    # Valeur neutre = le comportement d'avant ce réglage : même empreinte, l'expérience en cours continue.
     kept = strategy_versions(settings.scalping)[BREAKOUT]
-    assert "opposite_signals" not in kept[2]["common"]
-    reversed_ = strategy_versions(settings.scalping.model_copy(update={"opposite_signals": "retourner_si_gain"}))
-    assert reversed_[BREAKOUT][2]["common"]["opposite_signals"] == "retourner_si_gain"
-    assert reversed_[BREAKOUT][1] != kept[1]  # autre règle : autre empreinte, nouvelle expérience exigée
+    common = kept[2]["common"] if section is None else kept[2]["common"][section]
+    assert key not in common
+    if section is None:
+        changed = settings.scalping.model_copy(update={key: value})
+    else:
+        sub = getattr(settings.scalping, section).model_copy(update={key: value})
+        changed = settings.scalping.model_copy(update={section: sub})
+    other = strategy_versions(changed)[BREAKOUT]
+    common = other[2]["common"] if section is None else other[2]["common"][section]
+    assert common[key] == value and other[1] != kept[1]  # autre règle : autre empreinte, nouvelle expérience exigée
+    # Même règle pour les réglages figés d'une expérience (contrôle au redémarrage du bot).
+    from goldbot.scalping.live import settings_dump
+
+    frozen, moved = settings_dump(settings.scalping), settings_dump(changed)
+    assert key not in (frozen if section is None else frozen[section])
+    assert (moved if section is None else moved[section])[key] == value
+
+
+def test_a_spread_wider_than_the_limit_is_set_aside_silently(tmp_path, settings):
+    scalping = settings.scalping.model_copy(update={"max_spread_pips": 2.5})
+    broker, clock, quote, runner, lines = make_world(tmp_path, settings.model_copy(update={"scalping": scalping}))
+    live = runner()
+    assert live.labels[BREAKOUT].endswith(" + spread max 2.5 pips · " + live.versions[BREAKOUT][1])
+    live.step()
+    broker.history_ticks = range_then_breakout(BASE_MS)
+    clock.server_ms = BASE_MS + 16_500
+    quote(4000.50, spread=0.30)  # 3 pips : spread de la coupure du soir
+    live.step()
+    assert broker.sent == [] and live.set_aside == {"spread trop large": 1}
+    assert not any("refus" in line for line in lines)  # compté, pas affiché

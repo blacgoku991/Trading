@@ -150,7 +150,7 @@ scalping:
   # 0,4 lot tient jusqu'à un stop d'environ 13 pips, 0,3 jusqu'à 18 pips.
   risk_per_trade_pct: 1.0
   lot_choices: [0.4, 0.3]
-  max_open_positions: 20        # trades ouverts en même temps : le risque cumulé (2 %) limite avant
+  max_open_positions: 2         # « la version 2 positions, même dans des sens différents » (utilisateur, 29/09)
   max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
   max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
   min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s (base)
@@ -163,6 +163,10 @@ scalping:
   # 14 trades), il aurait donné environ +299 € (gagnants coupés tôt) : retour à « garder », même empreinte f8489472.
   # Rejeu sur 4 semaines de ticks Axi : même perte par trade avec l'un ou l'autre (-0,15 R contre -0,14 R).
   opposite_signals: garder
+  # Option (désactivée) : max_spread_pips: 2.5 = pas d'entrée si le spread dépasse 2,5 pips (normal : 1,6).
+  # Sur 4 semaines de ticks, les trades à plus de 3 pips de spread (23:00-00:00 heure serveur) perdent 7,9 pips
+  # en moyenne contre 1,7 ; mais le 29/09 il aurait retiré 3 trades qui ont rapporté +77,58 € : l'utilisateur
+  # juge sur la journée du jour, donc pas activé.
   # Sens du jour (v3) : trades seulement dans le sens du mouvement du jour quand il atteint 0,5 x l'ATR journalier.
   # Désactivé en v4 à la demande de l'utilisateur (« pas seulement des achats ou des ventes, en fonction du
   # marché ») : le sens vient de la tendance M1 (EMA20 / EMA50) et de la cassure des 60 s, il change en quelques
@@ -247,6 +251,7 @@ scalping:
     multipliers: [1, 2, 4, 6]
     ceiling_entries_per_minute: 12  # une par bougie de 5 s au plus ; requêtes serveur, pas de HFT chez Axi
     ceiling_total_risk_pct: 2.0     # risque ouvert jamais au-delà de la perte journalière maximale (daily_loss_pct)
+    ceiling_open_positions: 2       # deux positions au plus, même quand la cadence monte
 
 logging:
   level: INFO

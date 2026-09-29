@@ -73,7 +73,7 @@ class Cadence:
                 int(cfg.max_entries_per_minute * factor), cadence.ceiling_entries_per_minute, 60 // cfg.candle_seconds
             ),
             seconds_between_entries=cfg.min_seconds_between_entries / factor,
-            open_positions=int(cfg.max_open_positions * factor),
+            open_positions=min(int(cfg.max_open_positions * factor), cadence.ceiling_open_positions or 10**9),
             total_risk_pct=min(cfg.max_total_risk_pct * factor, cadence.ceiling_total_risk_pct),
         )
 
@@ -269,6 +269,14 @@ def split_volume(volume: float, volume_max: float, volume_step: float) -> list[f
     count = -(-steps // max_steps)
     base, extra = divmod(steps, count)
     return [round((base + (1 if i < extra else 0)) * volume_step, 8) for i in range(count)]
+
+
+def after_open_refusal(seconds_since_open: float | None, config: ScalpingConfig) -> str | None:
+    """Motif du refus si le marché a rouvert depuis moins de no_entry_after_open_min minutes (None sinon)."""
+    wait = config.no_entry_after_open_min
+    if wait is None or seconds_since_open is None or seconds_since_open >= wait * 60:
+        return None
+    return f"réouverture du marché : pas d'entrée pendant {wait:g} min"
 
 
 def opposite_plan(mode: str, latent: list[float]) -> tuple[bool, str | None]:

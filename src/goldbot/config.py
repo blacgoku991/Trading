@@ -309,6 +309,7 @@ class ScalpCadenceConfig(_Section):
     # HFT), bug qui enverrait des ordres en rafale ; risque ouvert au plus égal à la perte journalière maximale.
     ceiling_entries_per_minute: int = Field(ge=1, le=60)
     ceiling_total_risk_pct: float = Field(gt=0)
+    ceiling_open_positions: int | None = Field(default=None, ge=1)  # positions ouvertes, quel que soit le palier
 
     @model_validator(mode="after")
     def _consistent(self) -> ScalpCadenceConfig:
@@ -382,6 +383,10 @@ class ScalpingConfig(_Section):
     # fermés au marché, puis entrée), « retourner_si_gain » (fermés seulement s'ils sont tous en gain, sinon signal
     # refusé et trades gardés).
     opposite_signals: Literal["garder", "ignorer", "retourner", "retourner_si_gain"] = "garder"
+    # Pas de nouvelle entrée si le spread du moment dépasse ce nombre de pips (None : pas de limite).
+    max_spread_pips: float | None = Field(default=None, gt=0)
+    # Pas de nouvelle entrée pendant ces minutes après la réouverture quotidienne (spreads larges, prix désordonnés).
+    no_entry_after_open_min: float | None = Field(default=None, gt=0)
     quick_stop_s: float = Field(default=20.0, gt=0)  # stop touché plus vite que ça : entrée prise dans le bruit
     quick_stop_pause_s: float = Field(default=0.0, ge=0)  # pause des entrées dans ce sens après un tel stop
     loss_streak: int = Field(default=3, ge=1)  # pertes d'affilée dans un même sens...

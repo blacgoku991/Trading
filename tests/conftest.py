@@ -61,8 +61,9 @@ def v1_exit_settings():
         max_open_positions=5,
         direction_filter=False,
         opposite_signals="garder",  # testés à part (tests « signaux contraires »)
+        max_spread_pips=None,  # testé à part
     )
-    data["cadence"].update(ceiling_total_risk_pct=1.0)
+    data["cadence"].update(ceiling_total_risk_pct=1.0, ceiling_open_positions=None)
     data["learning"].update(enabled=True, version=1, target_ratios=[0.8, 1.2, 2.0])
     data["pullback"]["enabled"] = True  # les tests couvrent les deux stratégies
     data["breakout"]["enabled"] = True

@@ -27,6 +27,7 @@ from goldbot.scalping.market_read import read_direction
 from goldbot.scalping.policy import (
     EntryPolicy,
     Exposure,
+    after_open_refusal,
     drawdown_pct,
     ladder_volumes,
     opposite_plan,
@@ -207,6 +208,10 @@ def run_backtest(
                     continue
                 if not schedule.is_open(_EPOCH + timedelta(milliseconds=now + config.max_hold_s * 1000)):
                     refusals[(code, "le marché ferme avant la durée max")] += 1
+                    continue
+                why = after_open_refusal(schedule.seconds_since_open(_EPOCH + timedelta(milliseconds=now)), config)
+                if why is not None:
+                    refusals[(code, reason_key(why))] += 1
                     continue
                 plan = plan_trade(
                     setup,

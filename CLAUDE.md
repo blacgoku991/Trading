@@ -421,6 +421,12 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   et doute du nouveau principe ; recalculée avec le retournement : environ +299 €. Retour à `opposite_signals:
   garder` (empreinte `f8489472` inchangée, expérience continuée), retournement gardé en option. Rappelé : une heure
   ne prouve rien (rejeu 4 semaines perdant). Trois T/P déplacés sur le serveur pendant la séance, pas par le bot.
+  Puis « reviens à la version 2 positions, même différentes, et améliore dans cette optique » : 10 pistes fixées
+  d'avance, testées sur 7 ans (`research/two_candles/`), aucune ne change grand-chose. L'utilisateur précise :
+  « base-toi sur des tests sur la journée d'aujourd'hui, pas sur 1 an ou 4 ans ». Décidé sur sa séance du jour :
+  deux positions au plus (même résultat ce jour-là), filtre de spread non activé (il aurait retiré +77,58 €).
+  Outil `scripts/rejeu_jour.py` : la version démo et 8 variantes rejouées sur les ticks du jour (MT5, lecture
+  seulement). Rappelé : une journée ne prouve rien. Les T/P de la séance avaient été déplacés à la main.
 
 ---
 
