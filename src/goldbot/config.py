@@ -215,6 +215,45 @@ class SessionMomentumConfig(_Section):
         return self
 
 
+class ScalpingConfig(_Section):
+    """Expérience de scalping (démo uniquement), séparée de la stratégie principale."""
+
+    magic: int = Field(gt=0, lt=2**63)
+    candle_seconds: int = Field(ge=1, le=60)
+    breakout_lookback_s: int = Field(ge=10)
+    min_window_candles: int = Field(ge=1)
+    confirm_closes: int = Field(ge=1, le=10)
+    ema_fast: int = Field(ge=2)
+    ema_slow: int = Field(ge=3)
+    stop_lookback_s: int = Field(ge=5)
+    stop_buffer_points: float = Field(ge=0)
+    min_stop_points: float = Field(gt=0)
+    max_stop_points: float = Field(gt=0)
+    target_ratio: float = Field(gt=0)
+    min_target_cost_ratio: float = Field(ge=0)
+    expected_slippage_points: float = Field(ge=0)
+    extra_slippage_points: float = Field(ge=0)
+    max_hold_s: int = Field(ge=5)
+    min_seconds_between_entries: float = Field(ge=0)
+    risk_per_trade_pct: float = Field(gt=0, le=RISK_PER_TRADE_HARD_CAP_PCT)
+    max_open_positions: int = Field(ge=1)
+    max_total_risk_pct: float = Field(gt=0)
+    daily_loss_pct: float = Field(gt=0)
+    cadence_verified: bool = False
+    broker_min_seconds_between_orders: float = Field(ge=0)
+    experiment_days: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ScalpingConfig:
+        if self.ema_fast >= self.ema_slow:
+            raise ValueError("ema_fast doit être inférieur à ema_slow")
+        if self.min_stop_points >= self.max_stop_points:
+            raise ValueError("min_stop_points doit être inférieur à max_stop_points")
+        if self.max_total_risk_pct < self.risk_per_trade_pct:
+            raise ValueError("max_total_risk_pct doit couvrir au moins un trade")
+        return self
+
+
 class StrategiesConfig(_Section):
     asian_breakout: AsianBreakoutConfig
     # Portefeuille retenu (docs/STRATEGIES.md) : une stratégie par session.
@@ -240,6 +279,7 @@ class Settings(_Section):
     export: ExportConfig
     backtest: BacktestConfig
     strategies: StrategiesConfig
+    scalping: ScalpingConfig
     logging: LoggingConfig
 
 

@@ -129,6 +129,37 @@ strategies:
       sl_atr: 0.3
       tp_r: 0
 
+scalping:
+  # EXPÉRIENCE de scalping sur compte DÉMO (scripts/run_scalp.py), séparée de la stratégie Londres / New York.
+  # Point de départ expérimental, PAS une stratégie annoncée comme rentable. Ne pas modifier pendant
+  # la période de collecte : le bot refuse de repartir si ces réglages changent en cours d'expérience.
+  magic: 20260929               # différent du bot principal : les deux bots s'ignorent
+  candle_seconds: 5             # bougies de 5 s construites à partir des ticks bid/ask (prix médian)
+  breakout_lookback_s: 60       # cassure du plus haut / plus bas des 60 s précédentes (bougie de signal exclue)
+  min_window_candles: 6         # au moins 6 bougies dans ces 60 s (sinon marché trop calme ou trou)
+  confirm_closes: 2             # clôtures de 5 s au-delà du niveau
+  ema_fast: 20                  # filtre de tendance sur les barres M1 clôturées : EMA20 > EMA50 pour acheter
+  ema_slow: 50
+  stop_lookback_s: 30           # stop derrière la structure des 30 dernières secondes
+  stop_buffer_points: 5         # marge au-delà de cette structure
+  min_stop_points: 50           # stop d'au moins 0,50 $
+  max_stop_points: 600          # et d'au plus 6,00 $ (au-delà, le lot minimal dépasse le budget)
+  target_ratio: 1.2             # objectif = 1,2 x la distance du stop
+  min_target_cost_ratio: 3.0    # objectif >= 3 x le coût estimé (spread + glissements), sinon refus
+  expected_slippage_points: 5   # glissement supposé par exécution (filtre de coût)
+  extra_slippage_points: 10     # simulation parallèle « avec glissement supplémentaire »
+  max_hold_s: 120               # durée maximale : fermeture même en perte
+  min_seconds_between_entries: 10  # délai entre deux entrées (en plus du réarmement du signal)
+  risk_per_trade_pct: 0.1       # 5 € par trade sur 5 000 €
+  max_open_positions: 3
+  max_total_risk_pct: 0.3       # risque cumulé des positions ouvertes
+  daily_loss_pct: 1.0           # l'expérience s'arrête pour la journée au-delà de -1 %
+  # Cadence d'envoi au broker : NON vérifiée auprès d'Axi. Tant que false, au plus un ordre envoyé
+  # toutes les broker_min_seconds_between_orders secondes ; les autres signaux sont simulés localement.
+  cadence_verified: false
+  broker_min_seconds_between_orders: 60
+  experiment_days: 10           # durée annoncée de la collecte (jours de cotation)
+
 logging:
   level: INFO
   max_bytes: 5000000
