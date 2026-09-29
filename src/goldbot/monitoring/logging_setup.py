@@ -74,6 +74,8 @@ def setup_logging(
 
     console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setFormatter(_ZoneFormatter(ZoneInfo(display_timezone), "%Y-%m-%d %H:%M:%S"))
+    # Message déjà affiché tel quel à l'écran (extra={"console": False}) : seulement dans le fichier.
+    console_handler.addFilter(lambda record: getattr(record, "console", True))
 
     for handler in (file_handler, console_handler):
         handler.addFilter(redactor)

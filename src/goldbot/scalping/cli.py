@@ -241,7 +241,7 @@ def live_main(
 
     def say(text: str) -> None:
         echo(text)
-        log.info(text)
+        log.info(text, extra={"console": False})  # déjà affiché : dans le journal seulement
 
     now_utc = now_utc or (lambda: datetime.now(UTC))
     lock = InstanceLock(root / "data" / "scalp.lock")

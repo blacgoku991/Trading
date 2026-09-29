@@ -30,6 +30,20 @@ def test_log_file_is_utc_and_never_contains_secrets(tmp_path):
     assert content.split(" ", 1)[0].endswith("Z")  # horodatage UTC
 
 
+def test_a_message_already_printed_goes_to_the_file_only(tmp_path, capsys):
+    logger = setup_logging(
+        log_dir=tmp_path, level="INFO", max_bytes=10_000, backup_count=2, display_timezone="Europe/Paris"
+    )
+    logging.getLogger("goldbot.test").info("déjà affiché", extra={"console": False})
+    logging.getLogger("goldbot.test").warning("avertissement")
+    for handler in logger.handlers:
+        handler.flush()
+    console = capsys.readouterr().err
+    assert "déjà affiché" not in console and "avertissement" in console
+    content = (tmp_path / "goldbot.log").read_text(encoding="utf-8")
+    assert "déjà affiché" in content and "avertissement" in content
+
+
 def test_setup_logging_is_idempotent(tmp_path):
     kwargs = dict(log_dir=tmp_path, level="INFO", max_bytes=10_000, backup_count=2, display_timezone="Europe/Paris")
     setup_logging(**kwargs)
