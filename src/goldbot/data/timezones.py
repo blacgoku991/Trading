@@ -11,6 +11,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import numpy as np
+import pandas as pd
+
 from goldbot.config import ServerTimeConfig
 
 _EPOCH = datetime(1970, 1, 1)
@@ -57,6 +60,18 @@ class ServerTimeRule:
     def server_epoch_to_utc(self, epoch_seconds: float) -> datetime:
         """Epoch renvoyé par MT5 (heure serveur) -> instant UTC."""
         return self.server_to_utc(_EPOCH + timedelta(seconds=epoch_seconds))
+
+    def server_ms_to_utc(self, epoch_ms: np.ndarray) -> pd.DatetimeIndex:
+        """Version vectorisée de server_epoch_to_utc, en millisecondes (barres et ticks MT5).
+
+        Les heures ambiguës ou inexistantes (changement d'heure, marché fermé) donnent NaT
+        au lieu de lever InvalidServerTime.
+        """
+        server = pd.to_datetime(np.asarray(epoch_ms, dtype="int64"), unit="ms").as_unit("ms")
+        local = (server - pd.Timedelta(self.offset)).tz_localize(
+            self.reference_tz.key, ambiguous="NaT", nonexistent="NaT"
+        )
+        return local.tz_convert("UTC").as_unit("ms")
 
 
 def measured_offset(tick_epoch: float, now_utc: datetime) -> float:

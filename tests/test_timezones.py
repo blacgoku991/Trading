@@ -1,9 +1,12 @@
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from goldbot.data.timezones import InvalidServerTime, format_offset, measured_offset
+from tests.conftest import server_epoch_of
 
 NEW_YORK = ZoneInfo("America/New_York")
 
@@ -73,3 +76,30 @@ def test_measured_offset_is_offset_minus_tick_age(rule):
 )
 def test_format_offset(offset, text):
     assert format_offset(offset) == text
+
+
+def test_vectorized_conversion_matches_the_scalar_one(rule):
+    rng = np.random.default_rng(0)
+    start, end = server_epoch_of("2020-01-01 00:00"), server_epoch_of("2027-01-01 00:00")
+    epochs_ms = rng.integers(start, end, 5_000) * 1000 + rng.integers(0, 1000, 5_000)
+    vectorized = rule.server_ms_to_utc(epochs_ms)
+    for epoch_ms, converted in zip(epochs_ms, vectorized, strict=True):
+        try:
+            expected = rule.server_epoch_to_utc(epoch_ms / 1000)
+        except InvalidServerTime:
+            assert pd.isna(converted)
+        else:
+            assert abs((converted - pd.Timestamp(expected)).total_seconds()) < 0.001
+
+
+def test_vectorized_conversion_marks_dst_changes_as_nat(rule):
+    # 8 mars 2026, 02:30 à New York n'existe pas (09:30 heure serveur) ; 1er novembre 01:30 est ambigu.
+    epochs = [
+        server_epoch_of("2026-03-08 09:30"),
+        server_epoch_of("2026-11-01 08:30"),
+        server_epoch_of("2026-01-06 13:00"),
+    ]
+    converted = rule.server_ms_to_utc(np.array(epochs) * 1000)
+    assert pd.isna(converted[0]) and pd.isna(converted[1])
+    assert converted[2] == pd.Timestamp("2026-01-06 11:00", tz="UTC")
+    assert str(converted.dtype) == "datetime64[ms, UTC]"

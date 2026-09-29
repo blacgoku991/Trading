@@ -23,6 +23,14 @@ dependencies = [
     "python-dotenv>=1.2,<2",
     # Base IANA des fuseaux horaires pour zoneinfo (absente sous Windows).
     "tzdata>=2026.4",
+    # Calcul vectorisé sur les barres et les ticks (tableaux renvoyés par copy_rates_* et copy_ticks_*).
+    # Le module compilé de MetaTrader5 5.0.6231 vise l'API C de NumPy 1.20 avec les en-têtes NumPy 2 :
+    # compatible NumPy 2.
+    "numpy>=2.5,<3",
+    # Séries temporelles de l'historique, conversion heure serveur -> UTC avec les changements d'heure.
+    "pandas>=3.0.6,<4",
+    # Lecture et écriture des fichiers parquet compressés (format demandé par CLAUDE.md §8).
+    "pyarrow>=25.0.1,<26",
 ]
 
 [project.optional-dependencies]

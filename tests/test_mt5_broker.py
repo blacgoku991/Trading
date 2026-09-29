@@ -1,11 +1,13 @@
 """MT5Broker.connect avec un faux module MetaTrader5 (le vrai n'existe que sous Windows)."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from goldbot.broker import mt5_constants as C
-from goldbot.broker.base import BrokerError
+from goldbot.broker.base import RATES_DTYPE, TICKS_DTYPE, BrokerError
 from goldbot.broker.mt5_broker import MT5Broker
 
 
@@ -42,6 +44,14 @@ class StubMT5(SimpleNamespace):
 
     def shutdown(self):
         self.calls.append(("shutdown", (), {}))
+
+    def copy_rates_range(self, *args):
+        self.calls.append(("copy_rates_range", args, {}))
+        return self.history
+
+    def copy_ticks_range(self, *args):
+        self.calls.append(("copy_ticks_range", args, {}))
+        return self.history
 
 
 def _broker(stub, path=r"C:\MT5\terminal64.exe"):
@@ -112,3 +122,36 @@ def test_constant_mismatch_refuses_to_run():
     with pytest.raises(BrokerError, match="TRADE_RETCODE_DONE") as info:
         _broker(stub).connect()
     assert not info.value.retryable
+
+
+def test_history_bounds_are_passed_as_utc_datetimes_holding_the_server_epoch():
+    stub = StubMT5(logged_in_as=123)
+    stub.history = np.zeros(2, RATES_DTYPE)
+    result = _broker(stub).rates_range("XAUUSD", C.TIMEFRAME_M1, 1_767_700_800, 1_767_787_199)
+    assert len(result) == 2
+    _, args, _ = stub.calls[-1]
+    assert args[:2] == ("XAUUSD", C.TIMEFRAME_M1)
+    assert args[2] == datetime(2026, 1, 6, 12, 0, tzinfo=UTC) and args[2].timestamp() == 1_767_700_800
+    assert args[3].tzinfo is UTC
+
+
+def test_ticks_request_passes_the_flags():
+    stub = StubMT5(logged_in_as=123)
+    stub.history = np.zeros(1, TICKS_DTYPE)
+    _broker(stub).ticks_range("XAUUSD", 1_767_700_800, 1_767_787_200, C.COPY_TICKS_ALL)
+    assert stub.calls[-1][1][3] == C.COPY_TICKS_ALL
+
+
+def test_no_history_with_success_code_is_an_empty_array():
+    stub = StubMT5(logged_in_as=123)
+    stub.history = None
+    result = _broker(stub).rates_range("XAUUSD", C.TIMEFRAME_M1, 0, 60)
+    assert len(result) == 0 and result.dtype == RATES_DTYPE
+
+
+def test_history_failure_raises_with_last_error():
+    stub = StubMT5(logged_in_as=123)
+    stub.history = None
+    stub.error = (C.RES_E_INVALID_PARAMS, "Invalid params")
+    with pytest.raises(BrokerError, match="copy_ticks_range"):
+        _broker(stub).ticks_range("XAUUSD", 0, 60, C.COPY_TICKS_ALL)

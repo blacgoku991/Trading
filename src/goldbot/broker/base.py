@@ -11,6 +11,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, fields
 from typing import Any
 
+import numpy as np
+
 from goldbot.broker import mt5_constants as C
 
 # Explications des échecs les plus courants de initialize() (docs/RESEARCH.md §1.2).
@@ -229,6 +231,34 @@ class CheckResult(_FromMt5):
     comment: str
 
 
+# Tableaux renvoyés par copy_rates_* et copy_ticks_* : noms des champs du package officiel
+# (docs/RESEARCH.md, annexe A.3). Le code convertit chaque champ explicitement : seuls les noms comptent.
+RATES_DTYPE = np.dtype(
+    [
+        ("time", "<i8"),
+        ("open", "<f8"),
+        ("high", "<f8"),
+        ("low", "<f8"),
+        ("close", "<f8"),
+        ("tick_volume", "<u8"),
+        ("spread", "<i4"),
+        ("real_volume", "<u8"),
+    ]
+)
+TICKS_DTYPE = np.dtype(
+    [
+        ("time", "<i8"),
+        ("bid", "<f8"),
+        ("ask", "<f8"),
+        ("last", "<f8"),
+        ("volume", "<u8"),
+        ("time_msc", "<i8"),
+        ("flags", "<u4"),
+        ("volume_real", "<f8"),
+    ]
+)
+
+
 class Broker(ABC):
     """Interface commune. Toute méthode lève BrokerError en cas d'échec."""
 
@@ -279,3 +309,11 @@ class Broker(ABC):
     def calc_profit(
         self, order_type: int, symbol: str, volume: float, price_open: float, price_close: float
     ) -> float: ...
+
+    @abstractmethod
+    def rates_range(self, symbol: str, timeframe: int, start: int, end: int) -> np.ndarray:
+        """copy_rates_range : barres ouvertes entre start et end inclus (secondes, epoch SERVEUR)."""
+
+    @abstractmethod
+    def ticks_range(self, symbol: str, start: int, end: int, flags: int) -> np.ndarray:
+        """copy_ticks_range : ticks entre start et end (secondes, epoch SERVEUR)."""

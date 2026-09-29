@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time
 
+import numpy as np
+import pandas as pd
+
 from goldbot.config import MarketHoursConfig
 
 _MONDAY, _FRIDAY = 0, 4
@@ -45,6 +48,17 @@ class MarketSchedule:
         after_friday_close = weekday == _FRIDAY and clock >= self.week_close
         return not after_friday_close
 
+    def open_mask(self, server_times: pd.DatetimeIndex) -> np.ndarray:
+        """Version vectorisée de is_open, pour des heures serveur naïves (mêmes règles)."""
+        weekday = np.asarray(server_times.weekday)
+        days = server_times.normalize()
+        clock = np.asarray((server_times - days) / pd.Timedelta(seconds=1))
+        in_break = (clock >= seconds_of_day(self.break_start)) | (clock < seconds_of_day(self.break_end))
+        before_week_open = (weekday == _MONDAY) & (clock < seconds_of_day(self.week_open))
+        after_week_close = (weekday == _FRIDAY) & (clock >= seconds_of_day(self.week_close))
+        closed_day = np.asarray(days.isin(pd.to_datetime(sorted(self.closed_dates))))
+        return (weekday <= _FRIDAY) & ~in_break & ~before_week_open & ~after_week_close & ~closed_day
+
     def seconds_since_open(self, server_time: datetime) -> float | None:
         """Secondes écoulées depuis la dernière ouverture (None si le marché est fermé)."""
         if not self.is_open(server_time):
@@ -53,3 +67,7 @@ class MarketSchedule:
         if server_time.weekday() == _MONDAY:
             opening = max(opening, self.week_open)
         return (server_time - datetime.combine(server_time.date(), opening)).total_seconds()
+
+
+def seconds_of_day(clock: time) -> float:
+    return clock.hour * 3600 + clock.minute * 60 + clock.second + clock.microsecond / 1e6

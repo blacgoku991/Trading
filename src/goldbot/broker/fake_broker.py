@@ -12,8 +12,12 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
+import numpy as np
+
 from goldbot.broker import mt5_constants as C
 from goldbot.broker.base import (
+    RATES_DTYPE,
+    TICKS_DTYPE,
     AccountState,
     Broker,
     BrokerError,
@@ -116,6 +120,36 @@ def make_tick(bid: float, ask: float, time_msc: int) -> Tick:
     return Tick(time=time_msc // 1000, time_msc=time_msc, bid=bid, ask=ask)
 
 
+def make_bars(times_s: np.ndarray, *, start_price: float = 4000.0, spread: int = 15, seed: int = 0) -> np.ndarray:
+    """Barres M1 synthétiques au format MT5 (marche aléatoire), horodatées en epoch serveur."""
+    rng = np.random.default_rng(seed)
+    count = len(times_s)
+    close = np.round(start_price + np.cumsum(rng.normal(0.0, 0.3, count)), 2)
+    open_ = np.round(np.concatenate(([start_price], close[:-1])), 2)
+    bars = np.zeros(count, RATES_DTYPE)
+    bars["time"] = times_s
+    bars["open"] = open_
+    bars["close"] = close
+    bars["high"] = np.round(np.maximum(open_, close) + rng.exponential(0.2, count), 2)
+    bars["low"] = np.round(np.minimum(open_, close) - rng.exponential(0.2, count), 2)
+    bars["tick_volume"] = rng.integers(1, 400, count)
+    bars["spread"] = spread
+    return bars
+
+
+def make_ticks(times_ms: np.ndarray, *, start_price: float = 4000.0, spread: float = 0.15, seed: int = 0) -> np.ndarray:
+    """Ticks synthétiques au format MT5, horodatés en epoch serveur (ms)."""
+    rng = np.random.default_rng(seed)
+    count = len(times_ms)
+    ticks = np.zeros(count, TICKS_DTYPE)
+    ticks["time_msc"] = times_ms
+    ticks["time"] = times_ms // 1000
+    ticks["bid"] = np.round(start_price + np.cumsum(rng.choice([-0.01, 0.0, 0.01], count)), 2)
+    ticks["ask"] = np.round(ticks["bid"] + spread, 2)
+    ticks["flags"] = C.TICK_FLAG_BID | C.TICK_FLAG_ASK
+    return ticks
+
+
 def match_group(names: list[str], group: str) -> list[str]:
     """Filtre façon symbols_get(group=) : conditions appliquées dans l'ordre, « ! » exclut."""
     selected: list[str] = []
@@ -157,6 +191,13 @@ class FakeBroker(Broker):
         self.lose_next_reply = False
         # Comme sur le compte démo Axi : price = 0.0 dans la réponse aux ordres au marché.
         self.zero_price_in_results = False
+        # Historique (format MT5, epoch serveur) servi par rates_range et ticks_range.
+        self.history_bars = np.zeros(0, RATES_DTYPE)
+        self.history_ticks = np.zeros(0, TICKS_DTYPE)
+        # Nombre de prochains appels servis tronqués, comme un terminal qui télécharge encore.
+        self.history_sync_calls = 0
+        self.history_errors: list[BrokerError] = []
+        self.history_calls: list[tuple[Any, ...]] = []
         self.connected = False
         self.connect_calls = 0
         self.shutdown_calls = 0
@@ -370,3 +411,26 @@ class FakeBroker(Broker):
         direction = 1 if order_type == C.ORDER_TYPE_BUY else -1
         spec = self._symbols[symbol]
         return round((price_close - price_open) * direction * volume * spec.trade_contract_size, 2)
+
+    # --- historique ---------------------------------------------------------------
+
+    def _serve_history(self, found: np.ndarray) -> np.ndarray:
+        if self.history_errors:
+            raise self.history_errors.pop(0)
+        if self.history_sync_calls > 0:
+            self.history_sync_calls -= 1
+            return found[: len(found) // 2].copy()
+        return found.copy()
+
+    def rates_range(self, symbol: str, timeframe: int, start: int, end: int) -> np.ndarray:
+        self._require_connection("copy_rates_range")
+        self.history_calls.append(("rates", symbol, timeframe, start, end))
+        bars = self.history_bars
+        return self._serve_history(bars[(bars["time"] >= start) & (bars["time"] <= end)])
+
+    def ticks_range(self, symbol: str, start: int, end: int, flags: int) -> np.ndarray:
+        self._require_connection("copy_ticks_range")
+        self.history_calls.append(("ticks", symbol, start, end, flags))
+        ticks = self.history_ticks
+        selected = (ticks["time_msc"] >= start * 1000) & (ticks["time_msc"] <= end * 1000)
+        return self._serve_history(ticks[selected])

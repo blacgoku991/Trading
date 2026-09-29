@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
 
 from goldbot.broker import mt5_constants as C
 from goldbot.broker.base import (
+    RATES_DTYPE,
+    TICKS_DTYPE,
     AccountState,
     Broker,
     BrokerError,
@@ -18,6 +23,9 @@ from goldbot.broker.base import (
     Tick,
     TradeResult,
 )
+
+if TYPE_CHECKING:
+    from goldbot.config import Secrets, Settings
 
 
 def verify_constants(module: Any) -> list[str]:
@@ -51,6 +59,17 @@ class MT5Broker(Broker):
         self._timeout_ms = timeout_ms
         self._portable = portable
         self._mt5: Any = None
+
+    @classmethod
+    def from_settings(cls, settings: Settings, secrets: Secrets) -> MT5Broker:
+        return cls(
+            login=secrets.login,
+            password=secrets.password,
+            server=secrets.server,
+            path=secrets.terminal_path,
+            timeout_ms=settings.mt5.timeout_ms,
+            portable=settings.mt5.portable,
+        )
 
     def __repr__(self) -> str:  # aucun secret dans la représentation
         return f"MT5Broker(path={self._path!r})"
@@ -171,3 +190,28 @@ class MT5Broker(Broker):
     ) -> float:
         profit = self._module().order_calc_profit(order_type, symbol, volume, price_open, price_close)
         return float(self._required("order_calc_profit", profit))
+
+    def _history(self, operation: str, result: Any, dtype: np.dtype) -> np.ndarray:
+        if result is None:
+            error = self._error(operation)
+            if error.code == C.RES_S_OK:
+                return np.empty(0, dtype)
+            raise error
+        return result
+
+    def rates_range(self, symbol: str, timeframe: int, start: int, end: int) -> np.ndarray:
+        found = self._module().copy_rates_range(symbol, timeframe, _as_datetime(start), _as_datetime(end))
+        return self._history(f"copy_rates_range({symbol})", found, RATES_DTYPE)
+
+    def ticks_range(self, symbol: str, start: int, end: int, flags: int) -> np.ndarray:
+        found = self._module().copy_ticks_range(symbol, _as_datetime(start), _as_datetime(end), flags)
+        return self._history(f"copy_ticks_range({symbol})", found, TICKS_DTYPE)
+
+
+def _as_datetime(epoch_s: int) -> datetime:
+    """Borne de copy_*_range. Comme dans les exemples officiels : datetime avec tzinfo UTC.
+
+    MT5 compare ses horodatages (heure serveur encodée en epoch) à cet epoch : passer
+    l'epoch serveur revient donc à demander l'heure serveur voulue.
+    """
+    return datetime.fromtimestamp(epoch_s, tz=UTC)

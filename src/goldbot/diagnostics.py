@@ -348,17 +348,6 @@ def run_connection_check(
     return exit_code
 
 
-def _mt5_broker(settings: Settings, secrets: Secrets) -> Broker:
-    return MT5Broker(
-        login=secrets.login,
-        password=secrets.password,
-        server=secrets.server,
-        path=secrets.terminal_path,
-        timeout_ms=settings.mt5.timeout_ms,
-        portable=settings.mt5.portable,
-    )
-
-
 def _windows_environment(terminal_path: str | None) -> list[Finding]:
     return check_windows_environment(
         terminal_path,
@@ -378,7 +367,7 @@ def main(
     argv: list[str] | None = None,
     *,
     root: Path | None = None,
-    broker_factory: Callable[[Settings, Secrets], Broker] = _mt5_broker,
+    broker_factory: Callable[[Settings, Secrets], Broker] = MT5Broker.from_settings,
     environment_check: Callable[[str | None], list[Finding]] | None = (
         _windows_environment if sys.platform == "win32" else None
     ),
