@@ -37,7 +37,7 @@ from goldbot.monitoring.logging_setup import setup_logging
 from goldbot.scalping.backtest import Instrument, run_backtest, summary
 from goldbot.scalping.engine import BREAKOUT, PULLBACK
 from goldbot.scalping.live import ScalpRunner, strategy_label, strategy_versions
-from goldbot.scalping.store import CLOSED, FAILED, OPEN, SENT, VERIFY_PREFIX, ScalpStore, params_hash
+from goldbot.scalping.store import CLOSED, FAILED, OPEN, SENDING, SENT, VERIFY_PREFIX, ScalpStore, params_hash
 
 log = logging.getLogger("goldbot.scalp")
 
@@ -72,6 +72,15 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
         say(f"Base d'une version précédente du bot archivée : {store.archived.name}")
     saved = store.meta("params_hash")
     if store.has_activity() and (new_experiment or (saved is not None and saved != current)):
+        pending = store.orders(OPEN, SENDING)
+        if pending:
+            # Archiver maintenant perdrait le résultat de ces trades (jamais relu ensuite).
+            store.close()
+            raise Refused(
+                f"{len(pending)} ordre(s) de l'expérience encore ouvert(s) ou en attente : relance d'abord sans "
+                "--nouvelle-experience (avec les réglages de l'expérience) pour que le bot les ferme et enregistre "
+                "leur résultat (Ctrl+C ferme les positions), puis démarre la nouvelle expérience"
+            )
         if not new_experiment:
             store.close()
             raise Refused(
@@ -87,6 +96,21 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
         store.set_meta("params_hash", current)
         store.set_meta("started_utc", datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
     return store
+
+
+def _wind_down(runner: ScalpRunner, sleep: Callable[[float], None], passes: int = 40) -> int:
+    """Expérience arrêtée : fermer les positions restantes et enregistrer leurs sorties, sans aucune entrée.
+
+    Renvoie le nombre de positions de l'expérience encore ouvertes (marché fermé, liaison perdue...).
+    """
+    for _ in range(passes):
+        now_ms = runner.server_now_ms()
+        runner._manage_positions(now_ms)
+        runner._check_drawdown(now_ms)  # arrêtée : ferme ce qui reste (nouvel essai toutes les 5 s)
+        if not runner.store.orders(OPEN, SENDING) and not runner._mine():
+            return 0
+        sleep(POLL_SECONDS)
+    return len(runner._mine())
 
 
 def _history_check(runner: ScalpRunner, comment: str, position: Position, sent_ms: int) -> tuple[str, bool, str]:
@@ -316,8 +340,11 @@ def live_main(
         if args.verification:
             return EXIT_OK if _verify(runner, store_path, settings, say) else EXIT_FAILED
         if runner.halted:
-            raise Refused(f"arrêt total de l'expérience ({runner.halted}). Relance manuelle uniquement, après "
-                          "réflexion : run_scalp.py --nouvelle-experience (l'expérience actuelle est archivée)")  # fmt: skip
+            left = _wind_down(runner, sleep)
+            detail = f" ; {left} position(s) encore ouverte(s), stop serveur en place" if left else ""
+            raise Refused(f"arrêt total de l'expérience ({runner.halted}){detail}. Relance manuelle uniquement, "
+                          "après réflexion : run_scalp.py --nouvelle-experience (l'expérience actuelle est "
+                          "archivée)")  # fmt: skip
         cfg = settings.scalping
         now_ms = runner.server_now_ms()
         for code, (version, digest, params) in strategy_versions(cfg).items():
@@ -325,9 +352,15 @@ def live_main(
         say("Stratégies (version · empreinte des réglages) : " + ", ".join(runner.labels[c] for c in runner.versions))
         day = store.trading_days()
         say(
-            f"Compte DÉMO, equity {account.equity:.2f} {account.currency}. Risque {cfg.risk_per_trade_pct:g} % "
-            f"par trade, -{cfg.daily_loss_pct:g} % par jour au plus. De base : {cfg.max_open_positions} positions, "
-            f"{cfg.max_total_risk_pct:g} % de risque cumulé, {cfg.max_entries_per_minute} entrées par minute au plus."
+            f"Compte DÉMO, equity {account.equity:.2f} {account.currency}. "
+            + (
+                f"Lot fixe {cfg.fixed_volume:g} (trade refusé s'il risque plus de {cfg.risk_per_trade_pct:g} % au stop)"
+                if cfg.fixed_volume is not None
+                else f"Risque {cfg.risk_per_trade_pct:g} % par trade"
+            )
+            + f", -{cfg.daily_loss_pct:g} % par jour au plus, arrêt total à -{cfg.max_drawdown_pct:g} % depuis le plus "
+            f"haut. De base : {cfg.max_open_positions} positions, {cfg.max_total_risk_pct:g} % de risque cumulé, "
+            f"{cfg.max_entries_per_minute} entrées par minute au plus."
         )
         if cfg.cadence.enabled:
             top = runner.policy.cadence.top_limits()

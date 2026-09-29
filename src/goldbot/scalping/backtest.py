@@ -21,7 +21,7 @@ from goldbot.config import ScalpingConfig
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.quality import server_index
 from goldbot.indicators.core import atr as atr_series
-from goldbot.scalping.engine import CandleBuilder, SimTrade, make_detectors, plan_trade
+from goldbot.scalping.engine import LONG, CandleBuilder, SimTrade, make_detectors, plan_trade
 from goldbot.scalping.learning import LearningBook
 from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, reason_key, split_volume, trade_volume
 
@@ -106,6 +106,37 @@ def run_backtest(
     per_minute: Counter = Counter()
     day, day_pnl = None, 0.0
 
+    def record(item: tuple[SimTrade, Exposure, str, int, str], now: int) -> float:
+        """Trade fermé : résultat, cadence, pauses et ligne du rapport. Renvoie le résultat (devise de cotation)."""
+        trade, exposure, strategy, parts, variant = item
+        pnl = trade.move * trade.volume * instrument.contract_size
+        level = policy.cadence.level  # palier au moment de la sortie (avant sa mise à jour)
+        policy.cadence.on_close(pnl)
+        policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
+        closed.append(
+            {
+                "strategy": strategy,
+                "variant": variant,
+                "tag": trade.tag,
+                "key": exposure.key,
+                "side": trade.side,
+                "open_ms": trade.open_ms,
+                "exit_ms": trade.exit_ms,
+                "entry": trade.entry,
+                "sl": trade.sl,
+                "tp": trade.tp,
+                "exit": trade.exit_price,
+                "reason": trade.reason,
+                "lots": trade.volume,
+                "parts": parts,
+                "risk": exposure.risk,
+                "fees": trade.fee * trade.volume * instrument.contract_size,
+                "pnl": pnl,
+                "palier": level,
+            }
+        )
+        return pnl
+
     for i in range(len(times)):
         now, bid, ask = int(times[i]), float(bids[i]), float(asks[i])
         today = now // 86_400_000
@@ -116,43 +147,32 @@ def run_backtest(
             book.on_tick(now, bid, ask)
         if open_trades:
             still = []
-            for trade, exposure, strategy, parts, variant in open_trades:
+            for item in open_trades:
+                trade = item[0]
                 if trade.on_tick(now, bid, ask):
-                    pnl = trade.move * trade.volume * instrument.contract_size
-                    level = policy.cadence.level  # palier au moment de la sortie (avant sa mise à jour)
-                    policy.cadence.on_close(pnl)
-                    policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
+                    pnl = record(item, now)
                     equity += pnl
                     day_pnl += pnl
                     low = min(low, equity)
-                    peak = max(peak, equity)
-                    if halted_ms is None and drawdown_pct(equity, peak) >= config.max_drawdown_pct:
-                        halted_ms = now  # arrêt total : plus aucune entrée (en démo : relance manuelle)
-                    closed.append(
-                        {
-                            "strategy": strategy,
-                            "variant": variant,
-                            "tag": trade.tag,
-                            "key": exposure.key,
-                            "side": trade.side,
-                            "open_ms": trade.open_ms,
-                            "exit_ms": trade.exit_ms,
-                            "entry": trade.entry,
-                            "sl": trade.sl,
-                            "tp": trade.tp,
-                            "exit": trade.exit_price,
-                            "reason": trade.reason,
-                            "lots": trade.volume,
-                            "parts": parts,
-                            "risk": exposure.risk,
-                            "fees": trade.fee * trade.volume * instrument.contract_size,
-                            "pnl": pnl,
-                            "palier": level,
-                        }
-                    )
                 else:
-                    still.append((trade, exposure, strategy, parts, variant))
+                    still.append(item)
             open_trades = still
+        # Arrêt total au drawdown maximal, comme en démo : valeur réalisée + latente, plus haut compris.
+        if halted_ms is None:
+            size = instrument.contract_size
+            value = equity + sum(t.move_at(bid, ask) * t.volume * size for t, *_ in open_trades)
+            peak = max(peak, value)
+            if drawdown_pct(value, peak) >= config.max_drawdown_pct:
+                halted_ms = now  # plus aucune entrée ; trades ouverts fermés au marché (close_all en démo)
+                for item in open_trades:
+                    trade = item[0]
+                    exit_price = bid - trade.slip if trade.side == LONG else ask + trade.slip
+                    trade._close(now, exit_price, "arrêt total")
+                    pnl = record(item, now)
+                    equity += pnl
+                    day_pnl += pnl
+                    low = min(low, equity)
+                open_trades = []
         # 2. Nouvelle bougie terminée : signaux éventuels, décidés au prix de ce tick.
         for candle in builder.add(now, bid, ask):
             bar = int(np.searchsorted(bar_times, (candle.start_ms + size_ms) // 1000 - 60, side="right")) - 1

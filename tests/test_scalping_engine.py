@@ -668,6 +668,8 @@ def test_replay_stops_everything_at_the_maximum_drawdown():
     assert len(normal.trades) == 2 and normal.halted_ms is None
     strict = run(CONFIG.model_copy(update={"max_drawdown_pct": 0.001}))  # la première perte suffit
     assert len(strict.trades) == 1 and strict.halted_ms == int(strict.trades["exit_ms"].iloc[0])
+    # Mesuré sur le latent comme en démo : le trade ouvert est fermé au marché à l'arrêt (close_all en démo).
+    assert strict.trades["reason"].tolist() == ["arrêt total"]
     assert strict.refusals == {(BREAKOUT, "arrêt total : drawdown maximal atteint"): 1}
 
 

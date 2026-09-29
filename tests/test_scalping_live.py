@@ -769,3 +769,64 @@ def test_a_halted_experiment_refuses_to_start_without_a_new_experiment(tmp_path,
     assert code == EXIT_REFUSED and "arrêt total de l'expérience" in output and broker.sent == []
     code, output = _launch(tmp_path, env_file, broker, clock, "--nouvelle-experience")
     assert code == EXIT_OK and "Ancienne expérience archivée" in output
+
+
+def test_no_drawdown_measure_while_a_closed_position_is_not_recorded_yet(world, tmp_path):
+    broker, clock, quote, runner, lines = world
+    store = ScalpStore(tmp_path / "scalp.sqlite")
+    store.set_meta("start_equity", "10000.0")
+    live = runner(store=store)
+    _breakout(broker, clock, quote, live)
+    (position,) = broker.positions()
+    broker._positions[position.ticket] = replace(position, profit=500.0)  # gain latent de 500
+    store.set_meta("plus_haut_experience", "11400.0")
+    live._check_drawdown(live.server_now_ms())
+    assert not live.halted  # 10 500 contre 11 400 : -7,9 %
+    broker._positions.pop(position.ticket)  # fermée au TP, sortie pas encore dans l'historique
+    live._check_drawdown(live.server_now_ms())
+    assert not live.halted  # sans la garde : 10 000 contre 11 400, -12,3 % et faux arrêt total
+
+
+def test_after_a_halt_positions_are_closed_again_until_they_are_gone(world, tmp_path):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    live.halted = "test"
+    broker.send_retcodes = [C.TRADE_RETCODE_MARKET_CLOSED]  # première fermeture refusée
+    live._check_drawdown(live.server_now_ms())
+    assert len(broker.positions()) == 1
+    clock.advance(6)  # nouvel essai après 5 s
+    quote(4000.40)
+    live.step()
+    assert broker.positions() == []
+
+
+def test_halt_is_checked_before_the_entries_of_the_same_pass(world, tmp_path):
+    broker, clock, quote, runner, lines = world
+    store = ScalpStore(tmp_path / "scalp.sqlite")
+    store.set_meta("start_equity", "10000.0")
+    live = runner(local_only=True, store=store)
+    live.step()  # préchauffage
+    store.record_sim("SC-B-1-L", "B", 1_000, 1, 4000.0, 3990.0, 4030.0, 1.0, False)
+    store.close_sim("SC-B-1-L", 3990.0, "stop", -1_050.0, 0.0, 2_000)  # -10,5 % avant ce passage
+    broker.history_ticks = range_then_breakout(BASE_MS)
+    clock.server_ms = BASE_MS + 16_500
+    quote(4000.50)
+    live.step()  # la cassure arrive dans le même passage que la mesure
+    assert live.halted and live.shadow == {}
+    assert any("refus : arrêt total" in line for line in lines)
+
+
+def test_a_new_experiment_is_refused_while_orders_are_still_open(tmp_path, env_file, world):
+    broker, clock, quote, runner, lines = world
+    store_path = tmp_path / "project" / "data" / "scalp.sqlite"
+    store_path.parent.mkdir(parents=True)
+    store = ScalpStore(store_path)
+    store.record_signal("SC-B-1-L", strategy=BREAKOUT, time_ms=BASE_MS - 60_000, side=1, status=SENT)
+    store.record_order("SC-B-1-L", 1, comment="SC-B-1-L#1", side=1, volume=0.02, sl=3990.0, tp=4010.0, risk=5.0,
+                       spread=0.16, time_ms=BASE_MS - 60_000)  # fmt: skip
+    store.update_order("SC-B-1-L", 1, status=OPEN, position=999)
+    store.close()
+    code, output = _launch(tmp_path, env_file, broker, clock, "--nouvelle-experience")
+    assert code == EXIT_REFUSED and "encore ouvert" in output
+    assert list(store_path.parent.glob("scalp_*.sqlite")) == []  # rien d'archivé

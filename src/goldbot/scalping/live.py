@@ -206,6 +206,9 @@ class ScalpRunner:
         self._refresh_context(now_ms)
         if self.trading_from_ms is None:
             self.trading_from_ms = now_ms
+        # Sorties enregistrées et drawdown vérifié AVANT toute nouvelle entrée de ce passage.
+        self._manage_positions(now_ms)
+        self._check_drawdown(now_ms)
         for time_ms, bid, ask in self._new_ticks(now_ms):
             self._advance_shadow(time_ms, bid, ask)
             self._advance_learning(time_ms, bid, ask)
@@ -225,17 +228,26 @@ class ScalpRunner:
         self._manage_positions(now_ms)
         self._check_drawdown(now_ms)
 
-    def _experiment_value(self) -> float:
+    def _experiment_value(self, positions: dict[int, Position]) -> float:
         """Valeur de l'expérience : départ + réalisé + latent (démo), ou départ + réalisé simulé (--simulation)."""
         if self.local_only:
             return self._start_equity + self.store.sim_realized_since(0)
-        return self._start_equity + self.store.realized_since(0) + self._latent()
+        return self._start_equity + self.store.realized_since(0) + self._latent(positions)
 
     def _check_drawdown(self, now_ms: int) -> None:
-        """Baisse de max_drawdown_pct depuis le plus haut : tout fermer, plus aucune entrée, relance manuelle."""
+        """Baisse de max_drawdown_pct depuis le plus haut : tout fermer, plus aucune entrée, relance manuelle.
+
+        Une seule lecture des positions. Si une position de l'état a disparu sans que sa sortie soit encore
+        enregistrée, la valeur serait fausse (son résultat ne serait ni réalisé ni latent) : pas de mesure à ce
+        passage. Une fois arrêté, les positions restantes sont fermées à chaque passage (nouvel essai toutes les 5 s).
+        """
+        mine = self._mine()
         if self.halted:
+            self._close_everything(mine, now_ms)
             return
-        value = self._experiment_value()
+        if any(order.position not in mine for order in self.store.orders(OPEN)):
+            return  # sortie pas encore enregistrée : mesure au passage suivant
+        value = self._experiment_value(mine)
         peak = float(self.store.meta(PEAK) or self._start_equity)
         if value > peak:
             peak = value
@@ -248,7 +260,12 @@ class ScalpRunner:
         self.store.set_meta(HALT, self.halted)
         self.say(f"{self._clock(now_ms)} ARRÊT TOTAL : {self.halted}. Fermeture des positions de l'expérience ; "
                  "plus aucune entrée. Relance manuelle uniquement : run_scalp.py --nouvelle-experience.")  # fmt: skip
-        self.close_all("arrêt total : drawdown maximal")
+        self._close_everything(mine, now_ms)
+
+    def _close_everything(self, positions: dict[int, Position], now_ms: int) -> None:
+        by_ticket = {order.position: order for order in self.store.orders(OPEN)}
+        for position in positions.values():
+            self._close(position, by_ticket.get(position.ticket), now_ms, "arrêt total : drawdown maximal")
 
     def _trade_results(self) -> list[tuple[str, float]]:
         """(identifiant, résultat net) de chaque trade fermé de l'expérience, dans l'ordre de clôture.
@@ -680,13 +697,15 @@ class ScalpRunner:
             if reason == "doublon accidentel":
                 self.store.bump(DUPLICATES)
         order_type = C.ORDER_TYPE_BUY if position.type == C.POSITION_TYPE_BUY else C.ORDER_TYPE_SELL
-        booked = sum(
-            d.commission + d.fee for d in self.broker.deals_for_position(position.ticket) if d.entry == C.DEAL_ENTRY_IN
-        )
-        gross = self.broker.calc_profit(
-            order_type, position.symbol, position.volume, position.price_open, self._exit_price(position)
-        )
-        estimate = gross + position.swap + self._fees(booked, position.volume)
+        try:  # estimation seulement : une lecture impossible ne doit jamais empêcher la clôture
+            deals = self.broker.deals_for_position(position.ticket)
+            booked = sum(d.commission + d.fee for d in deals if d.entry == C.DEAL_ENTRY_IN)
+            gross = self.broker.calc_profit(
+                order_type, position.symbol, position.volume, position.price_open, self._exit_price(position)
+            )
+            estimate: float | None = gross + position.swap + self._fees(booked, position.volume)
+        except BrokerError:
+            estimate = None
         request = {
             "action": C.TRADE_ACTION_DEAL,
             "symbol": position.symbol,
