@@ -700,6 +700,45 @@ Avec 0,4 lot, deux ou trois pertes suffisent à atteindre −2 % dans la journé
 jour en moyenne au rejeu) et s'arrête pour la journée.
 
 
+### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
+
+Demande : un sens achat / vente « en fonction du marché et de la réaction des bougies », qui change en quelques
+minutes. Cinq concepteurs indépendants (réaction aux niveaux de liquidité, structure M1/M5, élan et régime de
+volatilité, volume et VWAP, retour à la moyenne), 16 modèles et 45 réglages fixés d'avance, chacun vérifié par un
+relecteur contradictoire (causalité par troncature, mémoire finie = mêmes valeurs avec les 30 000 barres du bot,
+symétrie achat / vente, règles = code) AVANT toute mesure ; puis évaluation unique sur 2019-07 → 2023 avec les 3
+références (48 essais), trades de 10 minutes à l'échelle M1 (stop ATR borné à 20-60 pips, objectif 3 x), coûts
+réels. Code et journal : `research/market_read/`.
+
+Les 8 meilleurs sur 48 (développement) ; « brut 15 min » = mouvement moyen dans le sens lu, avant coût (≈ 0,19 $) :
+
+| Modèle | Trades par jour | Brut 15 min | PF | Espérance (R) | t | Années positives |
+|---|---|---|---|---|---|---|
+| cassure acceptée #1 | 4 | +0.126 $ | 0.85 | -0.061 | -3.7 | 0/5 |
+| cassure acceptée #2 | 3 | +0.068 $ | 0.84 | -0.066 | -3.3 | 0/5 |
+| épuisement de série #3 | 3 | +0.039 $ | 0.80 | -0.073 | -4.4 | 0/5 |
+| épuisement de série #2 | 3 | +0.020 $ | 0.81 | -0.075 | -4.4 | 0/5 |
+| épuisement de série #1 | 3 | +0.051 $ | 0.81 | -0.075 | -4.7 | 0/5 |
+| réaction aux niveaux #3 | 5 | +0.009 $ | 0.82 | -0.075 | -5.1 | 0/5 |
+| élastique EMA #2 | 8 | -0.026 $ | 0.78 | -0.077 | -8.5 | 0/5 |
+| réaction aux niveaux #2 | 6 | +0.047 $ | 0.81 | -0.078 | -6.3 | 0/5 |
+
+Références : hasard PF 0,65 ; sens du jour (v3) PF 0,74 ; tendance EMA20/50 PF 0,65. Tous les essais perdent ; 46
+sur 48 n'ont aucune année positive. Validation (2024 → 09/2025, une seule fois) des 3 premiers, choisis avant de la
+lancer :
+
+| Modèle | Trades par jour | Brut 15 min | PF | Espérance (R) | t | Années positives |
+|---|---|---|---|---|---|---|
+| cassure acceptée #1 | 3 | -0.092 $ | 0.80 | -0.106 | -3.5 | 0/2 |
+| cassure acceptée #2 | 3 | -0.142 $ | 0.88 | -0.073 | -1.5 | 0/2 |
+| épuisement de série #3 | 4 | +0.118 $ | 0.82 | -0.091 | -3.6 | 0/2 |
+
+**Conclusion** : aucune lecture des bougies testée ne donne, à quelques minutes, un mouvement dans le bon sens
+plus grand que le spread. La lecture du marché reste branchée mais désactivée (`market_read.enabled: false`).
+
+Objectifs plus lointains pour « deux bougies » (rejeu des ticks, 0,1 %, sans limites, 2 positions) : 20/30 pips
+PF 0,77, 25/35 0,80, 30/40 0,81, 30/50 0,80, 40/60 0,81 ; avec 1 pip de glissement 0,63-0,67 ; 0 jour positif sur 21.
+
 ### Historique des réglages
 
 - 29/09/2026 matin (cassure seule, avant versionnage) : 3 positions, 0,3 % de risque cumulé, 10 s entre deux
