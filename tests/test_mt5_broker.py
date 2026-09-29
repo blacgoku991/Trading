@@ -76,6 +76,14 @@ def test_logs_in_when_no_account_is_connected():
     assert "login" in _names(stub)
 
 
+def test_portable_mode_is_passed_to_initialize():
+    stub = StubMT5(logged_in_as=123)
+    broker = MT5Broker(login=123, password="pw", server="s", path=r"C:\MT5\terminal64.exe", timeout_ms=1, portable=True)
+    broker._mt5 = stub
+    broker.connect()
+    assert stub.calls[0][2] == {"timeout": 1, "portable": True}
+
+
 def test_initialize_without_path():
     stub = StubMT5(logged_in_as=123)
     _broker(stub, path=None).connect()

@@ -7,6 +7,7 @@ import pytest
 
 from goldbot.broker import mt5_constants as C
 from goldbot.broker.base import BrokerError
+from goldbot.broker.checks import Finding, Level
 from goldbot.broker.fake_broker import FakeBroker, make_account, make_symbol
 from goldbot.diagnostics import EXIT_CONFIG, EXIT_NO_CONNECTION, EXIT_OK, EXIT_PROBLEMS, EXIT_REFUSED, main
 from tests.conftest import CONFIG_PATH, OPEN_NOW, tick_at
@@ -131,6 +132,24 @@ def test_unreachable_terminal_fails_fast_with_progress_messages(tmp_path, env_fi
     assert "Connexion au terminal MT5 en cours" in output
     assert "MT5_PATH vide" in output
     assert "(Get-Process terminal64).Path" in output
+
+
+def test_windows_environment_is_reported_before_connecting(tmp_path, env_file, rule):
+    broker = _fake(rule)
+    broker.connect_errors = [BrokerError("initialize", C.RES_E_AUTH_FAILED, "Authorization failed")]
+    lines = []
+    main(
+        ["--config", str(CONFIG_PATH), "--env", str(env_file)],
+        root=tmp_path / "project",
+        broker_factory=lambda settings, secrets: broker,
+        environment_check=lambda path: [Finding(Level.ERROR, "terminal en administrateur")],
+        now_utc=lambda: OPEN_NOW,
+        sleep=lambda s: None,
+        echo=lines.append,
+    )
+    output = "\n".join(lines)
+    assert output.index("[Environnement Windows]") < output.index("Connexion au terminal MT5")
+    assert "terminal en administrateur" in output
 
 
 def test_invalid_configuration(tmp_path, env_file, rule):

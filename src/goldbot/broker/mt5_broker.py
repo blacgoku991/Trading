@@ -35,13 +35,21 @@ class MT5Broker(Broker):
     """Broker réel via le package officiel MetaTrader5 (terminal ouvert sur la même machine)."""
 
     def __init__(
-        self, *, login: int, password: str, server: str, path: str | None, timeout_ms: int
+        self,
+        *,
+        login: int,
+        password: str,
+        server: str,
+        path: str | None,
+        timeout_ms: int,
+        portable: bool = False,
     ) -> None:
         self._login = login
         self._password = password
         self._server = server
         self._path = path
         self._timeout_ms = timeout_ms
+        self._portable = portable
         self._mt5: Any = None
 
     def __repr__(self) -> str:  # aucun secret dans la représentation
@@ -82,11 +90,10 @@ class MT5Broker(Broker):
     def connect(self) -> None:
         mt5 = self._module()
         # 1. S'attacher au terminal tel qu'il est, sans lui faire refaire l'authentification.
-        attached = (
-            mt5.initialize(self._path, timeout=self._timeout_ms)
-            if self._path
-            else mt5.initialize(timeout=self._timeout_ms)
-        )
+        options: dict[str, Any] = {"timeout": self._timeout_ms}
+        if self._portable:
+            options["portable"] = True
+        attached = mt5.initialize(self._path, **options) if self._path else mt5.initialize(**options)
         if not attached:
             error = self._error("initialize")  # lire last_error() avant shutdown()
             mt5.shutdown()

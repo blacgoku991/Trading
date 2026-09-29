@@ -5,6 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import platform
+import sys
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -26,6 +29,7 @@ from goldbot.broker.checks import (
 from goldbot.broker.mt5_broker import MT5Broker
 from goldbot.broker.supervisor import ConnectionSupervisor, FeedState, evaluate_feed
 from goldbot.broker.symbols import SymbolSelectionError, resolve_gold_symbol
+from goldbot.broker.windows_env import check_windows_environment, is_admin, running_terminals
 from goldbot.config import ConfigError, Secrets, Settings, load_secrets, load_settings
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.timezones import InvalidServerTime, ServerTimeRule, format_offset
@@ -351,6 +355,18 @@ def _mt5_broker(settings: Settings, secrets: Secrets) -> Broker:
         server=secrets.server,
         path=secrets.terminal_path,
         timeout_ms=settings.mt5.timeout_ms,
+        portable=settings.mt5.portable,
+    )
+
+
+def _windows_environment(terminal_path: str | None) -> list[Finding]:
+    return check_windows_environment(
+        terminal_path,
+        python_version=platform.python_version(),
+        python_bits=64 if sys.maxsize > 2**32 else 32,
+        admin=is_admin(),
+        processes=running_terminals(),
+        file_exists=os.path.isfile,
     )
 
 
@@ -363,6 +379,9 @@ def main(
     *,
     root: Path | None = None,
     broker_factory: Callable[[Settings, Secrets], Broker] = _mt5_broker,
+    environment_check: Callable[[str | None], list[Finding]] | None = (
+        _windows_environment if sys.platform == "win32" else None
+    ),
     now_utc: Callable[[], datetime] | None = None,
     sleep: Callable[[float], None] = time.sleep,
     echo: Callable[[str], None] = print,
@@ -405,6 +424,12 @@ def main(
     reconnect = settings.mt5.reconnect.model_copy(
         update={"max_attempts": min(settings.mt5.reconnect.max_attempts, CHECK_MAX_ATTEMPTS)}
     )
+    if environment_check is not None:
+        # Avant la connexion : si elle échoue, ces lignes en donnent souvent la cause.
+        report.line("[Environnement Windows]")
+        for finding in environment_check(secrets.terminal_path):
+            report.finding(finding)
+        report.line()
     if secrets.terminal_path is None:
         report.line(
             "MT5_PATH vide : le module cherche lui-même le terminal MT5 installé. Conseillé : MT5_PATH = "

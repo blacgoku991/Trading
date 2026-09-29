@@ -10,6 +10,8 @@ bot:
 mt5:
   # Délai d'établissement de la connexion, en ms (défaut officiel : 60000).
   timeout_ms: 60000
+  # true seulement si le terminal est lancé avec /portable (check_connection.py le détecte).
+  portable: false
   # Reconnexion : attente doublée à chaque échec (1 s, 2 s, 4 s…), plafonnée.
   reconnect:
     base_delay_s: 1.0

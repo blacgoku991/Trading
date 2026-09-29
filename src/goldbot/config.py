@@ -57,6 +57,8 @@ class ReconnectConfig(_Section):
 
 class Mt5Config(_Section):
     timeout_ms: int = Field(gt=0)
+    # True seulement si le terminal est lancé avec /portable (données dans son dossier d'installation).
+    portable: bool = False
     reconnect: ReconnectConfig
 
 
