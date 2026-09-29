@@ -26,7 +26,11 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
+import numpy as np
+import pandas as pd
+
 from goldbot.config import ScalpingConfig
+from goldbot.indicators.core import trading_days, true_range
 
 LONG, SHORT = 1, -1
 BREAKOUT, PULLBACK = "B", "P"
@@ -318,6 +322,29 @@ class Plan:
     target: float  # gain par once si l'objectif est touché (spread déjà inclus)
     cost: float  # spread + glissements + commission aller-retour estimés, par once
     spread: float
+
+
+def day_direction(bars: pd.DataFrame, config: ScalpingConfig) -> np.ndarray:
+    """Sens du mouvement du jour pour chaque barre M1 (supposée close) : +1, -1, ou 0 s'il est trop faible.
+
+    Mouvement = clôture - ouverture du jour de cotation (heure serveur) ; seuil = direction_min_move_atr x l'ATR
+    journalier des jours précédents (connu dès l'ouverture). ATR = moyenne SIMPLE du true range des N derniers
+    jours : identique dès que N + 1 jours sont chargés, donc le même au rejeu et en démo (une moyenne de Wilder
+    dépendrait de la longueur de l'historique chargé).
+    """
+    if bars.empty:
+        return np.zeros(0, dtype=int)
+    day = bars["time_server"].to_numpy() // 86_400
+    day_open = pd.Series(bars["open"].to_numpy(dtype="float64")).groupby(day).transform("first").to_numpy()
+    move = bars["close"].to_numpy(dtype="float64") - day_open
+    days = trading_days(bars)
+    tr = true_range(days["high"], days["low"], days["close"])
+    tr.iloc[0] = np.nan  # premier jour chargé : clôture de la veille inconnue
+    known = tr.rolling(config.direction_atr_days, min_periods=config.direction_atr_days).mean().shift(1)
+    atr = known.reindex(day).to_numpy()
+    with np.errstate(invalid="ignore"):
+        strong = np.abs(move) >= config.direction_min_move_atr * atr  # NaN (pas assez de jours) : False
+    return np.where(strong, np.sign(move), 0).astype(int)
 
 
 def pips(price_distance: float, config: ScalpingConfig) -> str:

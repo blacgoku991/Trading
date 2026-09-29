@@ -46,6 +46,7 @@ from goldbot.scalping.engine import (
     Setup,
     SimTrade,
     ema_trend,
+    day_direction,
     make_detectors,
     pips,
     plan_trade,
@@ -69,6 +70,7 @@ log = logging.getLogger("goldbot.scalp")
 _EPOCH = datetime(1970, 1, 1)
 WARMUP_S = 120  # ticks relus au démarrage pour remplir les fenêtres des détecteurs (sans trader dessus)
 CLOCK_GRACE_MS = 1000  # une bougie n'est close par l'horloge qu'une seconde après sa fin (ticks en retard)
+DIRECTION_BARS = 30_000  # barres M1 lues pour le filtre de sens (environ 20 jours de cotation)
 CLOSE_RETRY_MS = 5000  # délai entre deux tentatives de clôture d'une même position
 BROKER_PAUSE_MS = 60_000  # après « trop de requêtes » (10024), plus d'envoi pendant 60 s
 DUPLICATES = "doublons_evites"
@@ -141,6 +143,7 @@ class ScalpRunner:
         self.trading_from_ms: int | None = None  # pas de trade sur les ticks de préchauffage
         self.trend = 0
         self.atr = 0.0
+        self.direction = 0  # sens du mouvement du jour (filtre de sens) : +1, -1 ou 0
         self._context_minute: int | None = None
         # Trades simulés en cours : tag -> (trade, exposition, envoyé au broker ?, stratégie).
         self.shadow: dict[str, tuple[SimTrade, Exposure, bool, str]] = {}
@@ -328,8 +331,13 @@ class ScalpRunner:
         minute = now_ms // 60_000
         if minute == self._context_minute:
             return
-        bars = bars_frame(self.broker.latest_bars(self.spec.name, 300), self.rule)
-        closed = bars[(bars["time_server"] + 60) * 1000 <= now_ms]
+        # Filtre de sens : environ 20 jours de cotation en M1 pour l'ATR journalier (même calcul qu'au rejeu).
+        count = DIRECTION_BARS if self.cfg.direction_filter else 300
+        bars = bars_frame(self.broker.latest_bars(self.spec.name, count), self.rule)
+        closed = bars[(bars["time_server"] + 60) * 1000 <= now_ms].reset_index(drop=True)
+        if self.cfg.direction_filter:
+            self.direction = int(day_direction(closed, self.cfg)[-1]) if len(closed) else 0
+        closed = closed.iloc[-300:]
         b, p = self.cfg.breakout, self.cfg.pullback
         self.trend = ema_trend(tuple(closed["close"].astype(float)), b.ema_fast, b.ema_slow)
         self.atr = 0.0
@@ -467,6 +475,7 @@ class ScalpRunner:
             day_start_equity=self.day_start_equity,
             open_trades=self._exposures(),
             side=plan.side,
+            direction=self.direction,
         )
         if reason is None and not self.local_only:
             reason = self._account_refusal(order_type, volume, plan.entry, account.equity, account.margin_free, now_ms)
@@ -814,6 +823,10 @@ class ScalpRunner:
         tick = self.broker.tick(self.spec.name)
         counts = self.store.status_counts()
         trend = {1: "haussière", -1: "baissière"}.get(self.trend, "indécise")
+        if self.cfg.direction_filter:
+            trend += " | sens du jour : " + {1: "achats seulement", -1: "ventes seulement"}.get(
+                self.direction, "aucun trade (mouvement trop faible)"
+            )
         market = "marché ouvert" if self._is_open(now_ms) else "marché fermé"
         return (
             f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | ATR M1 {pips(self.atr, self.cfg)} | "

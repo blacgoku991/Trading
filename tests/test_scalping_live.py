@@ -554,6 +554,7 @@ _V1_EXITS = [
     ("    ceiling_total_risk_pct: 2.0 ", "    ceiling_total_risk_pct: 1.0 "),
     ("  max_open_positions: 20 ", "  max_open_positions: 5 "),
     ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
+    ("  direction_filter: true\n", "  direction_filter: false\n"),
 ]
 
 
@@ -861,3 +862,14 @@ def test_a_new_experiment_is_refused_while_positions_cannot_be_closed(tmp_path, 
     code, output = _launch(tmp_path, env_file, broker, clock, "--nouvelle-experience")
     assert code == EXIT_REFUSED and "encore ouverte" in output and len(broker._positions) == 1
     assert list(store_path.parent.glob("scalp_*.sqlite")) == []  # rien d'archivé
+
+
+def test_live_direction_filter_refuses_when_the_day_has_no_clear_move(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    live.cfg = live.cfg.model_copy(update={"direction_filter": True})
+    live.policy.cfg = live.cfg
+    _breakout(broker, clock, quote, live)  # 5 heures de barres seulement : pas d'ATR journalier, pas de sens
+    assert broker.positions() == [] and live.direction == 0
+    assert any("refus : sens : pas de mouvement net du jour" in line for line in lines)
+    assert "sens du jour : aucun trade" in live.status_line()

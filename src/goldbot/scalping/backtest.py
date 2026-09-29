@@ -21,7 +21,7 @@ from goldbot.config import ScalpingConfig
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.quality import server_index
 from goldbot.indicators.core import atr as atr_series
-from goldbot.scalping.engine import LONG, CandleBuilder, SimTrade, make_detectors, plan_trade
+from goldbot.scalping.engine import LONG, CandleBuilder, SimTrade, day_direction, make_detectors, plan_trade
 from goldbot.scalping.learning import LearningBook
 from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, reason_key, split_volume, trade_volume
 
@@ -52,7 +52,10 @@ class ScalpResult:
 
 
 def context_by_minute(bars: pd.DataFrame, config: ScalpingConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Heure d'ouverture (epoch serveur, s) de chaque barre M1, tendance EMA rapide / lente et ATR M1."""
+    """Heure d'ouverture (epoch serveur, s) de chaque barre M1, tendance EMA rapide / lente et ATR M1.
+
+    Le sens du mouvement du jour (filtre de sens) se lit avec engine.day_direction sur les mêmes barres.
+    """
     close = bars["close"].astype("float64")
     fast = close.ewm(span=config.breakout.ema_fast, adjust=False).mean().to_numpy()
     slow = close.ewm(span=config.breakout.ema_slow, adjust=False).mean().to_numpy()
@@ -85,6 +88,7 @@ def run_backtest(
     bids = ticks["bid"].to_numpy(dtype="float64")[open_mask]
     asks = ticks["ask"].to_numpy(dtype="float64")[open_mask]
     bar_times, trends, atrs = context_by_minute(bars, config)
+    directions = day_direction(bars, config) if config.direction_filter else np.zeros(len(bars), dtype=int)
 
     point = instrument.point
     slip = slippage_points * point
@@ -178,6 +182,7 @@ def run_backtest(
             bar = int(np.searchsorted(bar_times, (candle.start_ms + size_ms) // 1000 - 60, side="right")) - 1
             trend = int(trends[bar]) if bar >= 0 else 0
             atr = float(atrs[bar]) if bar >= 0 else 0.0
+            direction = int(directions[bar]) if bar >= 0 else 0
             for detector in detectors:
                 setup = detector.on_candle(candle, trend, atr)
                 if setup is None:
@@ -232,6 +237,7 @@ def run_backtest(
                     day_start_equity=day_start_equity,
                     open_trades=[exposure for _, exposure, _, _, _ in open_trades],
                     side=plan.side,
+                    direction=direction,
                 )
                 if reason is not None:
                     refusals[(code, reason_key(reason))] += 1

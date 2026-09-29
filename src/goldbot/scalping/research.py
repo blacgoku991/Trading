@@ -378,7 +378,7 @@ def main(argv: list[str] | None = None, *, root: Path | None = None, echo: Calla
     )
     ticks = load_ticks(folder, symbol["name"])
     bars = load_bars(folder, symbol["name"])
-    bars = bars[bars["time_server"] >= ticks["time_msc_server"].iloc[0] // 1000 - 7 * 86_400].reset_index(drop=True)
+    bars = bars[bars["time_server"] >= ticks["time_msc_server"].iloc[0] // 1000 - 30 * 86_400].reset_index(drop=True)
     cfg = settings.scalping
     cfg = cfg.model_copy(update={
         "breakout": cfg.breakout.model_copy(update={"enabled": True}),

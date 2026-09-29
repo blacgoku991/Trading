@@ -149,6 +149,7 @@ class EntryPolicy:
         open_trades: list[Exposure],
         side: int | None = None,
         day_realized: float | None = None,
+        direction: int | None = None,
     ) -> str | None:
         """Motif du refus, ou None si l'entrée est permise."""
         cfg = self.cfg
@@ -159,6 +160,12 @@ class EntryPolicy:
             return "même occasion déjà en position : doublon évité"
         if len(open_trades) >= limits.open_positions:
             return f"positions ouvertes au maximum : {limits.open_positions}"
+        if cfg.direction_filter and side is not None:
+            if not direction:
+                return "sens : pas de mouvement net du jour (moins de " \
+                       f"{cfg.direction_min_move_atr:g} ATR depuis l'ouverture)"  # fmt: skip
+            if side != direction:
+                return f"sens : contre le mouvement du jour ({'hausse' if direction > 0 else 'baisse'})"
         if side is not None and cfg.max_same_side_positions is not None:
             same = sum(1 for trade in open_trades if trade.side == side)
             if same >= cfg.max_same_side_positions:

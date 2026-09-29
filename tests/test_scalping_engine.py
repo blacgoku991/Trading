@@ -17,6 +17,7 @@ from goldbot.scalping.engine import (
     PullbackDetector,
     Setup,
     SimTrade,
+    day_direction,
     ema_trend,
     make_detectors,
     plan_trade,
@@ -703,3 +704,61 @@ def test_a_fixed_pip_stop_outside_the_allowed_range_is_rejected():
 
     with pytest.raises(ValidationError, match="fixed_stop_pips"):
         CONFIG.model_validate({**CONFIG.model_dump(), "fixed_stop_pips": 100.0})  # 10 $ > 6 $ maximum
+
+
+# --- filtre de sens : mouvement du jour ------------------------------------------------------------------------
+
+
+def _days_of_bars(days, *, range_per_day=10.0, last_move=0.0):
+    """Barres M1 de plusieurs jours de cotation (heure serveur) : chaque jour oscille de range_per_day autour de
+    4000, le dernier jour finit à ouverture + last_move."""
+    rows = []
+    for d in range(days):
+        start = 1_767_657_600 + d * 86_400 + 3_600  # 01:00 serveur
+        for k in range(120):
+            price = 4000.0 + (range_per_day / 2 if k % 2 else -range_per_day / 2) * (k in (10, 11))
+            rows.append((start + k * 60, 4000.0, price + 0.5 if k in (10, 11) else 4000.5, price - 0.5, 4000.0))
+    frame = pd.DataFrame(rows, columns=["time_server", "open", "high", "low", "close"])
+    frame.loc[frame.index[-1], "close"] = 4000.0 + last_move
+    return frame
+
+
+def test_day_direction_follows_a_strong_move_since_the_open_and_ignores_a_weak_one():
+    config = CONFIG.model_copy(update={"direction_filter": True, "direction_min_move_atr": 0.5})
+    bars = _days_of_bars(20, last_move=-6.0)
+    atr_known = day_direction(bars, config)  # ATR des 14 jours précédents : 11 $ environ (range 10 $ + 1 $)
+    assert atr_known[-1] == -1  # baisse de 6 $ >= 0,5 x 11 $
+    assert day_direction(_days_of_bars(20, last_move=+3.0), config)[-1] == 0  # 3 $ < 5,5 $ : pas de sens
+    assert (day_direction(_days_of_bars(10), config) == 0).all()  # moins de 15 jours : pas d'ATR, pas de sens
+
+
+def test_day_direction_is_the_same_with_a_short_or_a_long_history():
+    config = CONFIG.model_copy(update={"direction_filter": True})
+    bars = _days_of_bars(40, last_move=-6.0)
+    tail = bars[bars["time_server"] >= bars["time_server"].iloc[-1] - 16 * 86_400].reset_index(drop=True)
+    assert day_direction(tail, config)[-1] == day_direction(bars, config)[-1] == -1
+
+
+def test_direction_filter_refuses_trades_against_or_without_the_day_move():
+    policy = EntryPolicy(CONFIG.model_copy(update={"direction_filter": True}))
+    check = lambda side, direction: policy.refusal(0, key="k", risk=5.0, equity=5000.0, day_result=0.0,  # noqa: E731
+                                                   day_start_equity=5000.0, open_trades=[], side=side,
+                                                   direction=direction)  # fmt: skip
+    assert check(SHORT, -1) is None
+    assert reason_key(check(LONG, -1)) == "sens"
+    assert "contre le mouvement du jour (baisse)" in check(LONG, -1)
+    assert "pas de mouvement net du jour" in check(SHORT, 0)
+    off = EntryPolicy(CONFIG)
+    assert off.refusal(0, key="k", risk=5.0, equity=5000.0, day_result=0.0, day_start_equity=5000.0,
+                       open_trades=[], side=LONG, direction=-1) is None  # fmt: skip
+
+
+def test_replay_applies_the_direction_filter():
+    base_ms = server_epoch_of("2026-01-06 12:00") * 1000
+    ticks, bars = _breakout_history(base_ms)  # un seul jour de barres : pas d'ATR journalier, donc pas de sens
+    bars = bars.assign(open=bars["close"])
+    schedule = MarketSchedule.from_config(SETTINGS.market_hours)
+    config = CONFIG.model_copy(update={"direction_filter": True})
+    result = run_backtest(ticks, bars, config, instrument=INSTRUMENT, schedule=schedule, initial_equity=5700.0,
+                          slippage_points=0.0, strategies=(BREAKOUT,))  # fmt: skip
+    assert result.trades.empty and result.refusals == {(BREAKOUT, "sens"): 1}

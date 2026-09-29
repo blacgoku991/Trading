@@ -58,6 +58,7 @@ def v1_exit_settings():
         daily_loss_pct=1.0,
         max_entries_per_minute=5,
         max_open_positions=5,
+        direction_filter=False,
     )
     data["cadence"].update(ceiling_total_risk_pct=1.0)
     data["learning"].update(version=1, target_ratios=[0.8, 1.2, 2.0])

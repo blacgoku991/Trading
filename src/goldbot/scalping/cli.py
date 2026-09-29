@@ -518,7 +518,8 @@ def backtest_main(
     rate = float(symbol["trade_tick_value"]) / float(symbol["trade_tick_size"]) / float(symbol["trade_contract_size"])
     ticks = load_ticks(folder, symbol["name"])
     bars = load_bars(folder, symbol["name"])
-    bars = bars[bars["time_server"] >= ticks["time_msc_server"].iloc[0] // 1000 - 7 * 86_400].reset_index(drop=True)
+    # 30 jours de barres avant les ticks : ATR journalier (filtre de sens) connu dès le premier jour.
+    bars = bars[bars["time_server"] >= ticks["time_msc_server"].iloc[0] // 1000 - 30 * 86_400].reset_index(drop=True)
     days = (ticks["time_msc_server"].iloc[-1] - ticks["time_msc_server"].iloc[0]) / 86_400_000 * 5 / 7
     cfg = settings.scalping
     if args.sans_apprentissage:

@@ -304,6 +304,11 @@ class ScalpingConfig(_Section):
     # structure du signal ; objectif fixe en pips, sinon target_ratio x le stop. None : stop derrière la structure.
     fixed_stop_pips: float | None = Field(default=None, gt=0)
     fixed_target_pips: float | None = Field(default=None, gt=0)
+    # Sens autorisé (« toujours dans le bon sens ») : trades seulement dans le sens du mouvement du jour (prix -
+    # ouverture du jour de cotation) quand il atteint direction_min_move_atr x l'ATR journalier ; aucun sinon.
+    direction_filter: bool = False
+    direction_min_move_atr: float = Field(default=0.5, gt=0)
+    direction_atr_days: int = Field(default=14, ge=2)
     max_stop_points: float = Field(gt=0)
     target_ratio: float = Field(gt=0)
     min_target_cost_ratio: float = Field(ge=0)

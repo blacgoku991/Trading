@@ -156,6 +156,11 @@ scalping:
   min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s (base)
   daily_loss_pct: 2.0           # plus d'entrée pour la journée au-delà de -2 % (démo, latent compris ; CLAUDE.md §3.5)
   max_drawdown_pct: 10.0        # -10 % depuis le plus haut de l'expérience : arrêt total, relance manuelle
+  # « Toujours dans le bon sens » : trades seulement dans le sens du mouvement du jour (prix - ouverture du jour)
+  # quand il atteint 0,5 x l'ATR journalier (moyenne simple de 14 jours) ; aucun trade sinon. Idée du S7, seul
+  # avantage validé hors échantillon. Rejeu 4 semaines : +208 pips, PF 1,07, trop court pour être une preuve.
+  direction_filter: true
+  direction_min_move_atr: 0.5
   min_free_margin_pct: 50       # marge libre après l'ordre >= 50 % de l'equity, sinon refus
   experiment_days: 10           # durée annoncée de la collecte (jours de cotation)
   breakout:
