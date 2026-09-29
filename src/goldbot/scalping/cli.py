@@ -18,14 +18,20 @@ import pandas as pd
 
 from goldbot import __version__
 from goldbot.broker import mt5_constants as C
-from goldbot.broker.base import Broker, BrokerError
+from goldbot.broker.base import Broker, BrokerError, Position
 from goldbot.broker.mt5_broker import MT5Broker
 from goldbot.broker.supervisor import ConnectionSupervisor
 from goldbot.broker.symbols import SymbolSelectionError, resolve_gold_symbol
 from goldbot.config import ConfigError, Secrets, Settings, load_secrets, load_settings
 from goldbot.data.history import load_bars, load_ticks
 from goldbot.data.market_hours import MarketSchedule
-from goldbot.execution.orders import OrderRejected, filling_candidates, select_filling, send_market_order
+from goldbot.execution.orders import (
+    OrderRejected,
+    filling_candidates,
+    find_entry_deals,
+    select_filling,
+    send_market_order,
+)
 from goldbot.live.lock import InstanceLock
 from goldbot.monitoring.logging_setup import setup_logging
 from goldbot.scalping.backtest import Instrument, run_backtest, summary
@@ -65,7 +71,7 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
     if store.archived is not None:
         say(f"Base d'une version précédente du bot archivée : {store.archived.name}")
     saved = store.meta("params_hash")
-    if saved is not None and saved != current and store.has_activity():
+    if store.has_activity() and (new_experiment or (saved is not None and saved != current)):
         if not new_experiment:
             store.close()
             raise Refused(
@@ -81,6 +87,25 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
         store.set_meta("params_hash", current)
         store.set_meta("started_utc", datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
     return store
+
+
+def _history_check(runner: ScalpRunner, comment: str, position: Position, sent_ms: int) -> tuple[str, bool, str]:
+    """Ordre retrouvable dans l'historique des deals par son magic et son commentaire (réponse perdue du broker)."""
+    label = "historique des deals : ordre retrouvable par magic et commentaire (si la réponse du broker se perd)"
+    try:
+        for _ in range(8):  # l'historique du terminal peut avoir un peu de retard
+            found = find_entry_deals(runner.broker, magic=runner.cfg.magic, comments={comment},
+                                     sent_s=sent_ms // 1000, now_s=runner.server_now_ms() // 1000)  # fmt: skip
+            if comment in found:
+                deal = found[comment]
+                ok = deal.position_id == position.ticket
+                return label, ok, f"deal {deal.ticket}, commentaire « {deal.comment} », position {deal.position_id}"
+            runner.sleep(0.25)
+        entries = [d for d in runner.broker.deals_for_position(position.ticket) if d.entry == C.DEAL_ENTRY_IN]
+        seen = ", ".join(f"magic {d.magic}, commentaire « {d.comment} »" for d in entries) or "aucun deal d'entrée"
+        return label, False, f"attendu « {comment} » ; trouvé : {seen}"
+    except BrokerError as exc:
+        return label, False, f"historique illisible : {exc}"
 
 
 def _verify(runner: ScalpRunner, store_path: Path, settings: Settings, say: Callable[[str], None]) -> bool:
@@ -132,6 +157,7 @@ def _verify(runner: ScalpRunner, store_path: Path, settings: Settings, say: Call
         say("  ÉCHEC : position introuvable, vérifie l'onglet Trade de MT5 (et ferme-la à la main si besoin)")
         return False
     checks.append(("stop côté serveur présent dès l'entrée", position.sl > 0, f"stop {position.sl:.2f}"))
+    checks.append(_history_check(runner, comment, position, now_ms))
     runner._mark_open(tag, 1, position, hold_s=VERIFY_HOLD_S)
     # Stop resserré côté serveur (jamais éloigné) : c'est la requête utilisée pour reposer un stop manquant.
     tighter = round(position.sl + VERIFY_TIGHTEN, spec.digits)
@@ -289,6 +315,9 @@ def live_main(
             return EXIT_OK
         if args.verification:
             return EXIT_OK if _verify(runner, store_path, settings, say) else EXIT_FAILED
+        if runner.halted:
+            raise Refused(f"arrêt total de l'expérience ({runner.halted}). Relance manuelle uniquement, après "
+                          "réflexion : run_scalp.py --nouvelle-experience (l'expérience actuelle est archivée)")  # fmt: skip
         cfg = settings.scalping
         now_ms = runner.server_now_ms()
         for code, (version, digest, params) in strategy_versions(cfg).items():

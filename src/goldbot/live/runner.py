@@ -34,7 +34,7 @@ from goldbot.execution.orders import (
     UNCERTAIN,
     OrderRejected,
     filling_candidates,
-    find_entry_deal,
+    find_entry_deals,
     round_to_tick,
     select_filling,
     send_market_order,
@@ -117,6 +117,7 @@ class LiveRunner:
 
     def _reconcile(self, now: pd.Timestamp) -> None:
         positions = self._mine()
+        waiting = []
         for row in self.store.with_status(SENDING):
             match = [p for p in positions.values() if p.comment == row.tag]
             if match:
@@ -125,19 +126,25 @@ class LiveRunner:
                                   entry_price=position.price_open)  # fmt: skip
                 self.limits.on_entry()
                 log.warning("signal %s : position %d retrouvée après un envoi incertain", row.tag, position.ticket)
-                continue
-            # Position peut-être déjà fermée (stop touché) avant d'être vue : l'historique des deals le dit.
+            else:
+                waiting.append(row)
+        # Position peut-être déjà fermée (stop touché) avant d'être vue : l'historique des deals le dit (un appel).
+        found = {}
+        if waiting:
             try:
-                deal = find_entry_deal(
+                found = find_entry_deals(
                     self.broker,
                     magic=self.magic,
-                    comment=row.tag,
-                    sent_s=int(self.rule.server_epoch(row.signal_time.to_pydatetime())),
+                    comments={row.tag for row in waiting},
+                    sent_s=int(min(self.rule.server_epoch(row.signal_time.to_pydatetime()) for row in waiting)),
                     now_s=int(self.rule.server_epoch(now.to_pydatetime())),
                 )
             except BrokerError as exc:
-                log.warning("signal %s : historique des deals illisible (%s), revu au prochain passage", row.tag, exc)
-                continue
+                # État inconnu : les signaux restent « envoi » (jamais notés échec, jamais renvoyés).
+                log.warning("historique des deals illisible (%s) : %d signal(aux) en attente", exc, len(waiting))
+                waiting = []
+        for row in waiting:
+            deal = found.get(row.tag)
             if deal is not None:
                 self.store.update(row.tag, status=OPEN, position=deal.position_id, volume=deal.volume,
                                   entry_price=deal.price)  # fmt: skip
@@ -151,7 +158,9 @@ class LiveRunner:
             position = positions.pop(row.position, None)
             if position is None:
                 self._record_close(row, now)
-            elif position.sl == 0.0:
+                continue
+            self._missing_since.pop(row.tag, None)  # vue ouverte : l'attente d'un deal de sortie repart de zéro
+            if position.sl == 0.0:
                 self._restore_sl(row, position)
         for position in positions.values():
             # Position du bot inconnue de l'état (état perdu ou effacé) : on ne garde rien qu'on ne maîtrise pas.

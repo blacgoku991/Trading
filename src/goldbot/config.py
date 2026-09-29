@@ -306,6 +306,9 @@ class ScalpingConfig(_Section):
     max_hold_s: int = Field(ge=5)
     # Compte.
     risk_per_trade_pct: float = Field(gt=0, le=RISK_PER_TRADE_HARD_CAP_PCT)
+    # Lot fixe (choix de l'utilisateur) : risk_per_trade_pct devient le risque MAXIMAL d'un trade (trade refusé
+    # au-delà, jamais de lot réduit en douce). None : lot calculé d'après risk_per_trade_pct (arrondi vers le bas).
+    fixed_volume: float | None = Field(default=None, gt=0)
     max_open_positions: int = Field(ge=1)
     max_total_risk_pct: float = Field(gt=0)
     max_entries_per_minute: int = Field(
@@ -313,6 +316,8 @@ class ScalpingConfig(_Section):
     )  # de base, 5 au plus (accord de l'utilisateur) ; seule la cadence liée au bénéfice peut aller au-delà
     min_seconds_between_entries: float = Field(ge=0)
     daily_loss_pct: float = Field(gt=0)
+    # Baisse maximale depuis le plus haut de l'expérience : arrêt total, relance manuelle (CLAUDE.md règle 5).
+    max_drawdown_pct: float = Field(default=10.0, gt=0, le=10.0)
     min_free_margin_pct: float = Field(ge=0, lt=100)
     experiment_days: int = Field(ge=1)
     # Corrections tirées des trades démo (29/09/2026) ; défauts = sans effet.

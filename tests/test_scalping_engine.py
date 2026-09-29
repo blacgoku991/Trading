@@ -20,7 +20,16 @@ from goldbot.scalping.engine import (
     make_detectors,
     plan_trade,
 )
-from goldbot.scalping.policy import Cadence, EntryPolicy, Exposure, Limits, reason_key, split_volume
+from goldbot.scalping.policy import (
+    Cadence,
+    EntryPolicy,
+    Exposure,
+    Limits,
+    drawdown_pct,
+    reason_key,
+    split_volume,
+    trade_volume,
+)
 from tests.conftest import server_epoch_of, v1_exit_settings
 
 SETTINGS = v1_exit_settings()
@@ -617,3 +626,50 @@ def test_open_trades_in_floating_profit_do_not_enlarge_the_daily_budget():
     refusal = policy.refusal(0, key="n", risk=5.0, equity=5000.0, day_result=-15.0, day_start_equity=5000.0,
                              open_trades=five, day_realized=-40.0)  # fmt: skip
     assert reason_key(refusal) == "budget de perte du jour"
+
+
+# --- lot fixe et arrêt total au drawdown maximal ---------------------------------------------------------------
+
+
+def test_fixed_lot_is_used_while_its_risk_stays_under_the_per_trade_cap():
+    fixed = CONFIG.model_copy(update={"fixed_volume": 0.1, "risk_per_trade_pct": 1.0})
+    # 0,1 lot, stop à 2,55 $ (+5 points) : 256 $ par lot -> 25,60 $ <= 1 % de 5 700 $ (57 $).
+    assert trade_volume(fixed, 5700.0, 256.0, volume_min=0.01, volume_step=0.01) == (0.1, None)
+    volume, why = trade_volume(fixed, 5700.0, 605.0, volume_min=0.01, volume_step=0.01)  # stop de 6 $ : 60,50 $
+    assert volume == 0.0 and why.startswith("lot fixe au-dessus du risque maximal : 0.1 lot perd 60.50")
+    tiny = fixed.model_copy(update={"fixed_volume": 0.005})
+    assert trade_volume(tiny, 5700.0, 256.0, volume_min=0.01, volume_step=0.01)[0] == 0.0
+
+
+def test_without_a_fixed_lot_the_volume_follows_the_risk_and_rounds_down():
+    assert trade_volume(CONFIG, 5700.0, 256.0, volume_min=0.01, volume_step=0.01) == (0.02, None)  # 5,70 / 256
+    volume, why = trade_volume(CONFIG, 5700.0, 800.0, volume_min=0.01, volume_step=0.01)  # 0,0071 < 0,01
+    assert volume == 0.0 and why == "lot minimum au-dessus du budget de risque"
+
+
+def _two_breakouts_history(base_ms):
+    """Cassure, trade fermé à la durée maximale (perte du spread), puis une deuxième cassure plus tard."""
+    ticks, bars = _breakout_history(base_ms)
+    later = base_ms + 215_000
+    points = [(later + k * 1000, 4000.10) for k in range(70)]
+    points += [(later + 70_000 + k * 1000, 4000.95) for k in range(5)]
+    points += [(later + 75_000 + k * 1000, 4001.05) for k in range(200)]
+    more, _ = _frames(points, base_ms)
+    return pd.concat([ticks, more], ignore_index=True), bars
+
+
+def test_replay_stops_everything_at_the_maximum_drawdown():
+    base_ms = server_epoch_of("2026-01-06 12:00") * 1000
+    ticks, bars = _two_breakouts_history(base_ms)
+    schedule = MarketSchedule.from_config(SETTINGS.market_hours)
+    run = lambda config: run_backtest(ticks, bars, config, instrument=INSTRUMENT, schedule=schedule,  # noqa: E731
+                                      initial_equity=5700.0, slippage_points=0.0, strategies=(BREAKOUT,))  # fmt: skip
+    normal = run(CONFIG)
+    assert len(normal.trades) == 2 and normal.halted_ms is None
+    strict = run(CONFIG.model_copy(update={"max_drawdown_pct": 0.001}))  # la première perte suffit
+    assert len(strict.trades) == 1 and strict.halted_ms == int(strict.trades["exit_ms"].iloc[0])
+    assert strict.refusals == {(BREAKOUT, "arrêt total : drawdown maximal atteint"): 1}
+
+
+def test_drawdown_is_measured_from_the_peak():
+    assert drawdown_pct(9000.0, 10_000.0) == pytest.approx(10.0) and drawdown_pct(10_500.0, 10_000.0) < 0

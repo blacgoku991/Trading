@@ -70,14 +70,15 @@ UNCERTAIN = frozenset({C.TRADE_RETCODE_TIMEOUT, C.TRADE_RETCODE_CONNECTION, C.TR
 LOST_REPLY_MARGIN_S = 86_400
 
 
-def find_entry_deal(broker: Broker, *, magic: int, comment: str, sent_s: int, now_s: int) -> Deal | None:
-    """Deal d'entrée d'un ordre envoyé à sent_s (epoch serveur) dont la réponse s'est perdue : même magic, même
-    commentaire (Axi conserve le commentaire de l'ordre). None si l'ordre n'a pas été exécuté."""
-    deals = broker.deals_between(sent_s - LOST_REPLY_MARGIN_S, now_s + LOST_REPLY_MARGIN_S)
-    for deal in deals:
-        if deal.magic == magic and deal.comment == comment and deal.entry == C.DEAL_ENTRY_IN:
-            return deal
-    return None
+def find_entry_deals(broker: Broker, *, magic: int, comments: set[str], sent_s: int, now_s: int) -> dict[str, Deal]:
+    """Deals d'entrée des ordres dont la réponse s'est perdue, par commentaire : même magic, même commentaire (à
+    confirmer sur le terminal par run_scalp.py --verification). Un seul appel pour tous les ordres en attente, depuis
+    le plus ancien envoi (sent_s, epoch serveur). Un ordre absent du résultat n'a pas été exécuté."""
+    found: dict[str, Deal] = {}
+    for deal in broker.deals_between(sent_s - LOST_REPLY_MARGIN_S, now_s + LOST_REPLY_MARGIN_S):
+        if deal.magic == magic and deal.comment in comments and deal.entry == C.DEAL_ENTRY_IN:
+            found.setdefault(deal.comment, deal)
+    return found
 
 
 def describe_retcode(code: int) -> str:

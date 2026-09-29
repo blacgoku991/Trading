@@ -30,12 +30,11 @@ from goldbot.execution.orders import (
     UNCERTAIN,
     OrderRejected,
     filling_candidates,
-    find_entry_deal,
+    find_entry_deals,
     select_filling,
     send_market_order,
 )
 from goldbot.indicators.core import atr as atr_series
-from goldbot.risk.sizing import position_size
 from goldbot.scalping.engine import (
     BREAKOUT,
     LONG,
@@ -51,7 +50,7 @@ from goldbot.scalping.engine import (
     plan_trade,
 )
 from goldbot.scalping.learning import LearningBook
-from goldbot.scalping.policy import EntryPolicy, Exposure, split_volume
+from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, split_volume, trade_volume
 from goldbot.scalping.store import (
     CLOSED,
     FAILED,
@@ -73,6 +72,8 @@ CLOSE_RETRY_MS = 5000  # délai entre deux tentatives de clôture d'une même po
 BROKER_PAUSE_MS = 60_000  # après « trop de requêtes » (10024), plus d'envoi pendant 60 s
 DUPLICATES = "doublons_evites"
 LEARNER = "apprentissage"  # état de l'apprentissage dans la table meta (JSON)
+PEAK = "plus_haut_experience"  # plus haut de la valeur de l'expérience (drawdown maximal)
+HALT = "arret_total"  # motif de l'arrêt total au drawdown maximal : relance manuelle uniquement
 _DEAL_REASONS = {
     C.DEAL_REASON_SL: "stop",
     C.DEAL_REASON_TP: "objectif",
@@ -149,6 +150,7 @@ class ScalpRunner:
         self.currency = account.currency
         self.day_start_equity = account.equity
         self._close_attempts: dict[int, int] = {}
+        self._history_warned_ms = -(2**62)
         self._stop_attempts: dict[int, int] = {}
         tick = broker.tick(spec.name)
         # Valeur, dans la devise du compte, d'un mouvement de 1 $ sur 1 once (conversion faite par le terminal).
@@ -171,6 +173,8 @@ class ScalpRunner:
                     best = self.book.learner.best(key)
                     if best:
                         self._best_said[key] = best[0]
+        self.halted: str | None = store.meta(HALT)  # arrêt total au drawdown maximal (règle 5)
+        self._start_equity = float(store.meta("start_equity") or account.equity)
         # Cadence liée au bénéfice : reconstruite à partir des trades fermés enregistrés (reprise après redémarrage).
         self._cadence_fed: set[str] = set()  # trades déjà donnés à la cadence (par identifiant, jamais deux fois)
         self._update_cadence(None)
@@ -219,6 +223,32 @@ class ScalpRunner:
             self.store.set_meta(LEARNER, json.dumps(self.book.learner.to_dict()))
             self._learning_dirty = False
         self._manage_positions(now_ms)
+        self._check_drawdown(now_ms)
+
+    def _experiment_value(self) -> float:
+        """Valeur de l'expérience : départ + réalisé + latent (démo), ou départ + réalisé simulé (--simulation)."""
+        if self.local_only:
+            return self._start_equity + self.store.sim_realized_since(0)
+        return self._start_equity + self.store.realized_since(0) + self._latent()
+
+    def _check_drawdown(self, now_ms: int) -> None:
+        """Baisse de max_drawdown_pct depuis le plus haut : tout fermer, plus aucune entrée, relance manuelle."""
+        if self.halted:
+            return
+        value = self._experiment_value()
+        peak = float(self.store.meta(PEAK) or self._start_equity)
+        if value > peak:
+            peak = value
+            self.store.set_meta(PEAK, f"{peak:.2f}")
+        loss = drawdown_pct(value, peak)
+        if loss < self.cfg.max_drawdown_pct:
+            return
+        self.halted = (f"baisse de {loss:.1f} % depuis le plus haut de l'expérience ({peak:.2f} -> {value:.2f} "
+                       f"{self.currency}), limite {self.cfg.max_drawdown_pct:g} %")  # fmt: skip
+        self.store.set_meta(HALT, self.halted)
+        self.say(f"{self._clock(now_ms)} ARRÊT TOTAL : {self.halted}. Fermeture des positions de l'expérience ; "
+                 "plus aucune entrée. Relance manuelle uniquement : run_scalp.py --nouvelle-experience.")  # fmt: skip
+        self.close_all("arrêt total : drawdown maximal")
 
     def _trade_results(self) -> list[tuple[str, float]]:
         """(identifiant, résultat net) de chaque trade fermé de l'expérience, dans l'ordre de clôture.
@@ -363,6 +393,9 @@ class ScalpRunner:
         side_text = "ACHAT" if setup.side == LONG else "VENTE"
         self.say(f"{self._clock(now_ms)} signal {side_text} [{self.labels[setup.strategy]}] : {setup.reason}, "
                  f"spread {spread:.2f} $")  # fmt: skip
+        if self.halted:
+            self._refuse(setup, spread, "arrêt total : drawdown maximal atteint (relance manuelle)")
+            return
         age_ms = now_ms - (setup.candle.start_ms + self.builder.size_ms)
         if age_ms > self.builder.size_ms:
             self._refuse(setup, spread, f"signal périmé : bougie close depuis {age_ms / 1000:.0f} s")
@@ -398,15 +431,11 @@ class ScalpRunner:
         loss_per_lot = -self.broker.calc_profit(order_type, spec.name, 1.0, plan.entry, worst)
         loss_per_lot += 2 * self.exit_commission_per_lot
         account = self.broker.account()
-        volume = position_size(
-            account.equity * cfg.risk_per_trade_pct / 100,
-            loss_per_lot,
-            volume_min=spec.volume_min,
-            volume_max=float("inf"),  # au-delà du maximum par ordre : fractionnement en plusieurs ordres
-            volume_step=spec.volume_step,
-        )
-        if volume == 0:
-            self._refuse(setup, spread, "lot minimum au-dessus du budget de risque")
+        # Lot fixe ou calculé d'après le risque ; au-delà du maximum par ordre : fractionnement en plusieurs ordres.
+        volume, why = trade_volume(cfg, account.equity, loss_per_lot, volume_min=spec.volume_min,
+                                   volume_step=spec.volume_step)  # fmt: skip
+        if why is not None:
+            self._refuse(setup, spread, why)
             return
         risk = volume * loss_per_lot
         reason = self.policy.refusal(
@@ -586,18 +615,28 @@ class ScalpRunner:
         by_comment: dict[str, list[Position]] = {}
         for position in mine.values():
             by_comment.setdefault(position.comment, []).append(position)
+        waiting = []
         for order in self.store.orders(SENDING):
             matches = by_comment.get(order.comment, [])
             if matches:
                 self._mark_open(order.tag, order.part, matches[0])
-                continue
-            # Réponse perdue ou position déjà fermée avant d'être vue : l'historique des deals le dit.
+            else:
+                waiting.append(order)
+        # Réponse perdue ou position déjà fermée avant d'être vue : l'historique des deals le dit (un seul appel).
+        found: dict[str, Deal] = {}
+        if waiting:
             try:
-                deal = find_entry_deal(self.broker, magic=self.cfg.magic, comment=order.comment,
-                                       sent_s=order.time_ms // 1000, now_s=now_ms // 1000)  # fmt: skip
+                found = find_entry_deals(self.broker, magic=self.cfg.magic, comments={o.comment for o in waiting},
+                                         sent_s=min(o.time_ms for o in waiting) // 1000, now_s=now_ms // 1000)  # fmt: skip
             except BrokerError as exc:
-                self.say(f"   historique des deals illisible ({exc}) : ordre {order.comment} revu au prochain passage")
-                continue
+                # État inconnu : les ordres restent « envoi » (comptés dans le risque ouvert), jamais notés échec.
+                if now_ms - self._history_warned_ms >= 60_000:
+                    self._history_warned_ms = now_ms
+                    self.say(f"   historique des deals illisible ({exc}) : {len(waiting)} ordre(s) en attente, "
+                             "revus au prochain passage")  # fmt: skip
+                waiting = []
+        for order in waiting:
+            deal = found.get(order.comment)
             if deal is not None:
                 self._mark_open_from_deal(order.tag, order.part, deal)
                 self.say(f"{self._clock(now_ms)} ordre {order.comment} retrouvé dans l'historique des deals "
@@ -758,7 +797,7 @@ class ScalpRunner:
             f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | ATR M1 {self.atr:.2f} $ | "
             f"spread {tick.ask - tick.bid:.2f} $ | signaux : {counts.get(SENT, 0)} envoyés, "
             f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} refusés | {self.running_total()} | "
-            f"{self.policy.cadence.describe()}"
+            f"{self.policy.cadence.describe()}" + (f" | ARRÊT TOTAL : {self.halted}" if self.halted else "")
         )
 
     def _block(self, label: str, trades: dict[str, dict[str, float]], durations: list[float], reasons: Counter,
@@ -813,6 +852,10 @@ class ScalpRunner:
         lines.append(f"  valeur du compte (equity, compte entier) : {account.equity:.2f} {self.currency} "
                      f"(départ {start:.2f})")  # fmt: skip
         lines.append(f"  {self.policy.cadence.describe()}")
+        if self.halted:
+            lines.append(
+                f"  ARRÊT TOTAL (drawdown maximal) : {self.halted} ; relance : run_scalp.py --nouvelle-experience"
+            )
         lines.append(
             f"=== Bilan 2 : simulation avec glissement supplémentaire (+{self.cfg.extra_slippage_points:g} points), "
             "tous les signaux acceptés ==="

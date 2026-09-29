@@ -20,6 +20,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from goldbot.config import ScalpingConfig
+from goldbot.risk.sizing import position_size
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,32 @@ class EntryPolicy:
         self.pause_reason[side] = why
         direction = "achats" if side > 0 else "ventes"
         return f"pause des {direction} pendant {seconds / 60:g} min ({why}) : le marché ne va pas dans ce sens"
+
+
+def trade_volume(config: ScalpingConfig, equity: float, loss_per_lot: float, *, volume_min: float,
+                 volume_step: float) -> tuple[float, str | None]:  # fmt: skip
+    """(lot, motif du refus) ; même calcul au rejeu et en démo.
+
+    Lot fixe : refusé si sa perte au stop dépasse risk_per_trade_pct de l'equity (plafond dur 1 %). Sinon : lot
+    calculé d'après le risque, arrondi vers le bas, refusé sous le lot minimal (jamais arrondi vers le haut).
+    """
+    budget = equity * config.risk_per_trade_pct / 100
+    if config.fixed_volume is not None:
+        volume = round(int(config.fixed_volume / volume_step + 1e-9) * volume_step, 8)
+        if volume < volume_min:
+            return 0.0, f"lot fixe sous le minimum du broker : {config.fixed_volume:g} < {volume_min:g}"
+        if volume * loss_per_lot > budget:
+            return 0.0, (f"lot fixe au-dessus du risque maximal : {volume:g} lot perd {volume * loss_per_lot:.2f} au "
+                         f"stop, plus que {config.risk_per_trade_pct:g} % ({budget:.2f})")  # fmt: skip
+        return volume, None
+    volume = position_size(budget, loss_per_lot, volume_min=volume_min, volume_max=float("inf"),
+                           volume_step=volume_step)  # fmt: skip
+    return volume, None if volume > 0 else "lot minimum au-dessus du budget de risque"
+
+
+def drawdown_pct(equity: float, peak: float) -> float:
+    """Baisse depuis le plus haut, en % (positive)."""
+    return (1.0 - equity / peak) * 100.0 if peak > 0 else 0.0
 
 
 def split_volume(volume: float, volume_max: float, volume_step: float) -> list[float]:

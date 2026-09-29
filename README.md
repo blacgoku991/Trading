@@ -256,7 +256,9 @@ vraies ouvertures et clôtures, pas à gagner. Quelques trades gagnants ne prouv
 
    Le bot ouvre un achat de test au lot minimal (stop à 3 $), vérifie le stop côté serveur, le resserre de
    0,50 $, simule un redémarrage (reprise depuis l'état), ferme la position au bout de 15 s et compare le
-   résultat estimé avant clôture au résultat exécuté. Il affiche six lignes `OK` ou `ÉCHEC`.
+   résultat estimé avant clôture au résultat exécuté ; il vérifie aussi que l'ordre se retrouve dans
+   l'historique des deals par son magic et son commentaire (utile si une réponse du serveur se perd). Il affiche
+   sept lignes `OK` ou `ÉCHEC`.
    Coût : le spread (environ 0,15 € pour 0,01 lot), plus ou moins le mouvement de l'or pendant ces 15 s ;
    perte maximale environ 2,5 $ (stop resserré). Ce trade de test est exclu des bilans.
 
@@ -280,7 +282,8 @@ vraies ouvertures et clôtures, pas à gagner. Quelques trades gagnants ne prouv
    Ctrl+C arrête le bot : il ferme d'abord les positions de l'expérience, puis affiche les deux bilans. Si la
    fermeture échoue (marché fermé, connexion perdue), leur stop reste sur le serveur et le bot les reprend au
    redémarrage. Si les réglages de la section `scalping` changent en cours de collecte, le bot refuse de
-   repartir ; pour démarrer une nouvelle expérience (l'ancienne est archivée) : `run_scalp.py --nouvelle-experience`.
+   repartir ; pour démarrer une nouvelle expérience (l'ancienne est archivée, jamais effacée) :
+   `run_scalp.py --nouvelle-experience`. C'est aussi la seule façon de repartir après un arrêt total (−10 %).
 
 3. Bilans à tout moment : `.\.venv\Scripts\python.exe scripts\run_scalp.py --bilan`.
    Sans aucun ordre (tout simulé localement) : `run_scalp.py --simulation`.
@@ -308,10 +311,12 @@ ligne « en marche » et les bilans. Le risque de chaque trade ne change jamais.
   position en double chez le broker est fermée ; ces cas sont comptés dans le bilan.
 
 Garde-fous : compte **démo obligatoire, sans exception** (aucune option ne permet le réel), compte en hedging,
-Algo Trading actif, un seul exemplaire à la fois ; 0,1 % de risque par trade (signal ignoré si le lot minimal
-dépasse ce budget) ; plus d'entrée pour la journée à −1 % (démo, latent compris) ; marge libre d'au moins 50 % de
-l'equity après l'ordre ; pas d'entrée si le marché ferme avant la durée maximale ; pas d'entrée si, tous les
-stops touchés, la journée dépasserait −1 % (budget du jour) ; réponse du serveur perdue : l'ordre est retrouvé
+Algo Trading actif, un seul exemplaire à la fois ; **lot fixe de 0,1** (choix de l'utilisateur, `fixed_volume`),
+refusé si ce lot risquerait plus de 1 % de l'equity au stop (plafond dur ; sans `fixed_volume`, lot calculé d'après
+`risk_per_trade_pct`) ; plus d'entrée pour la journée à −2 % (démo, latent compris) ; marge libre d'au moins 50 %
+de l'equity après l'ordre ; pas d'entrée si le marché ferme avant la durée maximale ; pas d'entrée si, tous les
+stops touchés, la journée dépasserait −2 % (budget du jour) ; **arrêt total à −10 % depuis le plus haut de
+l'expérience** : positions fermées, plus aucune entrée, relance manuelle uniquement ; réponse du serveur perdue : l'ordre est retrouvé
 dans l'historique des deals (magic et commentaire), jamais renvoyé ; stop manquant reposé, sinon
 position fermée ; si le serveur répond « trop de requêtes », plus d'envoi pendant 60 s. Magic `20260929` : le bot
 principal (`20260928`) et tes trades manuels ne sont jamais touchés. D'après le centre d'aide d'Axi, le scalping

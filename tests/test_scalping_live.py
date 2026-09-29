@@ -547,6 +547,11 @@ _V1_EXITS = [
     ("version: 2                    # v1", "version: 1                    # v1"),
     ("target_ratios: [2.0, 3.0, 4.0]", "target_ratios: [0.8, 1.2, 2.0]"),
     ("    enabled: false\n    version: 1\n    impulse_atr", "    enabled: true\n    version: 1\n    impulse_atr"),
+    ("  fixed_volume: 0.1\n", ""),
+    ("  risk_per_trade_pct: 1.0\n", "  risk_per_trade_pct: 0.1\n"),
+    ("  max_total_risk_pct: 2.0 ", "  max_total_risk_pct: 0.5 "),
+    ("  daily_loss_pct: 2.0 ", "  daily_loss_pct: 1.0 "),
+    ("    ceiling_total_risk_pct: 2.0 ", "    ceiling_total_risk_pct: 1.0 "),
 ]
 
 
@@ -623,7 +628,8 @@ def test_verification_checks_open_stop_restart_and_max_duration(tmp_path, env_fi
     broker, clock, quote, *_ = world
     code, output = _launch(tmp_path, env_file, broker, clock, "--verification")
     assert code == EXIT_OK, output
-    assert output.count("OK   ") == 6 and "ÉCHEC" not in output
+    assert output.count("OK   ") == 7 and "ÉCHEC" not in output
+    assert "ordre retrouvable par magic et commentaire" in output
     assert "durée max" in output
     broker.connect()  # le lanceur ferme la connexion en sortant
     assert broker.positions() == []
@@ -733,3 +739,33 @@ def test_in_simulation_mode_each_closed_simulated_trade_reaches_the_cadence(worl
     live.step()
     assert live.shadow == {} and len(live.policy.cadence.results) == 1
     assert live.policy.cadence.results[0] == pytest.approx(live.store.closed_sims()[0]["pnl"])
+
+
+def test_maximum_drawdown_stops_everything_until_a_manual_restart(world, tmp_path):
+    broker, clock, quote, runner, lines = world
+    store = ScalpStore(tmp_path / "scalp.sqlite")
+    store.set_meta("start_equity", "10000.0")
+    live = runner(local_only=True, store=store)
+    store.record_sim("SC-B-1-L", "B", 1_000, 1, 4000.0, 3990.0, 4030.0, 1.0, False)
+    store.close_sim("SC-B-1-L", 3990.0, "stop", -1_050.0, 0.0, 2_000)  # -10,5 % depuis le plus haut
+    live.step()
+    assert live.halted and "baisse de 10.5 %" in live.halted
+    assert any("ARRÊT TOTAL" in line for line in lines) and "ARRÊT TOTAL" in live.status_line()
+    _breakout(broker, clock, quote, live)
+    assert live.shadow == {} and any("refus : arrêt total : drawdown maximal atteint" in line for line in lines)
+    restarted = runner(local_only=True, store=ScalpStore(tmp_path / "scalp.sqlite"))
+    assert restarted.halted == live.halted  # l'arrêt survit au redémarrage
+
+
+def test_a_halted_experiment_refuses_to_start_without_a_new_experiment(tmp_path, env_file, world):
+    broker, clock, *_ = world
+    store_path = tmp_path / "project" / "data" / "scalp.sqlite"
+    store_path.parent.mkdir(parents=True)
+    store = ScalpStore(store_path)
+    store.record_signal("SC-B-1-L", strategy=BREAKOUT, time_ms=BASE_MS - 60_000, side=1, status=SENT)
+    store.set_meta("arret_total", "baisse de 10.5 % depuis le plus haut")
+    store.close()
+    code, output = _launch(tmp_path, env_file, broker, clock)
+    assert code == EXIT_REFUSED and "arrêt total de l'expérience" in output and broker.sent == []
+    code, output = _launch(tmp_path, env_file, broker, clock, "--nouvelle-experience")
+    assert code == EXIT_OK and "Ancienne expérience archivée" in output

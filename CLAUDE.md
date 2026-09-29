@@ -383,7 +383,10 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   (stop ≥ 2 $, objectif 3 x le stop, 10 min, apprentissage v2) ; 21 variantes testées, toutes perdantes, retenue
   la moins mauvaise (PF 0,905 au rejeu ; cassure seule PF 0,97, proche de l'équilibre, impulsion-repli
   désactivée car perdante dans toutes ses versions). Lots non augmentés tant qu'aucune version ne gagne (explication donnée ;
-  décision de l'utilisateur, dans la limite dure de 1 %/trade).
+  décision de l'utilisateur, dans la limite dure de 1 %/trade). Puis l'utilisateur décide : **lot fixe 0,1** (« 0,1
+  ou 0,2 ») : mis en démo avec un risque maximal de 1 % par trade (trade refusé au-delà ; 0,2 aurait dépassé 1 % dès
+  2,84 $ de stop), perte maximale du jour −2 % (défaut §3.5) et **arrêt total à −10 %** ajouté au scalper (manquait),
+  relance par `--nouvelle-experience` seulement. Rejeu annoncé avant lancement : arrêt total au 5e jour (−456 €).
 
 ---
 

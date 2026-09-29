@@ -489,6 +489,23 @@ ce classement : elle multiplie gains et pertes par le même nombre (même espér
 sur le même signal reviennent à un seul lot plus gros. Tant que l'espérance est négative, un lot plus gros fait
 seulement perdre plus vite ; il ne s'augmente (en % de risque, plafond dur 1 %) qu'une fois un avantage démontré.
 
+**Lot fixe de 0,1** (décision de l'utilisateur, 29/09 au soir : « mettre les lots à 0,1 ou 0,2 »). Mis en démo
+dans les limites dures : un trade est refusé si 0,1 lot risquerait plus de 1 % de l'equity au stop (stop de plus de
+5,70 $ environ sur 5 000 €) ; 0,2 lot aurait dépassé 1 % dès 2,84 $ de stop, donc refusé la plupart du temps. Perte
+maximale du jour portée à −2 % (défaut du CLAUDE.md, §3.5 ; −1 % bloquait après deux pertes) ; **arrêt total à
+−10 % depuis le plus haut de l'expérience** ajouté au scalper (il manquait ; règle 5), avec relance manuelle
+seulement (`--nouvelle-experience`). Rejeu de la cassure seule avec ces réglages :
+
+| Prix exécutables | Trades | Gagnants | Gain moyen / perte moyenne | PF | Résultat | Arrêt total |
+|---|---|---|---|---|---|---|
+| 0,1 lot fixe | 42 | 21 % | +35,44 / −23,49 € | 0,41 | −456 € | au 5e jour (−10,8 %) |
+| 0,1 lot fixe, +10 points | 76 | 32 % | +42,69 / −26,26 € | 0,75 | −341 € | au 4e jour (−10,2 %) |
+
+Chaque trade pèse 4 à 5 fois plus qu'à 0,1 % de risque : sur ces 4 semaines, un mauvais départ suffit à atteindre
+−10 % en quelques jours, et l'arrêt total coupe l'expérience. Le lot ne change pas l'espérance en R (toujours
+négative) ; il raccourcit le chemin jusqu'à la limite. Mis en démo parce que c'est le choix de l'utilisateur, avec
+ce résultat annoncé avant le lancement.
+
 Réponse du serveur perdue (relevé par la relecture critique, corrigé) : si la position a déjà touché son stop quand
 le bot la cherche, l'ordre est retrouvé dans l'historique des deals (même magic, même commentaire `tag#n`) et son
 vrai résultat entre dans les bilans, la perte du jour et la cadence, au lieu d'être noté « échec ». Même

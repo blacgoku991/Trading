@@ -21,10 +21,9 @@ from goldbot.config import ScalpingConfig
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.quality import server_index
 from goldbot.indicators.core import atr as atr_series
-from goldbot.risk.sizing import position_size
 from goldbot.scalping.engine import CandleBuilder, SimTrade, make_detectors, plan_trade
 from goldbot.scalping.learning import LearningBook
-from goldbot.scalping.policy import EntryPolicy, Exposure, reason_key, split_volume
+from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, reason_key, split_volume, trade_volume
 
 _EPOCH = datetime(1970, 1, 1)
 
@@ -49,6 +48,7 @@ class ScalpResult:
     final_equity: float
     equity_low: float
     entries_per_minute: Counter = field(default_factory=Counter)
+    halted_ms: int | None = None  # arrêt total au drawdown maximal (heure serveur, ms), comme en démo
 
 
 def context_by_minute(bars: pd.DataFrame, config: ScalpingConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -97,7 +97,8 @@ def run_backtest(
     )
     # Apprentissage à chaque trade (même code qu'en direct) : variantes simulées au prix exécutable.
     book = LearningBook(config, point=point, digits=2, fee_per_oz=fee) if config.learning.enabled else None
-    equity = low = day_start_equity = initial_equity
+    equity = low = day_start_equity = peak = initial_equity
+    halted_ms: int | None = None
     open_trades: list[tuple[SimTrade, Exposure, str, int, str]] = []  # (trade, exposition, stratégie, ordres, variante)
     closed: list[dict[str, object]] = []
     refusals: Counter = Counter()
@@ -124,6 +125,9 @@ def run_backtest(
                     equity += pnl
                     day_pnl += pnl
                     low = min(low, equity)
+                    peak = max(peak, equity)
+                    if halted_ms is None and drawdown_pct(equity, peak) >= config.max_drawdown_pct:
+                        halted_ms = now  # arrêt total : plus aucune entrée (en démo : relance manuelle)
                     closed.append(
                         {
                             "strategy": strategy,
@@ -160,6 +164,9 @@ def run_backtest(
                     continue
                 code = setup.strategy
                 signals[code] += 1
+                if halted_ms is not None:
+                    refusals[(code, "arrêt total : drawdown maximal atteint")] += 1
+                    continue
                 if now > candle.start_ms + 2 * size_ms:
                     refusals[(code, "signal périmé")] += 1
                     continue
@@ -189,15 +196,10 @@ def run_backtest(
                 # Comme en direct : perte au stop avec le glissement attendu, commission comprise.
                 worst_move = plan.stop_distance + config.expected_slippage_points * point + fee
                 loss_per_lot = worst_move * instrument.contract_size
-                lots = position_size(
-                    equity * config.risk_per_trade_pct / 100,
-                    loss_per_lot,
-                    volume_min=instrument.volume_min,
-                    volume_max=float("inf"),  # au-delà du maximum par ordre : fractionnement
-                    volume_step=instrument.volume_step,
-                )
-                if lots == 0:
-                    refusals[(code, "lot minimum au-dessus du budget")] += 1
+                lots, why = trade_volume(config, equity, loss_per_lot, volume_min=instrument.volume_min,
+                                         volume_step=instrument.volume_step)  # fmt: skip
+                if why is not None:  # au-delà du maximum par ordre : fractionnement (split_volume)
+                    refusals[(code, reason_key(why))] += 1
                     continue
                 risk = lots * loss_per_lot
                 reason = policy.refusal(
@@ -221,7 +223,7 @@ def run_backtest(
                 per_minute[now // 60_000] += 1
 
     frame = pd.DataFrame(closed)
-    return ScalpResult(frame, refusals, signals, initial_equity, equity, low, Counter(per_minute.values()))
+    return ScalpResult(frame, refusals, signals, initial_equity, equity, low, Counter(per_minute.values()), halted_ms)
 
 
 def summary(result: ScalpResult, days: float, strategy: str | None = None) -> dict[str, float]:

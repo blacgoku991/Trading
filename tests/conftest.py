@@ -43,11 +43,21 @@ def server_epoch_of(text):
 
 
 def v1_exit_settings():
-    """Réglages du dépôt, sauf le scalper : sorties de la v1 et les deux stratégies actives. Les tests de scalping
+    """Réglages du dépôt, sauf le scalper : sorties et risque de la v1 (0,1 % par trade calculé, -1 % par jour) et
+    les deux stratégies actives. Les tests de scalping
     sont écrits avec ces valeurs et ne doivent pas dépendre des réglages choisis pour la démo."""
     settings = load_settings(CONFIG_PATH)
     data = settings.scalping.model_dump()
-    data.update(min_stop_points=50, target_ratio=1.2, max_hold_s=120)
+    data.update(
+        min_stop_points=50,
+        target_ratio=1.2,
+        max_hold_s=120,
+        fixed_volume=None,
+        risk_per_trade_pct=0.1,
+        max_total_risk_pct=0.5,
+        daily_loss_pct=1.0,
+    )
+    data["cadence"].update(ceiling_total_risk_pct=1.0)
     data["learning"].update(version=1, target_ratios=[0.8, 1.2, 2.0])
     data["pullback"]["enabled"] = True  # les tests couvrent les deux stratégies
     return settings.model_copy(update={"scalping": type(settings.scalping).model_validate(data)})
