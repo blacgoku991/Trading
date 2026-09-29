@@ -972,3 +972,17 @@ def test_two_candles_follow_mode_trades_in_the_direction_of_each_candle():
     sell = _minute(detector, 103, 4003.0, 4002.2, high=4004.0)[-1]  # ça se retourne : vente
     assert sell is not None and sell.side == SHORT and sell.structure == pytest.approx(4004.0)
     assert "dans le sens des bougies" in sell.reason
+
+
+def test_two_candles_candle_target_sits_beyond_the_previous_candles_within_bounds():
+    from goldbot.scalping.engine import TWO_CANDLES
+
+    config = _two_config(target_mode="bougie", min_target_pips=15.0, target_pips=[40.0])
+    c = candle(0, 4000.0)
+    near = Setup(TWO_CANDLES, LONG, 4002.50, 3999.0, c, key="R", reason="test")  # plus haut des bougies à 4002.50
+    plan = plan_trade(near, 3999.92, 4000.08, config, **KWARGS)
+    assert plan.tps == pytest.approx((4002.50,)) and plan.target == pytest.approx(2.42)  # 24,2 pips
+    close = Setup(TWO_CANDLES, SHORT, 3999.80, 4001.0, c, key="R", reason="test")  # plus bas à 0,12 $ : 15 pips
+    assert plan_trade(close, 3999.92, 4000.08, config, **KWARGS).tps == pytest.approx((3998.42,))
+    far = Setup(TWO_CANDLES, LONG, 4010.0, 3999.0, c, key="R", reason="test")  # 10 $ plus haut : 40 pips au plus
+    assert plan_trade(far, 3999.92, 4000.08, config, **KWARGS).tps == pytest.approx((4004.08,))

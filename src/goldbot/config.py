@@ -263,11 +263,18 @@ class ScalpTwoCandleConfig(_Section):
     minutes: int = Field(default=1, ge=1, le=60)  # durée des bougies lues
     min_stop_pips: float = Field(default=10.0, gt=0)  # stop plus proche : élargi à ce minimum (pas de refus)
     target_pips: list[float] = Field(default_factory=lambda: [20.0, 25.0, 30.0], min_length=1, max_length=5)
+    # « fixe » : une position par objectif de target_pips. « bougie » : une position, objectif juste au-delà des deux
+    # dernières bougies (leur plus haut pour un achat, leur plus bas pour une vente), à distance bornée entre
+    # min_target_pips et le dernier objectif de target_pips.
+    target_mode: Literal["fixe", "bougie"] = "fixe"
+    min_target_pips: float = Field(default=15.0, gt=0)
 
     @model_validator(mode="after")
     def _consistent(self) -> ScalpTwoCandleConfig:
         if any(t <= 0 for t in self.target_pips) or self.target_pips != sorted(self.target_pips):
             raise ValueError("two_candles.target_pips : objectifs positifs, du plus proche au plus loin")
+        if self.target_mode == "bougie" and self.min_target_pips > self.target_pips[-1]:
+            raise ValueError("two_candles.min_target_pips au-delà de l'objectif maximal (dernier de target_pips)")
         return self
 
 

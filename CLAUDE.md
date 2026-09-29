@@ -410,7 +410,8 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   40 pips ; limites −2 %/jour et −10 % gardées (non négociables). Rejeu : PF 0,74, arrêt au 4e jour, annoncé.
   Puis « suivre les bougies » (acheter sur une série haussière, changer quand ça se retourne) : deux bougies v2,
   mode « suivre » ; les 4 règles (reprise, retournement, série, suivre) se valent sur 7 ans de M1 (PF 0,88 la
-  dernière année, toutes perdantes).
+  dernière année, toutes perdantes). Puis « le TP au-dessus de la bougie précédente » : v3, objectif juste au-delà
+  des deux dernières bougies, 15 à 40 pips (plus de gagnants, mais PF 0,80 contre 0,88 : annoncé).
 
 ---
 

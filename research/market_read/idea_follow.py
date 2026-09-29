@@ -42,7 +42,9 @@ def entries(b: pd.DataFrame, mode: str) -> np.ndarray:
 
 
 def run(b: pd.DataFrame, period: str, mode: str, *, target: float = 4.0, hold: int = 10, min_stop: float = 1.0,
-        max_stop: float = 6.0, slip: float = 0.0) -> dict[str, float]:
+        max_stop: float = 6.0, slip: float = 0.0, tp_candle: bool = False, min_target: float = 1.0) -> dict[str, float]:
+    """tp_candle : objectif au-delà des deux dernières bougies (leur plus haut pour un achat, leur plus bas pour une
+    vente), à distance bornée à [min_target, target] ; sinon objectif fixe à `target`."""
     side_at = entries(b, mode)
     O, Hb, Lb, C = (b[x].to_numpy(dtype="float64") for x in ("open", "high", "low", "close"))
     hi2 = np.maximum(Hb, np.concatenate([[np.nan], Hb[:-1]]))
@@ -68,7 +70,12 @@ def run(b: pd.DataFrame, period: str, mode: str, *, target: float = 4.0, hold: i
             dist, sl = min_stop, entry - side * min_stop
         if dist > max_stop:
             continue
-        tp = entry + side * target
+        if tp_candle:
+            level = hi2[i] if side > 0 else lo2[i] + spread[j]  # achat : bid au-dessus du plus haut ; vente : ask
+            reach = min(max((level - entry) * side, min_target), target)
+        else:
+            reach = target
+        tp = entry + side * reach
         last = min(j + hold - 1, n - 1)
         exit_price, m = None, j
         for m in range(j, last + 1):
@@ -107,10 +114,18 @@ def run(b: pd.DataFrame, period: str, mode: str, *, target: float = 4.0, hold: i
 if __name__ == "__main__":
     B = H.bars()
 
-    def one(mode):
-        return [{"regle": mode, "periode": p, **run(B, p, mode)} for p in ("developpement", "final")]
+    VARIANTS = {
+        "suivre, objectif 40 pips": dict(mode="suivre"),
+        "suivre, objectif au-delà des 2 bougies (10-40 pips)": dict(mode="suivre", tp_candle=True),
+        "suivre, objectif au-delà des 2 bougies (15-40 pips)": dict(mode="suivre", tp_candle=True, min_target=1.5),
+        "reprise, objectif au-delà des 2 bougies (10-40 pips)": dict(mode="reprise", tp_candle=True),
+    }
+
+    def one(item):
+        name, kw = item
+        return [{"regle": name, "periode": p, **run(B, p, **kw)} for p in ("developpement", "final")]
 
     with mp.get_context("fork").Pool(2) as pool:
-        rows = [r for c in pool.map(one, ["reprise", "retournement", "serie", "suivre"]) for r in c]
+        rows = [r for c in pool.map(one, list(VARIANTS.items())) for r in c]
     pd.set_option("display.width", 250)
     print(pd.DataFrame(rows).to_string())

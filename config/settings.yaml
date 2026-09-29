@@ -174,9 +174,14 @@ scalping:
     # v2 (demande de l'utilisateur : « sur une série d'achats il doit acheter, changer quand ça se retourne ») :
     # mode « suivre » : bougie haussière -> achat, baissière -> vente, stop au-delà des deux dernières bougies.
     # 7 ans de M1 Axi : « reprise » et « suivre » perdent autant l'une que l'autre (PF 0,88 sur la dernière année).
+    # v3 (demande : « le TP au-dessus de la bougie précédente, pour pas que ce soit trop loin ») : objectif juste
+    # au-delà des deux dernières bougies (leur plus haut pour un achat), entre 15 et 40 pips. 7 ans de M1 : plus de
+    # trades gagnants (51 % contre 36 %) mais plus petits : PF 0,80 contre 0,88 avec 40 pips fixes (dernière année).
     enabled: true
-    version: 2
+    version: 3
     mode: suivre
+    target_mode: bougie
+    min_target_pips: 15
     minutes: 1
     min_stop_pips: 10
     target_pips: [40]

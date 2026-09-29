@@ -362,7 +362,9 @@ class TwoCandleDetector:
             text = "bougie haussière puis baissière : achat, stop sous les deux bougies"
         else:
             return None
-        return Setup(TWO_CANDLES, side, trigger.close, structure, trigger, key=f"R{side:+d}@{t2}", reason=text,
+        # Niveau clé : l'autre extrême des deux bougies (objectif en mode « bougie »).
+        level = max(h1, h2) if side == LONG else min(l1, l2)
+        return Setup(TWO_CANDLES, side, level, structure, trigger, key=f"R{side:+d}@{t2}", reason=text,
                      features={"body1": abs(c1 - o1), "body2": abs(c2 - o2)})  # fmt: skip
 
 
@@ -455,7 +457,13 @@ def plan_trade(
     if distance > config.max_stop_points * point + 1e-9:
         return f"stop trop loin : {pips(distance, config)} > {pips(config.max_stop_points * point, config)}"
     targets: tuple[float, ...]
-    if two:
+    if two and config.two_candles.target_mode == "bougie":
+        # Objectif juste au-delà des deux bougies (prix médian : le bid d'un achat doit le dépasser d'un demi-spread),
+        # borné entre min_target_pips et le dernier objectif de target_pips.
+        low = config.two_candles.min_target_pips * config.pip_size
+        high = config.two_candles.target_pips[-1] * config.pip_size
+        targets = (round(min(max((setup.level - entry) * side, low), high), digits),)
+    elif two:
         targets = tuple(round(t * config.pip_size, digits) for t in config.two_candles.target_pips)
     elif config.fixed_target_pips is not None:
         targets = (round(config.fixed_target_pips * config.pip_size, digits),)

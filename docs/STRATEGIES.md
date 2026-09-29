@@ -716,6 +716,20 @@ Toutes se valent : le sens d'une ou deux bougies M1 ne prévoit pas les minutes 
 près le spread. Mise en démo de « suivre » (v2), le comportement demandé. Rejeu 4 semaines (lot 0,4 / 0,3) : 20
 trades, PF 0,57, −295 €, arrêt à −10 % le 03/09 (4e jour, comme la v1).
 
+**Deux bougies v3 : objectif au-delà des bougies précédentes** (demande : « le TP au-dessus de la bougie
+précédente, pour pas que ce soit trop loin »). Objectif juste au-delà des deux dernières bougies (leur plus haut pour
+un achat, leur plus bas pour une vente), borné à 10-40 ou 15-40 pips. Barres M1 Axi, mode « suivre » :
+
+| Objectif | Dernière année : gagnants | Net par trade | PF | 2019-2023 : PF |
+|---|---|---|---|---|
+| 40 pips fixes (v2) | 36 % | −1,5 pips | 0,88 | 0,62 |
+| au-delà des bougies, 10 à 40 pips | 57 % | −2,2 pips | 0,75 | 0,59 |
+| au-delà des bougies, 15 à 40 pips (v3) | 51 % | −2,0 pips | 0,80 | 0,61 |
+
+Plus de trades gagnants, mais des gains plus petits face au même spread : perte par trade plus grande. Mise en démo
+avec le minimum de 15 pips (compromis avec la demande précédente : « le spread fait passer en négatif »). Rejeu 4
+semaines : 26 trades, 35 % de gagnants, +15,0 / −13,2 pips en moyenne, PF 0,61, −290 €, arrêt le 03/09 (4e jour).
+
 
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 
