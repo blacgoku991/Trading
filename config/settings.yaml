@@ -177,6 +177,21 @@ scalping:
     retrace_max: 0.7
     pullback_max_s: 60
     atr_period: 14
+  learning:
+    # « apprend à chaque trade » v1 : chaque signal est aussi simulé avec d'autres variantes (stop x1 / x1,5 / x2,
+    # objectif 0,8 / 1,2 / 2 R, et à l'envers : vendre quand le signal dit d'acheter). Après chaque trade simulé
+    # fermé, le score de la variante est mis à jour (les trades récents pèsent plus), séparément pour les achats et
+    # les ventes de chaque stratégie. Au signal suivant : la meilleure variante du moment, ou aucun trade si toutes
+    # perdent. Rejeu sur 4 semaines : perd moins que sans apprentissage, mais perd (docs/STRATEGIES.md).
+    enabled: true
+    version: 1
+    by_side: true
+    allow_invert: true
+    half_life_trades: 100
+    min_trades: 20
+    always_trade: false
+    stop_mults: [1.0, 1.5, 2.0]
+    target_ratios: [0.8, 1.2, 2.0]
 
 logging:
   level: INFO

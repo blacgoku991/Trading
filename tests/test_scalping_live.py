@@ -1,5 +1,6 @@
 """Expérience de scalping en direct, avec le broker factice."""
 
+import json
 import sqlite3
 from dataclasses import replace
 
@@ -123,7 +124,7 @@ def test_breakout_opens_a_demo_trade_with_its_server_stop_then_closes_at_max_dur
     assert position.magic == MAGIC and position.sl > 0 and position.tp > position.price_open
     (sent,) = _deals(broker)
     assert sent["sl"] == pytest.approx(3999.87) and sent["comment"] == f"SC-B-{BASE_MS + 10_000}-L#1"
-    assert any("signal ACHAT [cassure v1 · " in line for line in lines)
+    assert any("signal ACHAT [cassure v1 + apprentissage v1 · " in line for line in lines)
     assert any("entrée démo [cassure v1" in line for line in lines)
     # 121 s plus tard : sortie forcée à la durée maximale, même si la position perd.
     clock.advance(121)
@@ -344,7 +345,9 @@ def test_pullback_signal_is_traded_live(world):
     # La même hausse a aussi déclenché la cassure : deux occasions distinctes, deux trades.
     (sent,) = [r for r in _deals(broker) if r["comment"].startswith("SC-P-")]
     assert sent["sl"] == pytest.approx(4001.30 - 0.08 - 0.05)
-    assert any("signal ACHAT [impulsion-repli v1 · " in line and "repli de 46 %" in line for line in lines)
+    assert any(
+        "signal ACHAT [impulsion-repli v1 + apprentissage v1 · " in line and "repli de 46 %" in line for line in lines
+    )
     assert {live.store.signal(r["comment"].split("#")[0])["strategy"] for r in _deals(broker)} == {BREAKOUT, PULLBACK}
 
 
@@ -387,7 +390,11 @@ def test_two_separate_reports(world):
     demo, simulation = "\n".join(live.reports()).split("=== Bilan 2")
     assert "Bilan 1 : exécutions démo" in demo and "simulation avec glissement supplémentaire" in simulation
     for block in (demo, simulation):
-        assert "[cassure v1 · " in block and "[impulsion-repli v1 · " in block and "[total]" in block
+        assert (
+            "[cassure v1 + apprentissage v1 · " in block
+            and "[impulsion-repli v1 + apprentissage v1 · " in block
+            and "[total]" in block
+        )
         for text in ("gains réalisés", "pertes réalisées", "dont frais", "résultat total", "durée", "sorties"):
             assert text in block
     assert "positions ouvertes 1 (latent" in demo and "valeur du compte (equity" in demo
@@ -408,6 +415,67 @@ def test_a_state_database_of_the_previous_version_is_archived_not_rewritten(tmp_
     old.close()
     store = ScalpStore(path)
     assert store.archived is not None and store.archived.exists() and not store.has_activity()
+
+
+def _teach(live, key, best_name, *, best=0.5, others=-0.5, count=20):
+    """État d'apprentissage imposé : chaque variante jugée sur `count` trades, une seule gagnante (ou aucune)."""
+    live.book.learner.state = {
+        key: {
+            name: [(best if name == best_name else others) * count, float(count), count]
+            for name in live.book.learner.variants
+        }
+    }
+
+
+def test_learning_can_play_a_buy_signal_as_a_sell(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    _teach(live, "B+", "stop x1 / objectif 1.2 R / inversé")  # en ce moment, vendre les cassures haussières gagne
+    _breakout(broker, clock, quote, live)
+    (sent,) = _deals(broker)
+    assert sent["type"] == C.ORDER_TYPE_SELL
+    assert sent["sl"] == pytest.approx(4001.13) and sent["tp"] == pytest.approx(3999.57)  # stop au-dessus
+    assert broker.positions()[0].type == C.POSITION_TYPE_SELL
+    row = live.store.signal(sent["comment"].split("#")[0])
+    assert row["side"] == LONG and row["variante"] == "stop x1 / objectif 1.2 R / inversé"
+    assert any("VENTE (signal joué à l'envers)" in line for line in lines)
+    assert any(
+        "apprentissage : meilleure variante récente stop x1 / objectif 1.2 R / inversé" in line for line in lines
+    )
+
+
+def test_learning_skips_the_signal_when_every_variant_loses(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    _teach(live, "B+", None)
+    _breakout(broker, clock, quote, live)
+    assert _deals(broker) == [] and live.store.status_counts() == {REFUSED: 1}
+    assert any("refus : apprentissage : toutes les variantes perdent en ce moment" in line for line in lines)
+
+
+def test_learning_state_is_saved_after_each_simulated_trade_and_reloaded_after_a_restart(world, tmp_path):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    assert len(live.book.sims) == 16  # le signal est simulé avec toutes les variantes possibles
+    clock.advance(121)
+    quote(4000.30)
+    live.step()  # durée maximale atteinte pour toutes les variantes : chaque résultat met à jour son score
+    saved = json.loads(live.store.meta("apprentissage"))
+    counts = {name: score[2] for name, score in saved["state"]["B+"].items()}
+    assert len(counts) == 16 and set(counts.values()) == {1} and not live.book.sims
+    live.store.close()
+    restarted = runner(store=ScalpStore(tmp_path / "scalp.sqlite"))
+    assert restarted.book.learner.state == live.book.learner.state
+
+
+def test_reports_show_what_the_bot_learned(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    _teach(live, "B+", "stop x2 / objectif 2 R")
+    text = "\n".join(live.reports())
+    assert "=== Apprentissage : score récent des variantes" in text
+    assert "[cassure, achats] meilleure : stop x2 / objectif 2 R (+0.50 R) | règles de départ -0.50 R" in text
 
 
 # --- lancement -----------------------------------------------------------------------------------
@@ -452,7 +520,9 @@ def test_a_real_account_is_always_refused(tmp_path, env_file, world):
 def test_launch_registers_the_strategy_versions_and_shows_them(tmp_path, env_file, world, settings):
     broker, clock, *_ = world
     code, output = _launch(tmp_path, env_file, broker, clock)
-    assert code == EXIT_OK and "Stratégies (version · empreinte des réglages) : cassure v1 · " in output
+    assert (
+        code == EXIT_OK and "Stratégies (version · empreinte des réglages) : cassure v1 + apprentissage v1 · " in output
+    )
     assert "5 entrées par minute au plus" in output
     for secret in SECRETS:
         assert secret not in output

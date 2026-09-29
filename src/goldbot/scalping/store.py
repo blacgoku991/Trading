@@ -26,7 +26,7 @@ SENDING = "envoi"  # enregistré juste avant l'envoi : à rapprocher des positio
 OPEN = "ouvert"
 CLOSED = "fermé"
 
-SCHEMA_VERSION = "2"  # 2 : stratégies versionnées, ordres fractionnables
+SCHEMA_VERSION = "3"  # 2 : stratégies versionnées, ordres fractionnables ; 3 : variante apprise par signal
 
 # Trade de la vérification technique (--verification) : gardé dans l'état, exclu des résultats.
 VERIFY_PREFIX = "SC-VERIF-"
@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS signals (
     sl REAL,
     tp REAL,
     risk REAL,
-    parts INTEGER
+    parts INTEGER,
+    variante TEXT
 );
 CREATE TABLE IF NOT EXISTS orders (
     tag TEXT NOT NULL,

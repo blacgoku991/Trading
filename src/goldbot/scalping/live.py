@@ -10,6 +10,7 @@ Une simulation parallèle rejoue chaque signal accepté avec un glissement suppl
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections import Counter
@@ -48,6 +49,7 @@ from goldbot.scalping.engine import (
     make_detectors,
     plan_trade,
 )
+from goldbot.scalping.learning import LearningBook
 from goldbot.scalping.policy import EntryPolicy, Exposure, split_volume
 from goldbot.scalping.store import (
     CLOSED,
@@ -69,6 +71,7 @@ CLOCK_GRACE_MS = 1000  # une bougie n'est close par l'horloge qu'une seconde apr
 CLOSE_RETRY_MS = 5000  # délai entre deux tentatives de clôture d'une même position
 BROKER_PAUSE_MS = 60_000  # après « trop de requêtes » (10024), plus d'envoi pendant 60 s
 DUPLICATES = "doublons_evites"
+LEARNER = "apprentissage"  # état de l'apprentissage dans la table meta (JSON)
 _DEAL_REASONS = {
     C.DEAL_REASON_SL: "stop",
     C.DEAL_REASON_TP: "objectif",
@@ -77,6 +80,12 @@ _DEAL_REASONS = {
     C.DEAL_REASON_MOBILE: "clôture manuelle",
     C.DEAL_REASON_WEB: "clôture manuelle",
 }
+
+
+def strategy_label(code: str, config: ScalpingConfig, version: int, digest: str) -> str:
+    """« cassure v1 + apprentissage v1 · 1a2b3c4d » : nom, versions et empreinte des réglages."""
+    learning = f" + apprentissage v{config.learning.version}" if config.learning.enabled else ""
+    return f"{STRATEGY_NAMES[code]} v{version}{learning} · {digest}"
 
 
 def strategy_versions(config: ScalpingConfig) -> dict[str, tuple[int, str, dict[str, object]]]:
@@ -120,7 +129,7 @@ class ScalpRunner:
         self.builder = CandleBuilder(self.cfg.candle_seconds)
         self.detectors = make_detectors(self.cfg)
         self.versions = strategy_versions(self.cfg)
-        self.labels = {code: f"{STRATEGY_NAMES[code]} v{v} · {h}" for code, (v, h, _) in self.versions.items()}
+        self.labels = {code: strategy_label(code, self.cfg, v, h) for code, (v, h, _) in self.versions.items()}
         self.labels["VERIF"] = "vérification"
         self.policy = EntryPolicy(self.cfg)
         self.cursor_ms: int | None = None
@@ -147,6 +156,19 @@ class ScalpRunner:
         commission = settings.backtest.commission_per_lot_side
         self.fee_per_oz = 2 * commission / spec.trade_contract_size
         self.exit_commission_per_lot = commission * self.value_per_dollar_oz
+        # Apprentissage à chaque trade (même code que le rejeu), état repris après un redémarrage.
+        self.book: LearningBook | None = None
+        self._learning_dirty = False
+        self._best_said: dict[str, str] = {}
+        if self.cfg.learning.enabled:
+            self.book = LearningBook(self.cfg, point=spec.point, digits=spec.digits, fee_per_oz=self.fee_per_oz)
+            saved = store.meta(LEARNER)
+            if saved:
+                self.book.learner.load(json.loads(saved))
+                for key in self.book.learner.state:
+                    best = self.book.learner.best(key)
+                    if best:
+                        self._best_said[key] = best[0]
 
     # --- affichage ----------------------------------------------------------------------------
 
@@ -177,16 +199,42 @@ class ScalpRunner:
             self.trading_from_ms = now_ms
         for time_ms, bid, ask in self._new_ticks(now_ms):
             self._advance_shadow(time_ms, bid, ask)
+            self._advance_learning(time_ms, bid, ask)
             if not self._is_open(time_ms):
                 continue
             for candle in self.builder.add(time_ms, bid, ask):
                 self._on_candle(candle, now_ms)
         for candle in self.builder.close_until(now_ms - CLOCK_GRACE_MS):
             self._on_candle(candle, now_ms)
-        if self.shadow:  # sans nouveau tick, la durée maximale des trades simulés passe quand même
+        if self.shadow or (self.book and self.book.sims):  # sans nouveau tick, la durée maximale passe quand même
             tick = self.broker.tick(self.spec.name)
             self._advance_shadow(now_ms, tick.bid, tick.ask)
+            self._advance_learning(now_ms, tick.bid, tick.ask)
+        if self._learning_dirty:
+            self.store.set_meta(LEARNER, json.dumps(self.book.learner.to_dict()))
+            self._learning_dirty = False
         self._manage_positions(now_ms)
+
+    def _context_label(self, key: str) -> str:
+        name = STRATEGY_NAMES.get(key[0], key[0])
+        return {"+": f"{name}, achats", "-": f"{name}, ventes"}.get(key[1:], name)
+
+    def _advance_learning(self, time_ms: int, bid: float, ask: float) -> None:
+        """Trades simulés des variantes : chaque clôture met à jour les scores ; annonce quand la meilleure change."""
+        if self.book is None or not self.book.sims:
+            return
+        updates = self.book.on_tick(time_ms, bid, ask)
+        if not updates:
+            return
+        self._learning_dirty = True
+        for key in dict.fromkeys(key for key, _, _ in updates):
+            best = self.book.learner.best(key)
+            if best is None or self._best_said.get(key) == best[0]:
+                continue
+            self._best_said[key] = best[0]
+            stop = "" if best[1] > 0 or self.cfg.learning.always_trade else " : pas de trade tant que toutes perdent"
+            self.say(f"{self._clock(time_ms)} apprentissage [{self._context_label(key)}] : meilleure variante récente "
+                     f"{best[0]} ({best[1]:+.2f} R){stop}")  # fmt: skip
 
     def _new_day(self, now_ms: int) -> None:
         day = now_ms // 86_400_000
@@ -298,8 +346,17 @@ class ScalpRunner:
         if isinstance(plan, str):
             self._refuse(setup, spread, plan)
             return
-        order_type = C.ORDER_TYPE_BUY if setup.side == LONG else C.ORDER_TYPE_SELL
-        worst = plan.sl - setup.side * cfg.expected_slippage_points * spec.point
+        variant = ""
+        if self.book is not None:
+            chosen, variant, why = self.book.decide(setup, plan, tick.bid, tick.ask, now_ms)
+            if chosen is None:
+                self._refuse(setup, spread, f"apprentissage : {why}")
+                return
+            if variant != self.book.learner.default.name:
+                self.say(f"   apprentissage : {why}")
+            plan = chosen  # sortie et sens choisis d'après les derniers résultats
+        order_type = C.ORDER_TYPE_BUY if plan.side == LONG else C.ORDER_TYPE_SELL
+        worst = plan.sl - plan.side * cfg.expected_slippage_points * spec.point
         loss_per_lot = -self.broker.calc_profit(order_type, spec.name, 1.0, plan.entry, worst)
         loss_per_lot += 2 * self.exit_commission_per_lot
         account = self.broker.account()
@@ -331,14 +388,16 @@ class ScalpRunner:
         self.policy.accept(now_ms)
         parts = split_volume(volume, spec.volume_max, spec.volume_step)
         split = f" en {len(parts)} ordres (fractionnement)" if len(parts) > 1 else ""
+        direction = ("ACHAT" if plan.side == LONG else "VENTE") + (" (signal joué à l'envers)" if plan.side != setup.side
+                                                                   else "")  # fmt: skip
         details = (
-            f"{volume:g} lot{split} à {plan.entry:.2f} | spread {plan.spread:.2f} | stop {plan.sl:.2f} "
+            f"{direction} {volume:g} lot{split} à {plan.entry:.2f} | spread {plan.spread:.2f} | stop {plan.sl:.2f} "
             f"(-{plan.stop_distance:.2f} $) | objectif {plan.tp:.2f} (+{plan.target:.2f} $) | "
             f"durée max {cfg.max_hold_s} s | risque {self._money(-risk)}"
         )
         self._start_shadow(setup, plan, tick.bid, tick.ask, now_ms, volume, risk, sent=not self.local_only)
         fields = dict(spread=plan.spread, volume=volume, entry=plan.entry, sl=plan.sl, tp=plan.tp, risk=risk,
-                      parts=len(parts), **self._signal_fields(setup))  # fmt: skip
+                      parts=len(parts), variante=variant or None, **self._signal_fields(setup))  # fmt: skip
         if self.local_only:
             self.store.record_signal(setup.tag, status=NOT_SENT, detail="mode --simulation", **fields)
             self.say(f"   non envoyé au broker (mode --simulation), simulé seulement : {details}")
@@ -368,9 +427,9 @@ class ScalpRunner:
                       risk: float, sent: bool) -> None:  # fmt: skip
         slip = self.cfg.extra_slippage_points * self.spec.point
         trade = SimTrade.open(setup.tag, plan, bid, ask, now_ms, self.cfg.max_hold_s, slip, volume, self.fee_per_oz)
-        exposure = Exposure(setup.tag, setup.key, setup.side, risk)
+        exposure = Exposure(setup.tag, setup.key, plan.side, risk)
         self.shadow[setup.tag] = (trade, exposure, sent, setup.strategy)
-        self.store.record_sim(setup.tag, setup.strategy, now_ms, setup.side, trade.entry, trade.sl, trade.tp, volume,
+        self.store.record_sim(setup.tag, setup.strategy, now_ms, plan.side, trade.entry, trade.sl, trade.tp, volume,
                               sent)  # fmt: skip
 
     def _advance_shadow(self, time_ms: int, bid: float, ask: float) -> None:
@@ -391,7 +450,7 @@ class ScalpRunner:
         opened: list[Position] = []
         for part, part_volume in enumerate(parts, 1):
             comment = f"{setup.tag}#{part}"
-            if not self.store.record_order(setup.tag, part, comment=comment, side=setup.side, volume=part_volume,
+            if not self.store.record_order(setup.tag, part, comment=comment, side=plan.side, volume=part_volume,
                                            sl=plan.sl, tp=plan.tp, risk=risk * part_volume / volume,
                                            spread=plan.spread, time_ms=now_ms):  # fmt: skip
                 self.store.bump(DUPLICATES)
@@ -706,6 +765,23 @@ class ScalpRunner:
             if code is None:
                 sim_total = sum(t["pnl"] for t in trades.values()) + latent
         lines.append(f"  valeur simulée du compte : {start + sim_total:.2f} {self.currency} (départ {start:.2f})")
+        if self.book is not None:
+            learner = self.book.learner
+            lines.append(
+                f"=== Apprentissage : score récent des variantes (demi-vie {learner.half_life:g} trades simulés, "
+                f"jugées après {learner.min_trades}) ==="
+            )
+            if not learner.state:
+                lines.append("  pas encore de trade simulé fermé")
+            for key in sorted(learner.state):
+                counts = {name: int(score[2]) for name, score in learner.state[key].items()}
+                best = learner.best(key)
+                base = learner.scores(key).get(learner.default.name)
+                best_text = f"meilleure : {best[0]} ({best[1]:+.2f} R)" if best else "pas encore assez de trades"
+                base_text = f" | règles de départ {base:+.2f} R" if base is not None else ""
+                lines.append(
+                    f"  [{self._context_label(key)}] {best_text}{base_text} | {max(counts.values())} signaux simulés"
+                )
         return lines
 
     def close_all(self, reason: str) -> int:

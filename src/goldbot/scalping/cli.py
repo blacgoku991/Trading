@@ -29,8 +29,8 @@ from goldbot.execution.orders import OrderRejected, filling_candidates, select_f
 from goldbot.live.lock import InstanceLock
 from goldbot.monitoring.logging_setup import setup_logging
 from goldbot.scalping.backtest import Instrument, run_backtest, summary
-from goldbot.scalping.engine import BREAKOUT, PULLBACK, STRATEGY_NAMES
-from goldbot.scalping.live import ScalpRunner, strategy_versions
+from goldbot.scalping.engine import BREAKOUT, PULLBACK
+from goldbot.scalping.live import ScalpRunner, strategy_label, strategy_versions
 from goldbot.scalping.store import CLOSED, FAILED, OPEN, SENT, VERIFY_PREFIX, ScalpStore, params_hash
 
 log = logging.getLogger("goldbot.scalp")
@@ -393,7 +393,8 @@ def backtest_main(
         default="comparer",
         help="B = cassure, P = impulsion-repli, ensemble = les deux à la fois, comparer = les trois",
     )
-    args = parser.parse_args(argv)  # fmt: skip
+    parser.add_argument("--sans-apprentissage", action="store_true", help="règles v1, sans apprentissage")
+    args = parser.parse_args(argv)
     try:
         settings = load_settings(args.config)
     except ConfigError as exc:
@@ -417,12 +418,14 @@ def backtest_main(
     bars = bars[bars["time_server"] >= ticks["time_msc_server"].iloc[0] // 1000 - 7 * 86_400].reset_index(drop=True)
     days = (ticks["time_msc_server"].iloc[-1] - ticks["time_msc_server"].iloc[0]) / 86_400_000 * 5 / 7
     cfg = settings.scalping
+    if args.sans_apprentissage:
+        cfg = cfg.model_copy(update={"learning": cfg.learning.model_copy(update={"enabled": False})})
     start = 5000.0 / rate
     versions = strategy_versions(cfg.model_copy(update={
         "breakout": cfg.breakout.model_copy(update={"enabled": True}),
         "pullback": cfg.pullback.model_copy(update={"enabled": True}),
     }))  # fmt: skip
-    labels = {code: f"{STRATEGY_NAMES[code]} v{v} · {h}" for code, (v, h, _) in versions.items()}
+    labels = {code: strategy_label(code, cfg, v, h) for code, (v, h, _) in versions.items()}
     runs = {"B": [(BREAKOUT,)], "P": [(PULLBACK,)], "ensemble": [(BREAKOUT, PULLBACK)]}.get(
         args.strategie, [(BREAKOUT,), (PULLBACK,), (BREAKOUT, PULLBACK)]
     )

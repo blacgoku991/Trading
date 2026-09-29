@@ -32,6 +32,7 @@ from goldbot.data.quality import server_index
 from goldbot.data.timezones import ServerTimeRule
 from goldbot.scalping.backtest import Instrument, context_by_minute
 from goldbot.scalping.engine import STRATEGY_NAMES, CandleBuilder, SimTrade, make_detectors, plan_trade
+from goldbot.scalping.learning import BASE_VARIANT, TradeLearner, Variant, variant_grid, variant_plan
 from goldbot.scalping.policy import reason_key
 
 _EPOCH = datetime(1970, 1, 1)
@@ -47,6 +48,17 @@ FEATURES: dict[str, list[float]] = {
     "entree_au_dela_atr": [-INF, 0, 0.25, 0.5, 1, INF],  # prix d'entrée au-delà du niveau clé, en ATR
     "meme_sens_ouverts": [0, 1, 2, 3, INF],  # trades du même sens déjà ouverts
 }
+# Apprentissage à chaque trade : variantes et réglages de l'apprenti, fixés avant de regarder les résultats.
+VARIANTS = variant_grid((1.0, 1.5, 2.0), (0.8, 1.2, 2.0), (False, True))
+LEARNERS = [  # (scores séparés achats / ventes ?, variantes inversées permises ?, demi-vie en trades, toujours trader ?)
+    (by_side, inverted, half_life, always)
+    for by_side in (False, True)
+    for inverted in (False, True)
+    for half_life in (20, 100, 500)
+    for always in (False, True)
+]
+MIN_TRADES = 20
+
 LABELS = {
     "heure": "heure de Paris",
     "sens": "sens (-1 vente, +1 achat)",
@@ -70,8 +82,12 @@ def signal_table(
     slippage_points: float = 0.0,
     commission_per_lot_side: float = 0.0,
     display_timezone: str = "Europe/Paris",
+    variants: list[Variant] | None = None,
 ) -> tuple[pd.DataFrame, Counter]:
-    """Tous les signaux dont le plan est accepté, chacun simulé seul ; renvoie aussi les refus du plan."""
+    """Tous les signaux dont le plan est accepté, chacun simulé seul ; renvoie aussi les refus du plan.
+
+    Avec variants : chaque signal est simulé avec chaque variante de sortie possible (une ligne par variante).
+    """
     server = server_index(ticks["time_msc_server"].to_numpy() // 1000)
     open_mask = schedule.open_mask(server)
     times = ticks["time_msc_server"].to_numpy(dtype="int64")[open_mask]
@@ -99,6 +115,7 @@ def signal_table(
                         sortie=trade.reason,
                         duree_s=(trade.exit_ms - trade.open_ms) / 1000,
                     )
+                    row["exit_ms"] = trade.exit_ms
                     rows.append(row)
                 else:
                     still.append((trade, row, distance))
@@ -130,7 +147,7 @@ def signal_table(
                 if isinstance(plan, str):
                     refusals[(setup.strategy, reason_key(plan))] += 1
                     continue
-                row = {
+                context = {
                     "strategie": setup.strategy,
                     "tag": setup.tag,
                     "time_ms": now,
@@ -140,11 +157,18 @@ def signal_table(
                     "cout_r": plan.cost / plan.stop_distance,
                     "spread_points": plan.spread / point,
                     "entree_au_dela_atr": (plan.entry - setup.level) * setup.side / atr if atr > 0 else np.nan,
-                    "meme_sens_ouverts": sum(1 for trade, _, _ in open_trades if trade.side == setup.side),
+                    "meme_sens_ouverts": len({row["tag"] for trade, row, _ in open_trades if trade.side == setup.side}),
                     **setup.features,
                 }
-                trade = SimTrade.open(setup.tag, plan, bid, ask, now, config.max_hold_s, slip, 1.0, fee)
-                open_trades.append((trade, row, plan.stop_distance))
+                plans = [(BASE_VARIANT, plan)] if variants is None else [
+                    (variant, variant_plan(plan, variant, config, point=point, bid=bid, ask=ask))
+                    for variant in variants
+                ]  # fmt: skip
+                for variant, chosen in plans:
+                    if chosen is None:
+                        continue  # stop trop loin ou objectif trop faible pour cette variante
+                    trade = SimTrade.open(setup.tag, chosen, bid, ask, now, config.max_hold_s, slip, 1.0, fee)
+                    open_trades.append((trade, {**context, "variante": variant.name}, chosen.stop_distance))
 
     table = pd.DataFrame(rows)
     if table.empty:
@@ -269,6 +293,65 @@ def report(table: pd.DataFrame, code: str, echo: Callable[[str], None]) -> None:
     echo("  " + _line("avec filtre appris", taken["r"]) + (f", jours positifs {_days(taken)}" if len(taken) else ""))
 
 
+def replay_learner(table: pd.DataFrame, learner: TradeLearner, *, by_side: bool = False) -> pd.DataFrame:
+    """Rejoue l'apprentissage dans l'ordre du temps : chaque décision n'utilise que les trades déjà fermés.
+
+    table : une ligne par (signal, variante), avec le résultat r et l'heure de sortie exit_ms de chaque variante.
+    by_side : scores tenus séparément pour les signaux d'achat et de vente.
+    """
+    table = table[table["variante"].isin(learner.variants)]
+    context = table["strategie"] + (table["sens"].map({1: "+", -1: "-"}) if by_side else "")
+    table = table.assign(contexte=context)
+    outcomes = list(table.sort_values("exit_ms")[["exit_ms", "contexte", "variante", "r"]].itertuples(index=False))
+    results = dict(zip(zip(table["tag"], table["variante"], strict=True), table["r"], strict=True))
+    valid = table.groupby("tag")["variante"].agg(set)
+    signals = table.groupby("tag").agg(strategie=("strategie", "first"), contexte=("contexte", "first"),
+                                       time_ms=("time_ms", "first"), jour=("jour", "first")).sort_values("time_ms")  # fmt: skip
+    decisions, done = [], 0
+    for tag, strategy, key, time_ms, day in signals[["strategie", "contexte", "time_ms", "jour"]].itertuples():
+        while done < len(outcomes) and outcomes[done].exit_ms <= time_ms:  # seulement ce qui est déjà connu
+            known = outcomes[done]
+            learner.update(known.contexte, known.variante, known.r)
+            done += 1
+        variant, _ = learner.choose(key, valid[tag])
+        decisions.append(
+            {
+                "tag": tag,
+                "strategie": strategy,
+                "time_ms": time_ms,
+                "jour": day,
+                "variante": variant.name if variant else None,
+                "pris": variant is not None,
+                "r": results[(tag, variant.name)] if variant else 0.0,
+            }
+        )
+    return pd.DataFrame(decisions)
+
+
+def learning_report(table: pd.DataFrame, code: str, echo: Callable[[str], None]) -> None:
+    rows = table[table["strategie"] == code]
+    base = rows[rows["variante"] == BASE_VARIANT.name]
+    echo("Apprentissage à chaque trade (chaque décision n'utilise que les trades déjà fermés) :")
+    echo("  " + _line("règles v1, sans apprentissage", base["r"]) + f", jours positifs {_days(base)}")
+    fixed = rows.groupby("variante")["r"].mean().sort_values(ascending=False)
+    best = ", ".join(f"{name} {value:+.3f} R" for name, value in fixed.head(3).items())
+    echo(f"  meilleures variantes fixes, connues seulement après coup : {best}")
+    for by_side, inverted, half_life, always in LEARNERS:
+        variants = [v for v in VARIANTS if inverted or not v.invert]
+        learner = TradeLearner(variants, half_life=half_life, min_trades=MIN_TRADES, always_trade=always)
+        decisions = replay_learner(rows, learner, by_side=by_side)
+        taken = decisions[decisions["pris"]]
+        title = (
+            f"{'achats et ventes séparés' if by_side else 'tous signaux ensemble'}, "
+            f"{'inversion permise' if inverted else 'sans inversion'}, demi-vie {half_life}, "
+            f"{'trade toujours' if always else 's abstient si tout perd'}"
+        )
+        inverted_share = taken["variante"].str.endswith("inversé").mean() * 100 if len(taken) else 0.0
+        line = _line(f"apprend ({title})", taken["r"])
+        extra = f", jours positifs {_days(taken)}, inversés {inverted_share:.0f} %" if len(taken) else ""
+        echo(f"  {line}{extra}")
+
+
 def main(argv: list[str] | None = None, *, root: Path | None = None, echo: Callable[[str], None] = print) -> int:
     root = root or Path.cwd()
     parser = argparse.ArgumentParser(prog="analyse_scalp.py", description="Analyse des erreurs et apprentissage.")
@@ -311,13 +394,16 @@ def main(argv: list[str] | None = None, *, root: Path | None = None, echo: Calla
         slippage_points=args.glissement,
         commission_per_lot_side=settings.backtest.commission_per_lot_side,
         display_timezone=settings.bot.display_timezone,
+        variants=VARIANTS,
     )
     echo(
         f"Ticks du {pd.Timestamp(ticks['time'].iloc[0]):%Y-%m-%d} au {pd.Timestamp(ticks['time'].iloc[-1]):%Y-%m-%d}, "
         f"glissement supplémentaire {args.glissement:g} points. Résultats en R (1 R = perte au stop)."
     )
+    base = table[table["variante"] == BASE_VARIANT.name] if not table.empty else table
     for code in sorted(table["strategie"].unique()) if not table.empty else []:
-        report(table, code, echo)
+        report(base, code, echo)
+        learning_report(table, code, echo)
     reports = root / settings.paths.reports
     reports.mkdir(parents=True, exist_ok=True)
     if not table.empty:

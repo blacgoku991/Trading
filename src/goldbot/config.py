@@ -253,6 +253,26 @@ class ScalpPullbackConfig(_Section):
         return self
 
 
+class ScalpLearningConfig(_Section):
+    """Apprentissage à chaque trade : choix de la variante (sortie, sens) d'après les derniers résultats."""
+
+    enabled: bool
+    version: int = Field(ge=1)
+    by_side: bool  # scores séparés pour les signaux d'achat et de vente
+    allow_invert: bool  # le bot peut jouer un signal à l'envers
+    half_life_trades: float = Field(gt=0)  # les trades récents pèsent plus : poids divisé par 2 tous les N trades
+    min_trades: int = Field(ge=1)  # trades simulés avant de juger une variante
+    always_trade: bool  # False : pas de trade quand toutes les variantes perdent en ce moment
+    stop_mults: list[float] = Field(min_length=1)
+    target_ratios: list[float] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ScalpLearningConfig:
+        if any(m < 1 for m in self.stop_mults) or any(t <= 0 for t in self.target_ratios):
+            raise ValueError("stop_mults >= 1 (jamais un stop plus proche que la structure) et target_ratios > 0")
+        return self
+
+
 class ScalpingConfig(_Section):
     """Expérience de scalping (démo uniquement), séparée de la stratégie principale."""
 
@@ -278,6 +298,7 @@ class ScalpingConfig(_Section):
     experiment_days: int = Field(ge=1)
     breakout: ScalpBreakoutConfig
     pullback: ScalpPullbackConfig
+    learning: ScalpLearningConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> ScalpingConfig:
