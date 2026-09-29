@@ -388,6 +388,11 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   2,84 $ de stop), perte maximale du jour −2 % (défaut §3.5) et **arrêt total à −10 %** ajouté au scalper (manquait),
   relance par `--nouvelle-experience` seulement. Rejeu annoncé avant lancement : arrêt total au 4e jour (−343 €
   réalisés, arrêt mesuré latent compris comme en démo).
+  Puis « pas de limite de trades, toujours le bon sens, version fonctionnelle » : **v3** = filtre de sens du jour
+  (≥ 0,5 ATR depuis l'ouverture, idée S7 ; rejeu +208 pips, PF 1,07, pas une preuve), 12 entrées/min (limite de 5
+  levée par l'utilisateur ; une par bougie de 5 s), lot calculé à 0,25 % (le lot fixe 0,1 atteignait l'arrêt au
+  3e jour, 0,25 % tient les 4 semaines, +175 €) ; retour au lot fixe en une ligne. Affichage en pips ; stop fixe en
+  pips testé (pire), gardé en option désactivée.
 
 ---
 

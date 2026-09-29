@@ -531,6 +531,38 @@ mouvement se développe. Protéger à +1 R ne change rien. Aucune des 36 sorties
 scalper gagnant : les sorties ne font que redistribuer les résultats (beaucoup de petits gains ou peu de gros) ;
 ce qui manque, c'est une **entrée** qui prévoit les secondes suivantes mieux que le spread.
 
+**Version v3 : toujours dans le sens du jour, trades en rafale** (demandes de l'utilisateur, 29/09 au soir : « pas
+de limite de trades », « toujours savoir le bon sens, sell ou buy », « version corrigée et fonctionnelle »).
+
+Filtre de sens, rejeu de la cassure (apprentissage, sorties démo, 0,1 % par trade, sans arrêt total ; 5 filtres
+essayés) :
+
+| Filtre | Trades | Total | PF | +10 pts |
+|---|---|---|---|---|
+| sans filtre | 2 437 | −986 pips | 0,97 | 0,87 |
+| **sens du jour : mouvement depuis l'ouverture ≥ 0,5 ATR journalier (retenu)** | 699 | **+208 pips** | **1,07** | 1,01 |
+| sens du jour ≥ 0,25 ATR | 1 103 | −80 pips | 1,00 | 0,88 |
+| sens de la session S7 (Londres 10-16 h, NY 9h30-16 h) | 464 | −418 pips | 1,03 | 0,96 |
+| sens de la dernière heure | 205 | −229 pips | 0,92 | 0,86 |
+
+Première variante du scalper au-dessus de l'équilibre, et elle reprend l'idée du S7 (le mouvement net du matin se
+prolonge), seul avantage validé hors échantillon. Mais t = 0,7 sur 10 jours de trading et c'est le meilleur de
+5 filtres : **ce n'est pas une preuve**. ATR journalier en moyenne simple de 14 jours : même valeur au rejeu et en
+démo, quel que soit l'historique chargé.
+
+Même filtre, avec toutes les limites démo (−2 %/jour, arrêt à −10 %), selon la taille du lot :
+
+| Lot | Trades | Résultat | Pire baisse | Arrêt total |
+|---|---|---|---|---|
+| fixe 0,1 | 40 | −176 € | −9,5 % | au 3e jour |
+| **calculé, 0,25 % de risque (≈ 0,04 lot) : retenu** | 577 | **+175 €** | −8,7 % | non |
+| calculé, 0,1 % de risque | 781 | +62 € | −4,2 % | non |
+
+Le lot fixe 0,1 fait risquer 20 à 50 € par trade : quelques pertes au départ déclenchent l'arrêt avant que la règle
+ait le temps de jouer. Réglages v3 : filtre de sens, lot calculé à 0,25 %, 12 entrées par minute au plus (une par
+bougie de 5 s, la limite de 5 est levée par l'utilisateur), 20 positions au plus (le risque ouvert de 2 % limite
+avant), −2 % par jour, arrêt à −10 %. Pour revenir au lot fixe : `fixed_volume: 0.1` et `risk_per_trade_pct: 1.0`.
+
 **Stop fixe en pips** (demande de l'utilisateur : « compter en pips », « vente à 4000, stop à 4003 » ; 1 pip =
 0,10 $). Option `fixed_stop_pips` / `fixed_target_pips` (désactivée). Rejeu de la cassure seule, sans apprentissage,
 0,1 % par trade, sans arrêt total, pour comparer les règles sur les 4 semaines (6 essais de plus) :

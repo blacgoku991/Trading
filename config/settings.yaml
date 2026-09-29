@@ -145,11 +145,11 @@ scalping:
   extra_slippage_points: 10     # bilan séparé « simulation avec glissement supplémentaire »
   max_hold_s: 600               # durée maximale (10 min, le temps d'atteindre 3 x le stop) : fermeture même en perte
   # Compte (communs aux deux stratégies).
-  # Lot fixe de 0,1 (décision de l'utilisateur, 29/09 au soir) : environ 0,35 à 1 % de risque selon le stop (2 à 6 $).
-  # risk_per_trade_pct est alors le risque MAXIMAL d'un trade (plafond dur 1 %) : un trade qui risquerait plus est
-  # refusé, jamais réduit en douce. Supprimer fixed_volume pour revenir au lot calculé d'après le risque.
-  fixed_volume: 0.1
-  risk_per_trade_pct: 1.0
+  # Lot calculé : 0,25 % de l'equity perdus au stop (environ 0,04 lot ; plus gros quand le stop est court). Rejeu
+  # v3 : tient les 4 semaines (+175 €) alors que le lot fixe 0,1 atteint l'arrêt à -10 % au 3e jour. Pour revenir
+  # au lot fixe (choix de l'utilisateur du 29/09) : ajouter « fixed_volume: 0.1 » et mettre risk_per_trade_pct à 1.0
+  # (le risque MAXIMAL d'un trade, plafond dur 1 % : un trade qui risquerait plus est refusé).
+  risk_per_trade_pct: 0.25
   max_open_positions: 20        # trades ouverts en même temps : le risque cumulé (2 %) limite avant
   max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
   max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
