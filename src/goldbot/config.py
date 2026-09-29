@@ -352,6 +352,9 @@ class ScalpingConfig(_Section):
     # Lot fixe (choix de l'utilisateur) : risk_per_trade_pct devient le risque MAXIMAL d'un trade (trade refusé
     # au-delà, jamais de lot réduit en douce). None : lot calculé d'après risk_per_trade_pct (arrondi vers le bas).
     fixed_volume: float | None = Field(default=None, gt=0)
+    # Lots au choix (demande de l'utilisateur : « 0,3 ou 0,4 ») : le plus gros dont la perte au stop reste dans
+    # risk_per_trade_pct (plafond dur 1 %) ; trade refusé si même le plus petit dépasse. Vide : lot calculé.
+    lot_choices: list[float] = Field(default_factory=list)
     max_open_positions: int = Field(ge=1)
     max_total_risk_pct: float = Field(gt=0)
     # Une entrée par bougie de 5 s au plus, soit 12 par minute (l'utilisateur a levé sa limite de 5 le 29/09).
@@ -386,6 +389,10 @@ class ScalpingConfig(_Section):
             distance = self.fixed_stop_pips * self.pip_size
             if not self.min_stop_points * 0.01 - 1e-9 <= distance <= self.max_stop_points * 0.01 + 1e-9:
                 raise ValueError("fixed_stop_pips hors de [min_stop_points, max_stop_points]")
+        if self.fixed_volume is not None and self.lot_choices:
+            raise ValueError("choisir fixed_volume ou lot_choices, pas les deux")
+        if any(lot <= 0 for lot in self.lot_choices):
+            raise ValueError("lot_choices : lots positifs")
         if self.max_total_risk_pct < self.risk_per_trade_pct:
             raise ValueError("max_total_risk_pct doit couvrir au moins un trade")
         if self.max_entries_per_minute > self.cadence.ceiling_entries_per_minute:

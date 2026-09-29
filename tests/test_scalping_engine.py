@@ -948,3 +948,13 @@ def test_replay_trades_two_candles_with_three_positions():
         trades = result.trades
         assert len(trades) >= 1 and trades.iloc[0]["side"] == SHORT and trades.iloc[0]["parts"] == 3
         assert trades.iloc[0]["reason"] == "objectif" and trades.iloc[0]["pnl"] > 0
+
+
+def test_lot_choices_take_the_biggest_lot_within_the_risk_cap_else_refuse():
+    config = CONFIG.model_copy(update={"lot_choices": [0.4, 0.3], "risk_per_trade_pct": 1.0})
+    # equity 5000 : budget 50 ; perte par lot au stop 100 (1 $ x 100 onces) -> 0,4 lot perd 40 : pris.
+    assert trade_volume(config, 5000.0, 100.0, volume_min=0.01, volume_step=0.01) == (0.4, None)
+    # perte par lot 150 : 0,4 perdrait 60 > 50 ; 0,3 perd 45 : pris.
+    assert trade_volume(config, 5000.0, 150.0, volume_min=0.01, volume_step=0.01) == (0.3, None)
+    volume, why = trade_volume(config, 5000.0, 200.0, volume_min=0.01, volume_step=0.01)  # 0,3 perdrait 60
+    assert volume == 0.0 and why.startswith("lot 0.3 au-dessus du risque maximal")

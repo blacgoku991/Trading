@@ -405,7 +405,9 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   2-3 positions, objectif +2 à +3 $) : testée sur 7 ans de M1 Axi, elle perd environ le spread à chaque trade (PF
   0,56-0,86, 0 année positive) ; résultat présenté, **l'utilisateur choisit de la mettre en démo quand même** : v5 =
   deux bougies seule (3 positions, objectifs 20/25/30 pips, stop élargi à 10 pips au moins, 0,1 % par signal). Rejeu
-  4 semaines : PF 0,84, arrêt à −10 % au 5e jour, annoncé avant lancement.
+  4 semaines : PF 0,84, arrêt à −10 % au 5e jour, annoncé avant lancement. Puis « lot 0,3 ou 0,4, TP 30-40 pips, pas
+  de % de perte » : une position de 0,4 lot (0,3 si 0,4 dépasse 1 % au stop, plafond dur ; refus au-delà), objectif
+  40 pips ; limites −2 %/jour et −10 % gardées (non négociables). Rejeu : PF 0,74, arrêt au 4e jour, annoncé.
 
 ---
 

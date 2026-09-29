@@ -234,6 +234,14 @@ def trade_volume(config: ScalpingConfig, equity: float, loss_per_lot: float, *, 
     calculé d'après le risque, arrondi vers le bas, refusé sous le lot minimal (jamais arrondi vers le haut).
     """
     budget = equity * config.risk_per_trade_pct / 100
+    if config.lot_choices:
+        for lot in sorted(config.lot_choices, reverse=True):
+            volume = round(int(lot / volume_step + 1e-9) * volume_step, 8)
+            if volume >= volume_min and volume * loss_per_lot <= budget:
+                return volume, None
+        smallest = min(config.lot_choices)
+        return 0.0, (f"lot {smallest:g} au-dessus du risque maximal : perd {smallest * loss_per_lot:.2f} au stop, plus "
+                     f"que {config.risk_per_trade_pct:g} % ({budget:.2f})")  # fmt: skip
     if config.fixed_volume is not None:
         volume = round(int(config.fixed_volume / volume_step + 1e-9) * volume_step, 8)
         if volume < volume_min:

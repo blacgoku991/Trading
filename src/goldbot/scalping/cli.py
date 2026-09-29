@@ -385,6 +385,9 @@ def live_main(
             + (
                 f"Lot fixe {cfg.fixed_volume:g} (trade refusé s'il risque plus de {cfg.risk_per_trade_pct:g} % au stop)"
                 if cfg.fixed_volume is not None
+                else f"Lot {' ou '.join(f'{v:g}' for v in sorted(cfg.lot_choices, reverse=True))} (le plus gros qui "
+                f"risque au plus {cfg.risk_per_trade_pct:g} % au stop)"
+                if cfg.lot_choices
                 else f"Risque {cfg.risk_per_trade_pct:g} % par trade"
             )
             + f", -{cfg.daily_loss_pct:g} % par jour au plus, arrêt total à -{cfg.max_drawdown_pct:g} % depuis le plus "

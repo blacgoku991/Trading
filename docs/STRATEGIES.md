@@ -685,6 +685,20 @@ L'apprentissage ne touche pas ces objectifs. Rejeu sur les 4 semaines de ticks A
 | exécutables | 52 | 36 % | +20,2 / −14,1 pips | −1 739 pips, −468 € | 0,84 | au 5e jour de cotation |
 | +1 pip de glissement | 20 | 33 % | +19,1 / −15,3 pips | −1 684 pips, −499 € | 0,62 | au 6e jour |
 
+Puis, à la demande de l'utilisateur (« lot 0,2-0,3 », puis « lot 0,3 ou 0,4, stop au-dessus de la bougie, TP à 30-40
+pips, pas de % de perte ») : **une position de 0,4 lot, ou 0,3 si 0,4 perdrait plus de 1 % au stop** (plafond dur,
+CLAUDE.md règle 5 ; refus si même 0,3 dépasse, stop de plus de 18 pips environ), **objectif 40 pips** (dernière année
+de M1 : objectif 2 $ PF 0,80, 3 $ 0,85, 4 $ 0,88, 5 $ 0,90, 6 $ 0,91 ; tous perdants). Les limites de perte (−2 % par
+jour, arrêt à −10 %) restent : non négociables d'après les décisions de l'utilisateur du 29/09. Rejeu 4 semaines :
+
+| Prix | Trades par jour | Lots | Gagnants | Gain moyen / perte moyenne | PF | Résultat | Arrêt total |
+|---|---|---|---|---|---|---|---|
+| exécutables | 2,1 | 0,4 (36), 0,3 (7) | 26 % | +79 / −37 € | 0,74 | −313 € | 03/09 (4e jour) |
+| +1 pip de glissement | 1,9 | 0,4 (31), 0,3 (9) | 22 % | +90 / −40 € | 0,65 | −437 € | 04/09 (5e jour) |
+
+Avec 0,4 lot, deux ou trois pertes suffisent à atteindre −2 % dans la journée : le bot trade alors peu (2 trades par
+jour en moyenne au rejeu) et s'arrête pour la journée.
+
 
 ### Historique des réglages
 

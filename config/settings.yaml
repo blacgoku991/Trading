@@ -145,11 +145,11 @@ scalping:
   extra_slippage_points: 10     # bilan séparé « simulation avec glissement supplémentaire »
   max_hold_s: 600               # durée maximale (10 min, le temps d'atteindre 3 x le stop) : fermeture même en perte
   # Compte (communs aux deux stratégies).
-  # v4 : lot calculé, 0,1 % de l'equity perdus au stop (0,01 à 0,03 lot ; plus gros quand le stop est court ou que
-  # le compte grandit, sans plafond de lot autre que le risque). Avec 0,25 % et le sens libre, le rejeu atteint
-  # l'arrêt à -10 % dès le 5e jour. Pour le lot fixe (choix de l'utilisateur du 29/09) : ajouter
-  # « fixed_volume: 0.1 » et mettre risk_per_trade_pct à 1.0 (risque MAXIMAL d'un trade, plafond dur 1 %).
-  risk_per_trade_pct: 0.1
+  # Lot : 0,4, ou 0,3 si 0,4 perdrait plus de risk_per_trade_pct au stop (demande de l'utilisateur du 29/09, nuit :
+  # « lot de 0,3 ou 0,4 ») ; trade refusé si même 0,3 dépasse. 1 % = plafond dur (CLAUDE.md règle 5) : sur 5 000 €,
+  # 0,4 lot tient jusqu'à un stop d'environ 13 pips, 0,3 jusqu'à 18 pips.
+  risk_per_trade_pct: 1.0
+  lot_choices: [0.4, 0.3]
   max_open_positions: 20        # trades ouverts en même temps : le risque cumulé (2 %) limite avant
   max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
   max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
@@ -167,14 +167,15 @@ scalping:
   two_candles:
     # « deux bougies » v1 (idée de l'utilisateur, 29/09, nuit) : bougie baissière puis haussière -> vente à la
     # clôture de la 2e (haussière puis baissière -> achat) ; stop au-delà des deux bougies (au-dessus de leur plus
-    # haut pour une vente), élargi à 10 pips s'il est plus proche ; une position par objectif : 20, 25 et 30 pips
-    # (moins de positions si le lot ne suffit pas). Mise en démo à la demande de l'utilisateur ALORS QUE le test
+    # haut pour une vente), élargi à 10 pips s'il est plus proche ; objectif à 40 pips, une position de 0,3 ou 0,4 lot
+    # (demande de l'utilisateur : « lot 0,3 ou 0,4, TP à 30-40 pips » ; dernière année de M1 : 40 pips perd un peu
+    # moins que 30, PF 0,88 contre 0,85). Plusieurs objectifs possibles (une position par objectif). Mise en démo à la demande de l'utilisateur ALORS QUE le test
     # sur 7 ans de M1 Axi la montre perdante (environ le spread par trade, PF 0,56-0,86, docs/STRATEGIES.md).
     enabled: true
     version: 1
     minutes: 1
     min_stop_pips: 10
-    target_pips: [20, 25, 30]
+    target_pips: [40]
   breakout:
     # « cassure » v1 : clôture au-delà du plus haut / plus bas des 60 s précédentes (bougie de signal exclue),
     # confirmée par une 2e clôture, dans le sens de la tendance M1 (EMA20 / EMA50 sur barres clôturées).

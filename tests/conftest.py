@@ -53,6 +53,7 @@ def v1_exit_settings():
         target_ratio=1.2,
         max_hold_s=120,
         fixed_volume=None,
+        lot_choices=[],
         risk_per_trade_pct=0.1,
         max_total_risk_pct=0.5,
         daily_loss_pct=1.0,
