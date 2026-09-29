@@ -9,9 +9,11 @@ import pytest
 from goldbot.backtest.lookahead import lookahead_violations
 from goldbot.broker.fake_broker import make_bars
 from goldbot.data.history import bars_frame
-from goldbot.indicators.core import daily_atr_per_bar
+from goldbot.indicators.core import daily_atr_per_bar, resample
+from goldbot.indicators.sessions import LONDON
 from goldbot.strategies.asian_breakout import AsianBreakout, AsianBreakoutParams
-from goldbot.strategies.base import LONG, SHORT, STOP, OrderIntent
+from goldbot.strategies.base import LONG, MARKET, SHORT, STOP, OrderIntent
+from goldbot.strategies.session_momentum import SessionMomentum, SessionMomentumParams
 from tests.conftest import open_minutes
 
 LENIENT = AsianBreakoutParams(min_range_atr=0.0, max_range_atr=100.0)
@@ -134,3 +136,60 @@ def test_daily_atr_only_uses_previous_days(month_of_bars):
 def test_time_parameters_are_london_clock_times():
     params = AsianBreakoutParams()
     assert (params.range_start, params.range_end) == (time(0, 0), time(7, 0))
+
+
+# --- Momentum de session ---------------------------------------------------------------------
+
+
+def _momentum(**changes):
+    params = dict(zone=LONDON, signal_time=time(10, 0), exit_time=time(16, 0), min_move_atr=0.0, sl_atr=0.3, tp_r=0.0)
+    params.update(changes)
+    return SessionMomentum(SessionMomentumParams(**params), name="M", code="M", description="")
+
+
+def test_momentum_follows_the_move_since_the_day_open(month_of_bars):
+    bars = month_of_bars.copy()
+    day = bars["time_server"] // 86_400
+    target = day.unique()[20]
+    in_day = day == target
+    london = bars["time"].dt.tz_convert("Europe/London")
+    morning = in_day & (london.dt.hour < 10)
+    # Tendance haussière forte jusqu'à 10:00 à Londres ce jour-là.
+    lift = pd.Series(0.0, index=bars.index)
+    lift[morning] = np.linspace(0, 30, int(morning.sum()))
+    lift[in_day & ~morning] = 30.0
+    for column in ("open", "high", "low", "close"):
+        bars[column] = bars[column] + lift
+    server_day = dict(zip(bars["time"], day, strict=True))
+    intents = [i for i in _momentum().intents(bars) if server_day[i.time] == target]
+    (intent,) = intents
+    assert intent.side == LONG and intent.kind == MARKET
+    assert intent.time.tz_convert("Europe/London").strftime("%H:%M") == "09:59"
+    assert intent.exit_at.tz_convert("Europe/London").strftime("%H:%M") == "16:00"
+    close = bars.loc[bars["time"] == intent.time, "close"].iloc[0]
+    atr = daily_atr_per_bar(bars)[bars.index[bars["time"] == intent.time][0]]
+    assert intent.sl == pytest.approx(round(close - 0.3 * atr, 2)) and intent.tp is None
+
+
+def test_momentum_needs_a_large_enough_move(month_of_bars):
+    assert _momentum(min_move_atr=100.0).intents(month_of_bars) == []
+
+
+def test_momentum_never_looks_ahead(month_of_bars):
+    bars = month_of_bars
+    london = bars["time"].dt.tz_convert("Europe/London")
+    minutes = (london.dt.hour * 60 + london.dt.minute).to_numpy()
+    near_signal = list(np.flatnonzero(np.isin(minutes, [598, 599, 600, 601]))[-10:] + 1)
+    assert lookahead_violations(_momentum(), bars, [*near_signal, len(bars) // 2, len(bars) - 7]) == []
+
+
+def test_resample_marks_when_each_big_bar_is_known(month_of_bars):
+    bars = month_of_bars
+    m15 = resample(bars, 15)
+    times = bars["time"].to_numpy()
+    complete = m15["signal_bar"].map(lambda i: pd.Timestamp(times[i]).minute % 15 == 14)
+    assert complete.mean() > 0.9  # presque toujours la dernière minute du quart d'heure
+    # Première barre après la pause quotidienne : la grande barre d'avant n'est connue qu'à ce moment-là.
+    late = m15.loc[~complete, "signal_bar"].to_numpy()
+    assert np.all(pd.to_datetime(times[late]).minute % 15 != 14)
+    assert m15["signal_bar"].is_monotonic_increasing

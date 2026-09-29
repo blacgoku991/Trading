@@ -66,3 +66,27 @@ def daily_atr_per_bar(bars: pd.DataFrame, period: int = 14) -> np.ndarray:
     known = atr(days["high"], days["low"], days["close"], period).shift(1)
     day = bars["time_server"].to_numpy() // 86_400
     return known.reindex(day).to_numpy()
+
+
+def resample(bars: pd.DataFrame, minutes: int) -> pd.DataFrame:
+    """Barres M1 -> barres de `minutes` minutes (alignées sur l'horloge UTC), sans regarder le futur.
+
+    Colonnes : start (UTC), open, high, low, close, signal_bar. signal_bar est l'index de la barre M1
+    à la clôture de laquelle la grande barre est connue comme terminée : sa dernière minute si elle
+    existe, sinon la première barre M1 qui suit (on ne peut pas savoir plus tôt qu'aucun tick ne viendra).
+    """
+    stamps = bars["time"].dt.floor(f"{minutes}min")
+    grouped = bars.assign(_start=stamps, _row=np.arange(len(bars))).groupby("_start", sort=True)
+    big = grouped.agg(
+        open=("open", "first"), high=("high", "max"), low=("low", "min"), close=("close", "last"), last=("_row", "last")
+    )
+    naive = bars["time"].dt.tz_localize(None).to_numpy()
+    last_minute = naive[big["last"].to_numpy()]
+    ends = (big.index + pd.Timedelta(minutes=minutes)).tz_localize(None).to_numpy()
+    complete = last_minute + np.timedelta64(1, "m") >= ends
+    following = big["last"].to_numpy() + 1
+    signal = np.where(complete, big["last"].to_numpy(), following)
+    big = big.assign(signal_bar=signal).drop(columns="last")
+    big = big[big["signal_bar"] < len(bars)]  # dernière grande barre inachevée : pas encore connue
+    big.index.name = "start"
+    return big.reset_index()

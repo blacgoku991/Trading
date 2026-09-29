@@ -56,3 +56,19 @@ class Strategy(ABC):
         bars : colonnes time (UTC), time_server, open, high, low, close (prix bid), spread (points),
         index 0..n-1. Le résultat pour une barre ne doit dépendre que des barres précédentes et d'elle-même.
         """
+
+
+class Portfolio(Strategy):
+    """Plusieurs stratégies sur le même compte : leurs intentions réunies, dans l'ordre du temps.
+
+    Les limites de risque (positions, trades par jour, pertes) s'appliquent au total, comme en live.
+    """
+
+    def __init__(self, strategies: list[Strategy], *, name: str, description: str) -> None:
+        self.strategies = strategies
+        self.name = name
+        self.description = description
+
+    def intents(self, bars: pd.DataFrame) -> list[OrderIntent]:
+        merged = [intent for strategy in self.strategies for intent in strategy.intents(bars)]
+        return sorted(merged, key=lambda intent: intent.time)

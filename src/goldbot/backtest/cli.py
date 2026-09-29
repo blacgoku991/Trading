@@ -14,6 +14,7 @@ from goldbot.backtest.runner import costs_for, load_dataset, run
 from goldbot.config import ConfigError, Settings, load_settings
 from goldbot.strategies.asian_breakout import AsianBreakout, AsianBreakoutParams
 from goldbot.strategies.base import Strategy
+from goldbot.strategies.catalog import session_portfolio
 
 EXIT_OK = 0
 EXIT_NO_DATA = 2
@@ -26,7 +27,16 @@ def _asian_breakout(settings: Settings) -> tuple[Strategy, dict[str, object]]:
     return AsianBreakout(params), config.model_dump()
 
 
-STRATEGIES: dict[str, Callable[[Settings], tuple[Strategy, dict[str, object]]]] = {"s1": _asian_breakout}
+def _portfolio(settings: Settings) -> tuple[Strategy, dict[str, object]]:
+    configs = settings.strategies.session_momentum
+    params = {name: ", ".join(f"{k}={v}" for k, v in config.model_dump().items()) for name, config in configs.items()}
+    return session_portfolio(configs), params
+
+
+STRATEGIES: dict[str, Callable[[Settings], tuple[Strategy, dict[str, object]]]] = {
+    "s1": _asian_breakout,
+    "portefeuille": _portfolio,
+}
 
 
 def _resolve(root: Path, path: Path) -> Path:

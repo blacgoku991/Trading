@@ -187,8 +187,37 @@ class AsianBreakoutConfig(_Section):
         return self
 
 
+class SessionMomentumConfig(_Section):
+    # Place de référence (fuseau IANA) et heures locales.
+    zone: str
+    signal_time: time
+    exit_time: time
+    min_move_atr: float = Field(ge=0)
+    sl_atr: float = Field(gt=0)
+    tp_r: float = Field(ge=0)  # 0 : pas de TP, sortie à exit_time
+    fade: bool = False
+
+    @field_validator("zone")
+    @classmethod
+    def _valid_zone(cls, value: str) -> str:
+        return _check_timezone(value)
+
+    @field_validator("signal_time", "exit_time", mode="before")
+    @classmethod
+    def _quoted_time(cls, value: object) -> object:
+        return _require_quoted_time(value)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> SessionMomentumConfig:
+        if not self.signal_time < self.exit_time:
+            raise ValueError("il faut signal_time < exit_time")
+        return self
+
+
 class StrategiesConfig(_Section):
     asian_breakout: AsianBreakoutConfig
+    # Portefeuille retenu (docs/STRATEGIES.md) : une stratégie par session.
+    session_momentum: dict[str, SessionMomentumConfig]
 
 
 class LoggingConfig(_Section):

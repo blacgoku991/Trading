@@ -99,6 +99,33 @@ strategies:
     tp_r: 1.5               # objectif en multiple du risque
     min_range_atr: 0.15     # range trop étroit : faux signaux
     max_range_atr: 0.8      # range trop large : risque trop grand
+  session_momentum:
+    # Portefeuille retenu le 29/09/2026 sur la période d'étude, AVANT le test hors échantillon
+    # (docs/STRATEGIES.md). Réglages pris au milieu des zones stables, jamais sur le meilleur résultat.
+    asie:
+      # S8 : pendant la session asiatique, le mouvement du matin a tendance à se retourner.
+      zone: Asia/Tokyo
+      signal_time: "11:00"
+      exit_time: "15:00"
+      min_move_atr: 0.25    # mouvement minimal depuis l'ouverture, en fraction de l'ATR journalier
+      sl_atr: 0.3           # distance du SL, en fraction de l'ATR journalier
+      tp_r: 0               # pas de TP : sortie à l'heure
+      fade: true
+    londres:
+      # S7 : le mouvement du matin se prolonge (momentum intraday).
+      zone: Europe/London
+      signal_time: "10:00"
+      exit_time: "16:00"
+      min_move_atr: 0.5
+      sl_atr: 0.3
+      tp_r: 0
+    new_york:
+      zone: America/New_York
+      signal_time: "09:30"
+      exit_time: "16:00"
+      min_move_atr: 0.5
+      sl_atr: 0.3
+      tp_r: 0
 
 logging:
   level: INFO
