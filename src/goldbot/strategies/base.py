@@ -43,6 +43,27 @@ class OrderIntent:
             raise ValueError(f"TP {self.tp} du mauvais côté du prix d'entrée {reference}")
 
 
+@dataclass(frozen=True)
+class StopUpdate:
+    """Gestion d'une position ouverte, décidée à la clôture de la barre `time`, appliquée à la barre suivante.
+
+    sl : nouveau stop de la position née du signal `tag` (stop suiveur, break-even…). Il n'est appliqué que s'il
+    RESSERRE le stop (règle 4 : un SL n'est jamais éloigné) ; s'il est déjà dépassé par le prix, la position est
+    fermée au marché. exit=True : sortie au marché (signal de sortie de la stratégie), sl ignoré.
+    Une mise à jour pour un signal sans position ouverte est ignorée.
+    """
+
+    time: pd.Timestamp
+    tag: str
+    sl: float | None
+    exit: bool = False
+    reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.exit and self.sl is None:
+            raise ValueError(f"mise à jour de {self.tag} sans nouveau SL ni sortie")
+
+
 class Strategy(ABC):
     """Règles 100 % codées (règle 8 : aucun LLM dans la décision)."""
 
@@ -56,6 +77,10 @@ class Strategy(ABC):
         bars : colonnes time (UTC), time_server, open, high, low, close (prix bid), spread (points),
         index 0..n-1. Le résultat pour une barre ne doit dépendre que des barres précédentes et d'elle-même.
         """
+
+    def stop_updates(self, bars: pd.DataFrame) -> list[StopUpdate]:
+        """Mises à jour du stop (ou sorties) des positions, mêmes règles de causalité que intents. Aucune par défaut."""
+        return []
 
 
 class Portfolio(Strategy):
@@ -72,3 +97,7 @@ class Portfolio(Strategy):
     def intents(self, bars: pd.DataFrame) -> list[OrderIntent]:
         merged = [intent for strategy in self.strategies for intent in strategy.intents(bars)]
         return sorted(merged, key=lambda intent: intent.time)
+
+    def stop_updates(self, bars: pd.DataFrame) -> list[StopUpdate]:
+        merged = [update for strategy in self.strategies for update in strategy.stop_updates(bars)]
+        return sorted(merged, key=lambda update: update.time)

@@ -7,6 +7,8 @@ Hypothèses, toutes du côté prudent :
 - SL et TP touchés dans la même barre : SL ; ouverture au-delà du SL (gap) : sortie à l'ouverture ;
 - glissement défavorable sur les entrées et sur les sorties au marché ou au SL, aucun sur les TP ;
 - ordre stop déclenché dans la barre : le SL est testé sur toute la barre (pire cas) ;
+- mises à jour du stop (StopUpdate) : décidées à la clôture d'une barre, appliquées à l'ouverture de la suivante,
+  seulement si elles resserrent le stop ; stop déjà dépassé à l'ouverture : sortie au marché ;
 - les limites de risque (risk/limits.py) sont celles du live.
 Le compte simulé est tenu dans la devise de cotation (USD) : les résultats en % et en R ne
 dépendent pas de la devise du compte.
@@ -24,7 +26,7 @@ from goldbot.config import RiskConfig
 from goldbot.indicators.sessions import NEW_YORK, next_session_start
 from goldbot.risk.limits import MAX_DRAWDOWN, RiskLimits
 from goldbot.risk.sizing import position_size
-from goldbot.strategies.base import LONG, MARKET, OrderIntent
+from goldbot.strategies.base import LONG, MARKET, OrderIntent, StopUpdate
 
 # Ouvertures de session pour la pause après une série de pertes (fuseau, heure locale).
 SESSIONS = (("Asia/Tokyo", time(9, 0)), ("Europe/London", time(8, 0)), (NEW_YORK, time(8, 0)))
@@ -74,6 +76,7 @@ class _Position:
     risk_money: float  # perte au SL avec ce volume (commissions et glissement inclus)
     exit_index: int  # sortie horaire à l'ouverture de cette barre (n = jamais)
     spread_points: float
+    sl: float  # stop actuel (celui de l'intention, resserré ensuite par les StopUpdate)
     worst: float  # prix le plus défavorable atteint (bid pour un long, ask pour un short)
     best: float
     commission: float = 0.0
@@ -164,9 +167,20 @@ class Backtest:
 
     # --- exécution ----------------------------------------------------------------------------------
 
-    def run(self, intents: list[OrderIntent]) -> BacktestResult:
+    def _schedule_updates(self, updates: list[StopUpdate]) -> dict[int, list[StopUpdate]]:
+        stamps = self.times.as_unit("ns").asi8
+        scheduled: dict[int, list[StopUpdate]] = {}
+        for update in updates:
+            signal = int(np.searchsorted(stamps, update.time.value))
+            if signal >= len(stamps) or stamps[signal] != update.time.value:
+                raise ValueError(f"mise à jour de {update.tag} datée d'une barre absente ({update.time})")
+            scheduled.setdefault(signal + 1, []).append(update)
+        return scheduled
+
+    def run(self, intents: list[OrderIntent], updates: list[StopUpdate] | None = None) -> BacktestResult:
         n = len(self.bars)
         scheduled = self._schedule(intents)
+        scheduled_updates = self._schedule_updates(updates or [])
         self.limits = RiskLimits.start(self.risk, self.initial_equity)
         self.balance = self.initial_equity
         self.equity_now = self.initial_equity
@@ -190,6 +204,8 @@ class Backtest:
             if not (new or pending or self.positions):
                 continue
 
+            if self.positions and i in scheduled_updates:
+                self._apply_updates(i, scheduled_updates[i])
             self._exits_at_open(i)
             for item in new or ():
                 intent, _, exit_index = item
@@ -223,6 +239,25 @@ class Backtest:
             return bid - self.slip
         return bid + self.spread[i] + self.slip
 
+    def _apply_updates(self, i: int, updates: list[StopUpdate]) -> None:
+        """Stops resserrés ou sorties décidés à la clôture de la barre précédente (jamais un SL éloigné)."""
+        min_distance = self.instrument.stops_level_points * self.instrument.point
+        for update in updates:
+            position = next((p for p in self.positions if p.intent.tag == update.tag), None)
+            if position is None:
+                continue
+            if update.exit:
+                self._close(position, i, self._exit_price(position, i, "open"), "sortie de la stratégie")
+                continue
+            side = position.intent.side
+            if (update.sl - position.sl) * side <= 0:
+                continue  # règle 4 : un SL n'est jamais éloigné
+            price = self.o[i] if side == LONG else self.o[i] + self.spread[i]
+            if (price - update.sl) * side <= min_distance:
+                self._close(position, i, self._exit_price(position, i, "open"), "stop suiveur dépassé")
+                continue
+            position.sl = update.sl
+
     def _exits_at_open(self, i: int) -> None:
         for position in list(self.positions):
             intent = position.intent
@@ -231,14 +266,14 @@ class Backtest:
                 continue
             if intent.side == LONG:
                 opening = self.o[i]
-                if opening <= intent.sl:
-                    self._close(position, i, opening - self.slip, "SL (gap)")
+                if opening <= position.sl:
+                    self._close(position, i, opening - self.slip, self._sl_label(position, " (gap)"))
                 elif intent.tp is not None and opening >= intent.tp:
                     self._close(position, i, intent.tp, "TP")
             else:
                 opening = self.o[i] + self.spread[i]
-                if opening >= intent.sl:
-                    self._close(position, i, opening + self.slip, "SL (gap)")
+                if opening >= position.sl:
+                    self._close(position, i, opening + self.slip, self._sl_label(position, " (gap)"))
                 elif intent.tp is not None and opening <= intent.tp:
                     self._close(position, i, intent.tp, "TP")
 
@@ -304,6 +339,7 @@ class Backtest:
                 spread_points=self.spread[i] / self.instrument.point,
                 worst=fill,
                 best=fill,
+                sl=intent.sl,
                 commission=commission,
             )
         )
@@ -315,17 +351,21 @@ class Backtest:
             if intent.side == LONG:
                 low, high = self.l[i], self.h[i]
                 position.worst, position.best = min(position.worst, low), max(position.best, high)
-                if low <= intent.sl:
-                    self._close(position, i, intent.sl - self.slip, "SL")
+                if low <= position.sl:
+                    self._close(position, i, position.sl - self.slip, self._sl_label(position))
                 elif intent.tp is not None and high >= intent.tp:
                     self._close(position, i, intent.tp, "TP")
             else:
                 low, high = self.l[i] + self.spread[i], self.h[i] + self.spread[i]
                 position.worst, position.best = max(position.worst, high), min(position.best, low)
-                if high >= intent.sl:
-                    self._close(position, i, intent.sl + self.slip, "SL")
+                if high >= position.sl:
+                    self._close(position, i, position.sl + self.slip, self._sl_label(position))
                 elif intent.tp is not None and low <= intent.tp:
                     self._close(position, i, intent.tp, "TP")
+
+    @staticmethod
+    def _sl_label(position: _Position, suffix: str = "") -> str:
+        return ("SL" if position.sl == position.intent.sl else "SL suiveur") + suffix
 
     def _floating(self, i: int) -> float:
         total = 0.0

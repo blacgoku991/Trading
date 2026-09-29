@@ -10,7 +10,7 @@ from goldbot.broker.fake_broker import FakeBroker, make_account, make_bars
 from goldbot.broker.supervisor import ConnectionSupervisor
 from goldbot.live.runner import LiveOptions, LiveRunner
 from goldbot.state.store import CLOSED, OPEN, SIMULATED, SKIPPED, StateStore
-from goldbot.strategies.base import LONG, MARKET, OrderIntent, Strategy
+from goldbot.strategies.base import LONG, MARKET, OrderIntent, StopUpdate, Strategy
 from tests.conftest import open_minutes, tick_at
 
 MAGIC = 20260928
@@ -22,12 +22,17 @@ class Scripted(Strategy):
     name = "test"
     description = "test"
 
-    def __init__(self, intents):
+    def __init__(self, intents, updates=()):
         self.planned = intents
+        self.updates = list(updates)
 
     def intents(self, bars):
         last = bars["time"].iloc[-1] if len(bars) else None
         return [i for i in self.planned if last is not None and i.time <= last]
+
+    def stop_updates(self, bars):
+        last = bars["time"].iloc[-1] if len(bars) else None
+        return [u for u in self.updates if last is not None and u.time <= last]
 
 
 class Clock:
@@ -204,3 +209,48 @@ def test_stale_feed_blocks_entries(world, rule):
     live = runner(Scripted([_intent(_signal_time(clock))]))
     live.step()
     assert broker.sent == [] and "flux" in live.store.detail("T-1")["detail"]
+
+
+def _stop_update(time, sl=None, *, exit=False):
+    return StopUpdate(time=pd.Timestamp(time), tag="T-1", sl=sl, exit=exit, reason="stop suiveur")
+
+
+def test_trailing_stop_is_tightened_once_and_never_moved_away(world):
+    broker, clock, set_time, runner = world
+    first = _signal_time(clock)
+    updates = [_stop_update(first + pd.Timedelta(minutes=1), 3995.004),
+               _stop_update(first + pd.Timedelta(minutes=2), 3993.0)]  # fmt: skip
+    live = runner(Scripted([_intent(first)], updates))
+    live.step()
+    set_time(clock.now + pd.Timedelta(minutes=1))
+    live.step()
+    set_time(clock.now + pd.Timedelta(seconds=20))
+    live.step()  # même barre : aucune nouvelle requête
+    (modify,) = [r for r in broker.sent if r["action"] == C.TRADE_ACTION_SLTP]
+    assert modify["sl"] == 3995.0 and broker.positions()[0].sl == 3995.0  # arrondi vers la position
+    assert live.store.with_status(OPEN)[0].sl == 3995.0  # SL reposé à ce niveau si jamais il disparaît
+    set_time(clock.now + pd.Timedelta(minutes=1))
+    live.step()  # 3993 éloignerait le stop : ignoré
+    assert len([r for r in broker.sent if r["action"] == C.TRADE_ACTION_SLTP]) == 1
+
+
+def test_stop_already_crossed_or_strategy_exit_closes_the_position(world):
+    broker, clock, set_time, runner = world
+    first = _signal_time(clock)
+    live = runner(Scripted([_intent(first)], [_stop_update(first + pd.Timedelta(minutes=1), 4000.50)]))
+    live.step()
+    set_time(clock.now + pd.Timedelta(minutes=1))
+    live.step()  # bid 4000.00 sous le nouveau stop : fermeture au marché
+    assert broker.positions() == []
+
+    broker2, clock2, set_time2, runner2 = world
+    set_time2(clock2.now + pd.Timedelta(minutes=5))
+    second = _signal_time(clock2)
+    intent = OrderIntent(**{**_intent(second).__dict__, "tag": "T-2"})
+    out = StopUpdate(time=second + pd.Timedelta(minutes=1), tag="T-2", sl=None, exit=True, reason="signal inverse")
+    live2 = runner2(Scripted([intent], [out]))
+    live2.step()
+    assert len(broker2.positions()) == 1
+    set_time2(clock2.now + pd.Timedelta(minutes=1))
+    live2.step()
+    assert broker2.positions() == []

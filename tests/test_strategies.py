@@ -12,7 +12,7 @@ from goldbot.data.history import bars_frame
 from goldbot.indicators.core import daily_atr_per_bar, resample
 from goldbot.indicators.sessions import LONDON
 from goldbot.strategies.asian_breakout import AsianBreakout, AsianBreakoutParams
-from goldbot.strategies.base import LONG, MARKET, SHORT, STOP, OrderIntent
+from goldbot.strategies.base import LONG, MARKET, SHORT, STOP, OrderIntent, StopUpdate
 from goldbot.strategies.session_momentum import SessionMomentum, SessionMomentumParams
 from tests.conftest import open_minutes
 
@@ -111,6 +111,15 @@ def test_lookahead_check_catches_a_cheating_strategy(month_of_bars):
             ]
 
     assert lookahead_violations(Cheater(), month_of_bars, [500, 5000])
+
+
+def test_lookahead_check_also_covers_stop_updates(month_of_bars):
+    class TrailingCheater(AsianBreakout):
+        def stop_updates(self, bars):
+            # Triche : stop placé d'après le plus bas de TOUT l'historique fourni.
+            return [StopUpdate(time=bars["time"].iloc[100], tag="x", sl=float(bars["low"].min()))]
+
+    assert lookahead_violations(TrailingCheater(LENIENT), month_of_bars, [500, 5000])
 
 
 def test_intent_rejects_a_stop_loss_on_the_wrong_side():

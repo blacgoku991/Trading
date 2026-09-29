@@ -77,9 +77,11 @@ def run(
     indicateurs (ATR…) : aucun trade avant, et le compte démarre à cet instant.
     """
     intents = strategy.intents(dataset.bars)
+    updates = strategy.stop_updates(dataset.bars)
     bars = dataset.bars
     if trade_from is not None:
         intents = [intent for intent in intents if intent.time >= trade_from]
+        updates = [update for update in updates if update.time >= trade_from]
         bars = bars[bars["time"] >= trade_from].reset_index(drop=True)
     backtest = Backtest(
         bars,
@@ -89,4 +91,4 @@ def run(
         initial_equity=initial_equity,
         halt_on_drawdown=halt_on_drawdown,
     )
-    return backtest.run(intents)
+    return backtest.run(intents, updates)

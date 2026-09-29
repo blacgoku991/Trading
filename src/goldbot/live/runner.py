@@ -6,8 +6,9 @@
    position fermée ; position inconnue -> fermée ; position disparue -> clôture relevée dans les deals ;
 3. limites de risque sur l'equity (flottant inclus) : perte journalière, drawdown maximal ;
 4. sorties horaires ;
-5. si une nouvelle barre M1 est clôturée : intentions de la stratégie sur les barres clôturées,
-   exécution des nouvelles (idempotence : un signal = un ordre, jamais deux).
+5. si une nouvelle barre M1 est clôturée : mises à jour du stop des positions ouvertes (resserré seulement,
+   jamais éloigné), puis intentions de la stratégie sur les barres clôturées, exécution des nouvelles
+   (idempotence : un signal = un ordre, jamais deux).
 Les positions manuelles (sans le magic du bot) ne sont jamais touchées.
 """
 
@@ -41,7 +42,7 @@ from goldbot.indicators.sessions import next_session_start
 from goldbot.risk.limits import RiskLimits
 from goldbot.risk.sizing import position_size
 from goldbot.state.store import CLOSED, FAILED, OPEN, SENDING, SIMULATED, SKIPPED, SignalRow, StateStore
-from goldbot.strategies.base import LONG, OrderIntent, Strategy
+from goldbot.strategies.base import LONG, OrderIntent, StopUpdate, Strategy
 
 log = logging.getLogger("goldbot.live")
 _MINUTE = pd.Timedelta(minutes=1)
@@ -220,11 +221,6 @@ class LiveRunner:
         return bars[bars["time"] + _MINUTE <= now].reset_index(drop=True)
 
     def _new_signals(self, now: pd.Timestamp) -> None:
-        if self.limits.halted:
-            if not self._halt_logged:
-                log.error("drawdown maximal atteint : plus aucune entrée, relance manuelle requise")
-                self._halt_logged = True
-            return
         if self.last_bar_time is not None and now.floor("min") - _MINUTE <= self.last_bar_time:
             return  # aucune nouvelle barre ne peut être clôturée : on ne relit l'historique qu'une fois par minute
         bars = self._closed_bars(now)
@@ -234,10 +230,61 @@ class LiveRunner:
         if self.last_bar_time is not None and last <= self.last_bar_time:
             return
         self.last_bar_time = last
+        self._manage_stops(self.strategy.stop_updates(bars), now)
+        if self.limits.halted:
+            if not self._halt_logged:
+                log.error("drawdown maximal atteint : plus aucune entrée, relance manuelle requise")
+                self._halt_logged = True
+            return
         oldest = now - pd.Timedelta(seconds=self.options.max_signal_age_s)
         for intent in self.strategy.intents(bars):
             if intent.time + _MINUTE >= oldest and not self.store.seen(intent.tag):
                 self._execute(intent, now)
+
+    def _manage_stops(self, updates: list[StopUpdate], now: pd.Timestamp) -> None:
+        """Dernière mise à jour de chaque position ouverte : stop resserré (jamais éloigné, règle 4) ou sortie."""
+        if not updates:
+            return
+        latest = {update.tag: update for update in updates}  # triées par date : la plus récente l'emporte
+        positions = self._mine()
+        spec = self.spec
+        for row in self.store.with_status(OPEN):
+            update, position = latest.get(row.tag), positions.get(row.position)
+            if update is None or position is None:
+                continue
+            if update.exit:
+                self._close_position(position, f"sortie de la stratégie ({update.reason})", now)
+                continue
+            side = LONG if position.type == C.POSITION_TYPE_BUY else -LONG
+            # Arrondi vers la position (jamais au-delà du stop demandé), au pas de cotation.
+            sl = round_to_tick(update.sl, spec.trade_tick_size or spec.point, spec.digits,
+                               "down" if side == LONG else "up")  # fmt: skip
+            if (sl - position.sl) * side <= 0:
+                continue  # n'éloigne jamais le SL, et pas de requête inutile
+            tick = self.broker.tick(spec.name)
+            price = tick.bid if side == LONG else tick.ask
+            if (price - sl) * side <= (spec.trade_stops_level + spec.trade_freeze_level) * spec.point:
+                self._close_position(position, "stop suiveur dépassé", now)
+                continue
+            if self.simulate:
+                log.info("SIMULATION : SL de la position %d déplacé à %.2f (%s)", position.ticket, sl, update.reason)
+                continue
+            request = {
+                "action": C.TRADE_ACTION_SLTP,
+                "symbol": spec.name,
+                "position": position.ticket,
+                "sl": sl,
+                "tp": position.tp,
+                "magic": self.magic,
+            }
+            result = self.broker.order_send(request)
+            if result.retcode == C.TRADE_RETCODE_DONE:
+                self.store.update(row.tag, sl=sl)
+                log.info("position %d : SL resserré de %.2f à %.2f (%s)", position.ticket, position.sl, sl,
+                         update.reason)  # fmt: skip
+            else:
+                log.warning("position %d : SL non modifié (%d), l'ancien SL serveur reste en place", position.ticket,
+                            result.retcode)  # fmt: skip
 
     def _skip(self, intent: OrderIntent, status: str, reason: str) -> None:
         self.store.record(intent, status, reason)

@@ -34,7 +34,7 @@ from goldbot.backtest.metrics import summarize
 from goldbot.backtest.runner import Dataset, costs_for
 from goldbot.backtest.validation import monte_carlo_drawdowns
 from goldbot.config import Settings
-from goldbot.strategies.base import OrderIntent, Strategy
+from goldbot.strategies.base import OrderIntent, StopUpdate, Strategy
 
 RESEARCH_EQUITY = 100_000.0
 EULER_GAMMA = 0.5772156649015329
@@ -67,6 +67,10 @@ def in_period(times: pd.Series | pd.DatetimeIndex, period: Period) -> np.ndarray
     return keep
 
 
+def _within(moment: pd.Timestamp, period: Period) -> bool:
+    return moment >= period.start and (period.end is None or moment < period.end)
+
+
 def run_intents(
     intents: Sequence[OrderIntent],
     dataset: Dataset,
@@ -75,11 +79,12 @@ def run_intents(
     settings: Settings,
     scenario: str = "reel",
     equity: float = RESEARCH_EQUITY,
+    updates: Sequence[StopUpdate] = (),
 ) -> BacktestResult:
-    """Backtest des intentions nées dans la période, sur les barres de la période seulement."""
+    """Backtest des intentions (et mises à jour du stop) nées dans la période, sur les barres de la période."""
     bars = dataset.bars[in_period(dataset.bars["time"], period)].reset_index(drop=True)
-    stamps = pd.DatetimeIndex([intent.time for intent in intents])
-    kept = [intent for intent, keep in zip(intents, in_period(stamps, period), strict=True) if keep]
+    kept = [intent for intent in intents if _within(intent.time, period)]
+    changes = [update for update in updates if _within(update.time, period)]
     spread_x, slippage = SCENARIOS[scenario]
     costs = costs_for(settings.backtest, dataset.symbol, spread_multiplier=spread_x, slippage_points=slippage)
     backtest = Backtest(
@@ -90,7 +95,7 @@ def run_intents(
         initial_equity=equity,
         halt_on_drawdown=False,
     )
-    return backtest.run(kept)
+    return backtest.run(kept, changes)
 
 
 # --- statistiques -----------------------------------------------------------------------------------
@@ -180,13 +185,15 @@ def evaluate_intents(
     periods: Iterable[str] = ("developpement",),
     scenarios: Iterable[str] = ("reel",),
     equity: float = RESEARCH_EQUITY,
+    updates: Sequence[StopUpdate] = (),
 ) -> list[dict[str, object]]:
     """Une ligne de résultats par (période, scénario de coûts)."""
     rows = []
     for name in periods:
         period = PERIODS[name]
         for scenario in scenarios:
-            result = run_intents(intents, dataset, period, settings=settings, scenario=scenario, equity=equity)
+            result = run_intents(intents, dataset, period, settings=settings, scenario=scenario, equity=equity,
+                                 updates=updates)  # fmt: skip
             rows.append(result_row(result, period=name, scenario=scenario))
     return rows
 
@@ -223,7 +230,8 @@ def evaluate(
     **kwargs: object,
 ) -> list[dict[str, object]]:
     """Intentions calculées une fois sur tout l'historique, puis backtest par période et par scénario."""
-    return evaluate_intents(strategy.intents(dataset.bars), dataset, settings, **kwargs)  # type: ignore[arg-type]
+    intents, updates = strategy.intents(dataset.bars), strategy.stop_updates(dataset.bars)
+    return evaluate_intents(intents, dataset, settings, updates=updates, **kwargs)  # type: ignore[arg-type]
 
 
 def log_trials(path: Path, hypothesis: str, params: Mapping[str, object], rows: Iterable[Mapping[str, object]],

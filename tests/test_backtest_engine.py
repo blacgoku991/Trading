@@ -5,7 +5,7 @@ import pytest
 
 from goldbot.backtest.engine import Backtest, Costs, Instrument
 from goldbot.risk.limits import DAILY_LOSS
-from goldbot.strategies.base import LONG, MARKET, SHORT, STOP, OrderIntent
+from goldbot.strategies.base import LONG, MARKET, SHORT, STOP, OrderIntent, StopUpdate
 
 INSTRUMENT = Instrument(point=0.01, contract_size=100.0, volume_min=0.01, volume_max=20.0, volume_step=0.01)
 NO_COSTS = Costs()
@@ -177,9 +177,76 @@ def test_swap_is_charged_three_times_on_wednesday_night(settings):
 def test_a_limit_crossed_while_closing_several_positions_closes_each_once(settings):
     # Deux achats ouverts ; le gap suivant les sort tous les deux au SL et franchit la perte journalière
     # pendant la boucle des sorties : chaque position ne doit être fermée qu'une fois.
-    bars = frame([QUIET, BELOW_TRIGGER, TRIGGER, (2001.40, 2001.50, 2001.30, 2001.40), (1960.0, 1961.0, 1959.0, 1960.5)])
+    bars = frame(
+        [QUIET, BELOW_TRIGGER, TRIGGER, (2001.40, 2001.50, 2001.30, 2001.40), (1960.0, 1961.0, 1959.0, 1960.5)]
+    )
     first = intent(bars, price=2001.0, sl=1999.0, tp=2010.0)
     second = OrderIntent(**{**first.__dict__, "tag": "second", "price": 2001.2, "sl": 1999.2})
     result = run(bars, [first, second], settings=settings, halt=False)
     assert len(result.trades) == 2
     assert sorted(result.trades["strategy_tag"]) == ["second", "test-0-1"]
+
+
+def _update(bars, at, sl=None, *, tag="test-0-1", exit=False):
+    return StopUpdate(time=bars["time"].iloc[at], tag=tag, sl=sl, exit=exit, reason="test")
+
+
+def _run_updates(bars, orders, updates, settings, costs=NO_COSTS):
+    backtest = Backtest(bars, instrument=INSTRUMENT, costs=costs, risk=settings.risk, initial_equity=10_000.0)
+    return backtest.run(orders, updates)
+
+
+RISE = (2001.40, 2003.20, 2001.30, 2003.00)
+
+
+def test_a_trailing_stop_is_applied_from_the_next_bar_and_exits_there(settings):
+    # Long déclenché barre 2 à 2001 (SL 1999). À la clôture de la barre 3, le stop monte à 2002.
+    bars = frame([QUIET, BELOW_TRIGGER, TRIGGER, RISE, (2003.00, 2003.10, 2001.80, 2002.10)])
+    order = intent(bars, tp=2010.0)
+    (trade,) = _run_updates(bars, [order], [_update(bars, 3, 2002.0)], settings).trades.itertuples()
+    assert trade.exit_reason == "SL suiveur" and trade.exit_price == pytest.approx(2002.0)
+    assert trade.sl == pytest.approx(1999.0) and trade.r_multiple == pytest.approx(0.5)  # R du risque initial
+
+
+def test_a_stop_update_is_not_used_inside_the_bar_that_produced_it(settings):
+    # La barre 3 descend à 2001.30 : un stop à 2001.50 décidé à SA clôture ne peut pas la faire sortir.
+    bars = frame([QUIET, BELOW_TRIGGER, TRIGGER, RISE, (2003.00, 2003.10, 2002.60, 2002.80)])
+    result = _run_updates(bars, [intent(bars, tp=2010.0)], [_update(bars, 3, 2001.5)], settings)
+    assert result.trades["exit_reason"].tolist() == ["fin des données"]
+
+
+def test_a_stop_is_never_moved_away(settings):
+    # Mise à jour qui éloignerait le SL (1998 < 1999) : ignorée, la position sort au SL d'origine.
+    bars = frame(
+        [QUIET, BELOW_TRIGGER, TRIGGER, (2001.40, 2001.50, 2000.90, 2001.00), (2000.50, 2000.60, 1998.50, 1998.60)]
+    )
+    (trade,) = _run_updates(bars, [intent(bars, tp=2010.0)], [_update(bars, 3, 1998.0)], settings).trades.itertuples()
+    assert trade.exit_reason == "SL" and trade.exit_price == pytest.approx(1999.0)
+
+
+def test_a_stop_already_crossed_at_the_open_exits_at_market(settings):
+    bars = frame([QUIET, BELOW_TRIGGER, TRIGGER, RISE, (2001.60, 2001.70, 2001.20, 2001.50)])
+    (trade,) = _run_updates(bars, [intent(bars, tp=2010.0)], [_update(bars, 3, 2002.5)], settings).trades.itertuples()
+    assert trade.exit_reason == "stop suiveur dépassé" and trade.exit_price == pytest.approx(2001.60)
+
+
+def test_short_trailing_stop_and_strategy_exit(settings):
+    down = (1998.60, 1998.70, 1997.00, 1997.20)
+    bars = frame([QUIET, (1999.50, 1999.60, 1998.90, 1999.00), down, (1997.20, 1997.30, 1996.90, 1997.00), QUIET])
+    short = intent(bars, side=SHORT, price=1999.0, sl=2001.0, tp=1990.0)
+    tighter = _update(bars, 2, 1998.0, tag=short.tag)  # ask haut de la barre 3 = 1997.45 < 1998 : toujours ouverte
+    out = _update(bars, 3, tag=short.tag, exit=True)
+    (trade,) = _run_updates(bars, [short], [tighter, out], settings).trades.itertuples()
+    assert trade.exit_reason == "sortie de la stratégie"
+    assert trade.exit_price == pytest.approx(2000.15)  # ouverture de la barre 4 à l'ask (2000.00 + 0.15)
+
+
+def test_updates_for_unknown_signals_are_ignored(settings):
+    bars = frame([QUIET, BELOW_TRIGGER, TRIGGER, RISE, QUIET])
+    result = _run_updates(bars, [intent(bars, tp=2010.0)], [_update(bars, 3, 2002.0, tag="autre")], settings)
+    assert result.trades["exit_reason"].tolist() == ["fin des données"]
+
+
+def test_stop_update_needs_a_stop_or_an_exit():
+    with pytest.raises(ValueError, match="sans nouveau SL"):
+        StopUpdate(time=pd.Timestamp("2026-01-06", tz="UTC"), tag="x", sl=None)
