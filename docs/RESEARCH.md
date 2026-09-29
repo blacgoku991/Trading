@@ -276,6 +276,7 @@ Champs par action. La structure est 🟡 (https://www.mql5.com/en/docs/constants
 - Succès = 10009 `DONE`, ou 10008 `PLACED` pour un ordre en attente 🧪.
 - Peut renvoyer `None` : lire alors `last_error()` (🟠 https://www.mql5.com/en/forum/335058).
 - `result.volume` est le volume confirmé par le broker ; `retcode_external` dépend du broker (🟡 https://www.mql5.com/en/docs/constants/structures/mqltraderesult).
+- **Constaté sur le compte démo Axi (exécution Market, 29/09/2026)** : la réponse à une clôture au marché contenait `price = 0.0`, alors que le deal a été exécuté à 4124,58. → Toujours lire le prix exécuté dans les deals (`history_deals_get(position=…)`) : slippage, R réalisé et journal des trades (Phase 5) en dépendent.
 
 **Autres contraintes**
 - `volume` doit être un **float** (🟠 https://www.mql5.com/en/forum/430288). `magic` est un entier (ulong ⚪).
@@ -1238,8 +1239,13 @@ Source : sortie de `scripts/check_connection.py` sur le PC de l'utilisateur, le 
 | Mode de calcul | CFD ? | FOREX (sans effet pour nous : marge et profit viennent du terminal) |
 | Marge pour 0,01 lot | — | 3,63 € (or à 4 124 $) |
 | 1 $ de mouvement | 1 $ par 0,01 lot | 0,88 € par 0,01 lot (EUR/USD ≈ 1,137) |
+| Ordre de test (`--test-order`, 02:09) | — | FOK accepté, prix obtenu = prix demandé (slippage 0), SL et TP posés côté serveur, SL resserré de 4119,58 à 4122,08 via `TRADE_ACTION_SLTP`, clôture OK. Confirmé dans l'onglet Historique de MT5 ✅ |
+| Commission (compte Standard) | aucune (🟡) | 0,00 à l'entrée et à la sortie ✅ |
+| `OrderSendResult.price` | prix d'exécution (🟡 doc) | **0,00** dans la réponse à l'ordre de clôture au marché ; le prix réel (4124,58) n'apparaît que dans les deals |
+| Coût du test | — | −0,14 €, soit exactement le spread (0,16 $ sur 1 oz) |
 
 Conséquences chiffrées (✅ calcul à partir de ces valeurs) :
 - **Swap sur 0,01 lot** : −0,54 € par nuit en achat, +0,36 € par nuit en vente, triplé le mercredi (−1,63 € / +1,07 €). Pour 1 lot : −54 € / +36 € par nuit. Une position acheteuse gardée plusieurs jours paie donc un coût réel, à intégrer au backtest (Phase 3).
 - **Coût du spread** : 0,16 $ par once, soit 0,14 € par aller-retour sur 0,01 lot. C'est environ 0,8 % du risque d'un trade de 0,01 lot avec un SL de 20 $ (17,6 €) : faible, sauf au rollover et pendant les news, où il reste à mesurer (Phase 2).
-- **Commission** : aucune attendue sur un compte Standard. À confirmer avec `--test-order`.
+- **Commission** : aucune sur ce compte Standard, confirmé par `--test-order`. Le coût de transaction se résume au spread (et aux swaps pour les positions gardées la nuit).
+- **Prix exécutés** : ne jamais se fier au champ `price` de la réponse d'`order_send`. Le slippage et le R réalisé se calculent à partir des deals (`history_deals_get(position=…)`).
