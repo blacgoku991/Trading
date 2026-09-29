@@ -621,3 +621,39 @@ def test_cadence_is_rebuilt_from_the_closed_trades_after_a_restart(world, tmp_pa
     live._update_cadence(live.server_now_ms())  # appelé après chaque trade fermé
     assert live.policy.cadence.level == 0
     assert any("cadence : retour à la base" in line for line in lines)
+
+
+def test_a_split_trade_reaches_the_cadence_once_with_its_summed_result(tmp_path, settings):
+    broker, clock, quote, runner, lines = make_world(tmp_path, settings, symbol=make_symbol(volume_max=0.05))
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    assert len(broker.positions()) == 3  # un trade en trois ordres
+    tickets = sorted(p.ticket for p in broker.positions())
+    broker.hit_stop(tickets[0], broker.positions()[0].sl)  # une seule part fermée
+    clock.advance(2)
+    live.step()
+    assert len(live.policy.cadence.results) == 0  # trade pas fini : rien donné à la cadence
+    clock.advance(121)
+    quote(4000.30)
+    live.step()
+    live.step()
+    assert broker.positions() == []
+    (result,) = live.policy.cadence.results
+    closed = [row for row in live.store.closed_orders() if row["tag"] == broker.sent[0]["comment"].split("#")[0]]
+    assert len(closed) == 3 and result == pytest.approx(sum(row["real_pnl"] for row in closed))
+
+
+def test_three_losses_in_a_row_pause_that_direction_and_say_so(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    live.cfg = live.cfg.model_copy(update={"loss_streak": 1, "loss_streak_pause_s": 600})
+    live.policy.cfg = live.cfg
+    _breakout(broker, clock, quote, live)
+    (position,) = broker.positions()
+    broker.hit_stop(position.ticket, position.sl)
+    clock.advance(2)
+    live.step()
+    assert any("pause des achats pendant 10 min (1 pertes d'affilée)" in line for line in lines)
+    assert "pause dans ce sens" in live.policy.refusal(live.server_now_ms(), key="x", risk=1.0, equity=10_000.0,
+                                                       day_result=0.0, day_start_equity=10_000.0, open_trades=[],
+                                                       side=1)  # fmt: skip

@@ -445,10 +445,10 @@ def test_cadence_climbs_one_level_per_winning_window_within_the_ceilings():
         cadence.on_close(1.0)
     assert cadence.level == 1  # au plus un palier par série de 10 trades
     cadence.on_close(1.0)
-    assert cadence.level == 2 and cadence.limits() == Limits(20, 1.25, 20, 1.0)
+    assert cadence.level == 2 and cadence.limits() == Limits(12, 1.25, 20, 1.0)  # une entrée par bougie de 5 s
     for _ in range(20):
         cadence.on_close(1.0)
-    assert cadence.level == 3 and cadence.limits() == Limits(30, 5.0 / 6, 30, 1.0)  # plafond de 30 entrées/min
+    assert cadence.level == 3 and cadence.limits() == Limits(12, 5.0 / 6, 30, 1.0)
     for _ in range(30):
         cadence.on_close(1.0)
     assert cadence.level == 3  # dernier palier
@@ -555,7 +555,8 @@ def test_a_loss_streak_in_one_direction_pauses_it():
     assert _check_side(policy, 90_000, SHORT) is None
     policy.on_exit(LONG, "stop", 0, 90_000, -4.5)  # les achats ont leur propre compteur
     assert _check_side(policy, 95_000, SHORT) is None
-    policy.on_exit(SHORT, "durée max", 0, 100_000, -0.4)  # 3e perte d'affilée dans ce sens
+    message = policy.on_exit(SHORT, "durée max", 0, 100_000, -0.4)  # 3e perte d'affilée dans ce sens
+    assert message == "pause des ventes pendant 15 min (3 pertes d'affilée) : le marché ne va pas dans ce sens"
     assert "3 pertes d'affilée" in _check_side(policy, 101_000, SHORT)
     assert _check_side(policy, 101_000, LONG) is None
     assert _check_side(policy, 1_000_001, SHORT) is None  # 15 min après
@@ -596,3 +597,24 @@ def test_open_risk_never_exceeds_what_is_left_of_the_daily_loss_budget():
     assert reason_key(refusal) == "budget de perte du jour"
     assert policy.refusal(0, key="n", risk=5.0, equity=5000.0, day_result=-20.0, day_start_equity=5000.0,
                           open_trades=open_trades) is None  # fmt: skip
+
+
+def test_the_window_turning_positive_on_a_losing_close_does_not_raise_the_cadence():
+    cadence = _cadence(window_trades=10)
+    for _ in range(9):
+        cadence.on_close(5.0)
+    cadence.on_close(-1.0)  # 10e trade : fenêtre pleine et en bénéfice, mais ce trade perd
+    assert cadence.recent_result() > 0 and cadence.level == 0
+    cadence.on_close(1.0)
+    assert cadence.level == 1
+
+
+def test_open_trades_in_floating_profit_do_not_enlarge_the_daily_budget():
+    policy = EntryPolicy(CONFIG)
+    for _ in range(CONFIG.cadence.window_trades):
+        policy.cadence.on_close(2.0)
+    five = [Exposure(f"t{k}", f"k{k}", LONG, 5.0) for k in range(5)]  # 25 en jeu
+    # Réalisé -40, latent +25 (résultat du jour -15) : si tous les stops sont touchés, -65 > 50 de limite.
+    refusal = policy.refusal(0, key="n", risk=5.0, equity=5000.0, day_result=-15.0, day_start_equity=5000.0,
+                             open_trades=five, day_realized=-40.0)  # fmt: skip
+    assert reason_key(refusal) == "budget de perte du jour"

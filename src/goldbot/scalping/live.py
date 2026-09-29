@@ -338,6 +338,12 @@ class ScalpRunner:
             return self.store.sim_realized_since(self.day_start_ms)
         return self.store.realized_since(self.day_start_ms) + self._latent()
 
+    def _day_realized(self) -> float:
+        """Résultat réalisé du jour (démo, ou simulé en --simulation), sans le latent."""
+        if self.local_only:
+            return self.store.sim_realized_since(self.day_start_ms)
+        return self.store.realized_since(self.day_start_ms)
+
     def _exposures(self) -> list[Exposure]:
         """Trades ouverts de l'expérience : ordres démo (regroupés par signal) et trades simulés."""
         exposures: dict[str, Exposure] = {}
@@ -408,6 +414,7 @@ class ScalpRunner:
             risk=risk,
             equity=account.equity,
             day_result=self._day_result(),
+            day_realized=self._day_realized(),
             day_start_equity=self.day_start_equity,
             open_trades=self._exposures(),
             side=plan.side,
@@ -472,7 +479,9 @@ class ScalpRunner:
                 self.store.close_sim(tag, trade.exit_price, trade.reason, pnl, fees, time_ms)
                 del self.shadow[tag]
                 if not sent:  # --simulation : les trades simulés sont les trades de l'essai (comme au rejeu)
-                    self.policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
+                    pause = self.policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
+                    if pause:
+                        self.say(f"{self._clock(time_ms)} {pause}")
                     self._update_cadence(time_ms)
                 if not sent:
                     self.say(f"{self._clock(time_ms)} sortie simulée {tag} [{self.labels.get(strategy, strategy)}] "
@@ -690,7 +699,9 @@ class ScalpRunner:
                                 exit_ms=exit_ms, open_ms=open_ms, est_pnl=estimate, profit=profit,
                                 commission=commission, swap=swap, fee=fee, real_pnl=real, closed_ms=now_ms)  # fmt: skip
         if open_ms:
-            self.policy.on_exit(order.side, reason, open_ms, exit_ms, real)
+            pause = self.policy.on_exit(order.side, reason, open_ms, exit_ms, real)
+            if pause:
+                self.say(f"{self._clock(now_ms)} {pause}")
         self._update_cadence(now_ms)
         held = f" après {(exit_ms - open_ms) / 1000:.0f} s" if open_ms else ""
         self.say(

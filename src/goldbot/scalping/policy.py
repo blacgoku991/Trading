@@ -67,7 +67,10 @@ class Cadence:
         level = self.level if level is None else level
         factor = cadence.multipliers[level] if self.enabled else 1.0
         return Limits(
-            entries_per_minute=min(int(cfg.max_entries_per_minute * factor), cadence.ceiling_entries_per_minute),
+            # Au plus une entrée par bougie : les signaux d'une même bougie sont décidés au même instant.
+            entries_per_minute=min(
+                int(cfg.max_entries_per_minute * factor), cadence.ceiling_entries_per_minute, 60 // cfg.candle_seconds
+            ),
             seconds_between_entries=cfg.min_seconds_between_entries / factor,
             open_positions=int(cfg.max_open_positions * factor),
             total_risk_pct=min(cfg.max_total_risk_pct * factor, cadence.ceiling_total_risk_pct),
@@ -144,6 +147,7 @@ class EntryPolicy:
         day_start_equity: float,
         open_trades: list[Exposure],
         side: int | None = None,
+        day_realized: float | None = None,
     ) -> str | None:
         """Motif du refus, ou None si l'entrée est permise."""
         cfg = self.cfg
@@ -164,8 +168,10 @@ class EntryPolicy:
         open_risk = sum(trade.risk for trade in open_trades)
         if open_risk + risk > limits.total_risk_pct / 100 * equity:
             return f"risque cumulé au maximum : {limits.total_risk_pct:g} % de l'equity"
-        # Tous les stops touchés ne doivent pas faire dépasser la perte maximale du jour (flottant compris).
-        budget = cfg.daily_loss_pct / 100 * day_start_equity + day_result
+        # Si tous les stops sont touchés, la journée finit à « réalisé - risque ouvert » : ce total ne doit pas
+        # dépasser la perte maximale du jour. Réalisé seulement (un gain latent peut disparaître avant les stops).
+        realized = day_result if day_realized is None else day_realized
+        budget = cfg.daily_loss_pct / 100 * day_start_equity + realized
         if open_risk + risk > budget:
             return f"budget de perte du jour : {budget:.2f} restants, {open_risk:.2f} déjà en jeu"
         while self.entries and self.entries[0] <= now_ms - 60_000:
@@ -179,25 +185,32 @@ class EntryPolicy:
     def accept(self, now_ms: int) -> None:
         self.entries.append(now_ms)
 
-    def on_exit(self, side: int, reason: str, open_ms: int, exit_ms: int, pnl: float) -> None:
+    def on_exit(self, side: int, reason: str, open_ms: int, exit_ms: int, pnl: float) -> str | None:
         """Après chaque trade fermé : pauses dans un sens qui se trompe (si réglées).
 
         - stop touché très vite : l'entrée était prise dans le bruit ;
         - loss_streak pertes d'affilée dans ce sens : le marché ne va pas dans ce sens en ce moment.
+        Renvoie un message quand une pause commence.
         """
         cfg = self.cfg
+        message = None
         self.streak[side] = self.streak.get(side, 0) + 1 if pnl < 0 else 0
         if reason == "stop" and cfg.quick_stop_pause_s > 0 and exit_ms - open_ms < cfg.quick_stop_s * 1000:
-            self._pause(side, exit_ms + int(cfg.quick_stop_pause_s * 1000),
-                        f"stop touché en moins de {cfg.quick_stop_s:g} s")  # fmt: skip
+            message = self._pause(side, exit_ms, cfg.quick_stop_pause_s,
+                                  f"stop touché en moins de {cfg.quick_stop_s:g} s")  # fmt: skip
         if cfg.loss_streak_pause_s > 0 and self.streak[side] >= cfg.loss_streak:
-            self._pause(side, exit_ms + int(cfg.loss_streak_pause_s * 1000), f"{self.streak[side]} pertes d'affilée")
+            message = self._pause(side, exit_ms, cfg.loss_streak_pause_s, f"{self.streak[side]} pertes d'affilée")
             self.streak[side] = 0
+        return message
 
-    def _pause(self, side: int, until_ms: int, why: str) -> None:
-        if until_ms > self.paused_until.get(side, 0):
-            self.paused_until[side] = until_ms
-            self.pause_reason[side] = why
+    def _pause(self, side: int, from_ms: int, seconds: float, why: str) -> str | None:
+        until_ms = from_ms + int(seconds * 1000)
+        if until_ms <= self.paused_until.get(side, 0):
+            return None
+        self.paused_until[side] = until_ms
+        self.pause_reason[side] = why
+        direction = "achats" if side > 0 else "ventes"
+        return f"pause des {direction} pendant {seconds / 60:g} min ({why}) : le marché ne va pas dans ce sens"
 
 
 def split_volume(volume: float, volume_max: float, volume_step: float) -> list[float]:

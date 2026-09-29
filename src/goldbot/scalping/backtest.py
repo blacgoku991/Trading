@@ -205,7 +205,8 @@ def run_backtest(
                     key=setup.key,
                     risk=risk,
                     equity=equity,
-                    day_result=day_pnl,
+                    day_result=day_pnl,  # réalisé seulement dans le rejeu
+                    day_realized=day_pnl,
                     day_start_equity=day_start_equity,
                     open_trades=[exposure for _, exposure, _, _, _ in open_trades],
                     side=plan.side,

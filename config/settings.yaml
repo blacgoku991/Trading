@@ -202,7 +202,7 @@ scalping:
     version: 1
     window_trades: 30
     multipliers: [1, 2, 4, 6]
-    ceiling_entries_per_minute: 30  # 1 toutes les 2 s en moyenne : limite des requêtes serveur, pas de HFT chez Axi
+    ceiling_entries_per_minute: 12  # une par bougie de 5 s au plus ; requêtes serveur, pas de HFT chez Axi
     ceiling_total_risk_pct: 1.0     # risque ouvert jamais au-delà de la perte journalière maximale (daily_loss_pct)
 
 logging:
