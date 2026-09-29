@@ -228,8 +228,9 @@ Puis pour de vrai, sur le compte démo :
 ### 9. Expérience de scalping (compte démo uniquement)
 
 Version expérimentale, **séparée** de la stratégie Londres / New York, sur des bougies de 5 s construites à partir
-des ticks, toutes sessions ouvertes. Deux stratégies tournent ensemble, chacune identifiée par sa version et
-l'empreinte de ses réglages (par exemple `cassure v1 · a496a8fc`) :
+des ticks, toutes sessions ouvertes. Deux stratégies existent, chacune identifiée par sa version et l'empreinte
+de ses réglages (par exemple `cassure v1 + apprentissage v2 + cadence v1 · 3a694f43`) ; depuis le 29/09 au soir,
+seule la cassure tourne en démo (l'impulsion-repli perd dans toutes ses versions, `pullback.enabled: false`) :
 - **cassure** : cassure du plus haut ou du plus bas des 60 s précédentes, confirmée par deux clôtures, dans le sens
   de la tendance M1 (EMA20 / EMA50) ;
 - **impulsion-repli** : impulsion d'au moins 1 ATR M1, repli de 30 à 70 %, puis reprise dans le sens de

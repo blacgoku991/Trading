@@ -503,6 +503,7 @@ _V1_EXITS = [
     ("max_hold_s: 600", "max_hold_s: 120"),
     ("version: 2                    # v1", "version: 1                    # v1"),
     ("target_ratios: [2.0, 3.0, 4.0]", "target_ratios: [0.8, 1.2, 2.0]"),
+    ("    enabled: false\n    version: 1\n    impulse_atr", "    enabled: true\n    version: 1\n    impulse_atr"),
 ]
 
 
@@ -677,3 +678,15 @@ def test_three_losses_in_a_row_pause_that_direction_and_say_so(world):
     assert "pause dans ce sens" in live.policy.refusal(live.server_now_ms(), key="x", risk=1.0, equity=10_000.0,
                                                        day_result=0.0, day_start_equity=10_000.0, open_trades=[],
                                                        side=1)  # fmt: skip
+
+
+def test_in_simulation_mode_each_closed_simulated_trade_reaches_the_cadence(world):
+    broker, clock, quote, runner, lines = world
+    live = runner(local_only=True)
+    _breakout(broker, clock, quote, live)
+    assert broker.sent == [] and len(live.shadow) == 1
+    clock.advance(121)  # durée maximale : le trade simulé ferme au passage suivant
+    quote(4000.30)
+    live.step()
+    assert live.shadow == {} and len(live.policy.cadence.results) == 1
+    assert live.policy.cadence.results[0] == pytest.approx(live.store.closed_sims()[0]["pnl"])

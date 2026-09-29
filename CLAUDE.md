@@ -381,7 +381,8 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   risque ouvert borné par ce qui reste de la perte maximale du jour). La base de 5 entrées/min reste la limite
   accordée. Puis, d'après ses trades démo (gains = pertes, stops serrés, ventes perdantes d'affilée) : sorties v2
   (stop ≥ 2 $, objectif 3 x le stop, 10 min, apprentissage v2) ; 21 variantes testées, toutes perdantes, retenue
-  la moins mauvaise (PF 0,905 au rejeu). Lots non augmentés tant qu'aucune version ne gagne (explication donnée ;
+  la moins mauvaise (PF 0,905 au rejeu ; cassure seule PF 0,97, proche de l'équilibre, impulsion-repli
+  désactivée car perdante dans toutes ses versions). Lots non augmentés tant qu'aucune version ne gagne (explication donnée ;
   décision de l'utilisateur, dans la limite dure de 1 %/trade).
 
 ---

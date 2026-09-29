@@ -169,7 +169,8 @@ scalping:
     # d'un produit commercial) : impulsion >= 1 ATR M1 en 60 s au plus, repli de 30 à 70 % de l'impulsion,
     # puis clôture au-dessus du plus haut de la bougie précédente (au-dessous du plus bas pour une vente)
     # dans les 60 s qui suivent le sommet de l'impulsion. Stop derrière le point bas du repli.
-    enabled: true
+    # Désactivée en démo le 29/09 : perdante dans toutes ses versions (sorties v2 seule : PF 0,84, -0,12 R).
+    enabled: false
     version: 1
     impulse_atr: 1.0
     impulse_max_s: 60

@@ -453,8 +453,26 @@ Lecture :
 **Retenu pour la démo** (sorties v2, « + apprentissage v2 ») : stop d'au moins 2 $, objectif 3 x le stop,
 10 minutes au plus, variantes apprises avec des objectifs de 2, 3 ou 4 R. Meilleur profit factor et meilleure
 tenue au glissement des 21 essais, mais **perdant** : environ −0,055 R par trade au rejeu. Les options « trades
-par sens » et « pauses » restent dans le code, désactivées. Les prochains jours de démo, sur des données jamais
-vues, diront si ce classement tient.
+par sens » et « pauses » restent dans le code, désactivées.
+
+Rejeu officiel de ces réglages (`scripts/backtest_scalp.py`), par stratégie :
+
+| Prix exécutables | Trades | Gagnants | Gain moyen / perte moyenne | PF | Résultat | Espérance (t) |
+|---|---|---|---|---|---|---|
+| cassure seule | 2 437 (118 par jour) | 41 % | +4,66 / −3,36 € | 0,97 | −145 € | −0,018 R (−0,6) |
+| impulsion-repli seule | 416 (20 par jour) | 28 % | +7,97 / −3,67 € | 0,84 | −175 € | −0,120 R (−1,5) |
+| les deux ensemble | 2 218 (107 par jour) | 39 % | +4,74 / −3,29 € | 0,90 | −428 € | −0,055 R (−2,0) |
+| cassure seule, +10 points | 1 943 | 40 % | +4,53 / −3,41 € | 0,87 | −531 € | −0,072 R (−2,6) |
+
+Le gain moyen dépasse maintenant la perte moyenne (+4,66 € contre −3,36 € pour la cassure). **La cassure seule est
+proche de l'équilibre avant glissement** (t de −0,6 : impossible à distinguer de zéro, ni gain ni perte
+démontrés) et perdante avec 10 points de glissement. L'impulsion-repli perd dans toutes ses versions depuis le
+début : **elle est désactivée en démo** (`pullback.enabled: false`, code conservé). Les prochains jours de démo,
+sur des données jamais vues et avec le vrai glissement, diront si ce classement tient.
+
+Limite connue (relecture critique) : si la réponse du serveur à un ordre est perdue et que la position touche son
+stop avant que le bot la voie, l'ordre est noté « échec » sans lire l'historique des deals : le stop serveur
+protège le compte, mais ce résultat manque aux bilans, à la perte du jour et à la cadence. Cas rare, à corriger.
 
 ### Historique des réglages
 
@@ -467,4 +485,4 @@ vues, diront si ce classement tient.
 - 29/09/2026 soir : « + apprentissage v1 » (variantes apprises à chaque trade).
 - 29/09/2026 fin de journée : « + cadence v1 » (cadence liée au bénéfice, 12 entrées par minute au plus, budget
   du jour), puis sorties v2 d'après les trades démo : stop d'au moins 2 $, objectif 3 x le stop, 10 minutes au
-  plus, « + apprentissage v2 » (objectifs 2 / 3 / 4 R). Voir la section suivante.
+  plus, « + apprentissage v2 » (objectifs 2 / 3 / 4 R) ; impulsion-repli désactivée. Voir la section suivante.
