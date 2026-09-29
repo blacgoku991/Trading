@@ -31,11 +31,12 @@ server_time:
   offset_hours: 7
 
 market_hours:
-  # Horaires Axi des métaux, en heure serveur (docs/RESEARCH.md §2.5).
-  week_open: "01:01"          # lundi
+  # Horaires Axi des métaux, en heure serveur (docs/RESEARCH.md §2.5). Annoncés : reprise à 01:01 ;
+  # l'historique Axi 2019-2026 montre une première barre chaque jour à 01:00 : on retient 01:00.
+  week_open: "01:00"          # lundi
   week_close: "23:58"         # vendredi
   daily_break_start: "23:59"
-  daily_break_end: "01:01"
+  daily_break_end: "01:00"
   # Jours fermés (dates serveur AAAA-MM-JJ), d'après le calendrier Axi.
   closed_dates: []
 

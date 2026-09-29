@@ -257,3 +257,14 @@ def test_export_until_today_excludes_the_current_day(history_broker, rule, tmp_p
     result = _export_bars(history_broker, rule, tmp_path, until=rule.to_server(now).date())
     assert load_bars(tmp_path, "XAUUSD")["time_server"].max() < server_epoch_of("2026-02-06 00:00")
     assert result.rows > 0
+
+
+def test_minute_history_starts_after_the_daily_only_period(schedule, rule):
+    from goldbot.data.history import bars_frame, minute_history_start
+
+    # Une barre par jour en juin (données journalières), puis du vrai M1 à partir du lundi 6 juillet.
+    daily = [server_epoch_of(f"2026-06-{day:02d} 00:00") for day in range(1, 30)]
+    minutes = open_minutes(schedule, "2026-07-06", "2026-07-20")
+    bars = bars_frame(make_bars(np.concatenate([daily, minutes])), rule)
+    assert minute_history_start(bars) == server_epoch_of("2026-07-06 00:00")
+    assert minute_history_start(bars.head(20)) is None

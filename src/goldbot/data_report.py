@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from goldbot.config import ConfigError, load_settings
-from goldbot.data.history import exported_symbols, load_bars, load_ticks, verify_files
+from goldbot.data.history import exported_symbols, load_bars, load_ticks, minute_history_start, verify_files
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.quality import render_report
 from goldbot.data.timezones import ServerTimeRule
@@ -56,6 +56,18 @@ def main(
 
     echo(f"Lecture des fichiers de {symbol} dans {folder}...")
     bars = load_bars(folder, symbol, deduplicate=False)
+    start = minute_history_start(bars)
+    if start is None:
+        echo("ERREUR : aucune période avec de vraies barres d'une minute (au moins 1 000 barres par jour)")
+        return EXIT_NO_DATA
+    sparse = int((bars["time_server"] < start).sum())
+    bars = bars[bars["time_server"] >= start].reset_index(drop=True)
+    first_day = datetime.fromtimestamp(start, UTC).date()
+    note = (
+        f"Historique minute exploitable à partir du {first_day} (date serveur)"
+        + (f" ; {sparse} barres éparses plus anciennes (environ une par jour) ignorées." if sparse else ".")
+    )
+    echo(note)
     ticks = load_ticks(folder, symbol) if any(folder.glob("*_ticks_*.parquet")) else None
     text, alerts = render_report(
         bars,
@@ -65,6 +77,7 @@ def main(
         point=point,
         zone=settings.bot.display_timezone,
         file_problems=verify_files(folder),
+        notes=[note],
     )
     stamp = (now_utc or (lambda: datetime.now(UTC)))().strftime("%Y%m%dT%H%M%SZ")
     report_path = _resolve(root, settings.paths.reports) / f"qualite_donnees_{stamp}.md"

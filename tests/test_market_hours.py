@@ -11,10 +11,10 @@ from tests.conftest import CONFIG_PATH
 @pytest.mark.parametrize(
     ("server_time", "is_open"),
     [
-        (datetime(2026, 9, 28, 1, 0), False),  # lundi avant l'ouverture
-        (datetime(2026, 9, 28, 1, 1), True),  # lundi à l'ouverture
+        (datetime(2026, 9, 28, 0, 59), False),  # lundi avant l'ouverture
+        (datetime(2026, 9, 28, 1, 0), True),  # lundi à l'ouverture (première barre observée à 01:00)
         (datetime(2026, 9, 29, 0, 30), False),  # pause quotidienne
-        (datetime(2026, 9, 29, 1, 1), True),  # fin de la pause
+        (datetime(2026, 9, 29, 1, 0), True),  # fin de la pause
         (datetime(2026, 9, 29, 23, 58), True),
         (datetime(2026, 9, 29, 23, 59), False),  # début de la pause
         (datetime(2026, 10, 2, 23, 57), True),  # vendredi
@@ -40,7 +40,7 @@ def test_closed_dates():
 
 
 def test_seconds_since_open(schedule):
-    assert schedule.seconds_since_open(datetime(2026, 9, 29, 1, 6)) == 300
+    assert schedule.seconds_since_open(datetime(2026, 9, 29, 1, 5)) == 300
     assert schedule.seconds_since_open(datetime(2026, 9, 29, 0, 30)) is None
 
 

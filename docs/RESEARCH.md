@@ -1249,3 +1249,26 @@ Conséquences chiffrées (✅ calcul à partir de ces valeurs) :
 - **Coût du spread** : 0,16 $ par once, soit 0,14 € par aller-retour sur 0,01 lot. C'est environ 0,8 % du risque d'un trade de 0,01 lot avec un SL de 20 $ (17,6 €) : faible, sauf au rollover et pendant les news, où il reste à mesurer (Phase 2).
 - **Commission** : aucune sur ce compte Standard, confirmé par `--test-order`. Le coût de transaction se résume au spread (et aux swaps pour les positions gardées la nuit).
 - **Prix exécutés** : ne jamais se fier au champ `price` de la réponse d'`order_send`. Le slippage et le R réalisé se calculent à partir des deals (`history_deals_get(position=…)`).
+
+## Annexe E — Constats sur l'historique Axi (export du 29/09/2026, Phase 2)
+
+Source : `scripts/export_history.py` sur le PC de l'utilisateur, puis `scripts/data_report.py` (rapport complet dans
+`reports/`, non versionné). Les 26 fichiers correspondent à leur empreinte SHA-256 du manifeste.
+
+| Point | Constat |
+|---|---|
+| Profondeur du vrai M1 | **Du 22/07/2019 au 28/09/2026** : 2 545 045 barres (environ 1 380 par jour de cotation). Avant, environ **une barre par jour** (données journalières rangées en M1), de 2007 à mi-2019 : inutilisable pour une stratégie à la minute |
+| Ticks | 7 683 117 ticks du 31/08 au 28/09/2026 (environ 380 000 par jour), aucune cotation croisée, horodatages croissants |
+| Intégrité des barres | 0 doublon, 0 heure invalide, 0 OHLC incohérent |
+| Trous | 1,61 % des minutes de cotation ; les longs trous sont les jours fériés : 24-25/12, 31/12-01/01, Vendredi saint, lundi de Noël ou du Nouvel An quand ils tombent un lundi. Clôtures anticipées le 24/12 et le 31/12 (vers 20:30-22:00 heure serveur) |
+| Règle d'heure serveur (New York + 7 h) | **Validée sur tout l'historique** : la dernière barre de chaque jour (lundi à jeudi) tombe à 16:58 heure de New York, en heure d'été comme d'hiver, de 2019 à 2026, sans semaine décalée |
+| Horaires | Première barre chaque jour à **01:00** heure serveur (annoncé : 01:01) : config ajustée. Fermeture du vendredi à 23:58, sauf une partie de 2020-2022 et 2024 (barre à 23:58 présente, fermeture à 23:59 à l'époque) |
+| Spread des barres | **C'est le spread minimal des ticks de la minute** (égalité exacte sur 100 % des 28 805 minutes comparées). La médiane des ticks n'en diffère que de 0,15 point en moyenne : le spread des barres est un bon indicateur, un peu optimiste pendant les mouvements rapides |
+| Niveau du spread | Médiane 20 points en 2019-2020, **15 à 16 points depuis 2021** (0,15-0,16 $). Presque constant toute la journée ; élargi vers 22-23 h à Paris (avant la pause quotidienne, 95e centile 77 points) et sur les annonces (jusqu'à 1 518 points dans les ticks, le 04/09/2026 à 14:30). 2020 plus cher (moyenne 27 points, Covid). Spreads nuls sur 15 168 barres de 2019 : artefact, plancher à appliquer dans le backtest |
+| Mouvements extrêmes | Sur une minute, jusqu'à −69 $ (rapport sur l'emploi du 04/09/2026, 14:30 à Paris). Les plus violents tombent à **14:30 heure de Paris (chiffres américains de 8:30 à New York)** et aux **réouvertures du lundi** (gaps). Aucun pic isolé qui revient aussitôt : pas de prix aberrant à nettoyer |
+
+Conséquences pour le backtest (Phase 3) :
+- données de backtest à partir du 22/07/2019 ;
+- coût d'entrée = spread de la barre avec un plancher de 15 points, plus un glissement, puis stress à 1,5 fois le spread ;
+- éviter les minutes autour des chiffres américains et la première heure du lundi (filtres de la Phase 4) ;
+- les jours fériés et les clôtures anticipées sont dans les données : aucune correction nécessaire.

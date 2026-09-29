@@ -30,7 +30,7 @@ def test_gap_across_the_daily_break_is_one_gap(schedule):
     )
     expected, gaps = find_gaps(server_index(minutes[~removed]), schedule)
     assert expected == len(minutes)
-    assert [g.minutes for g in gaps] == [19, 1]  # 23:50-23:58 puis 01:01-01:10, pause non comptée
+    assert [g.minutes for g in gaps] == [20, 1]  # 23:50-23:58 puis 01:00-01:10, pause non comptée
     assert gaps[0].first_missing == pd.Timestamp("2026-01-06 23:50")
     assert gaps[0].last_missing == pd.Timestamp("2026-01-07 01:10")
 
@@ -169,7 +169,8 @@ def test_report_on_clean_data_has_no_alert(rule, schedule):
 def test_report_raises_alerts_on_bad_data(rule, schedule):
     bars = _bars(rule, open_minutes(schedule, "2026-01-05", "2026-01-17"))
     bars = pd.concat([bars, bars.head(2)], ignore_index=True)  # doublons
-    weekend = _bars(rule, [server_epoch_of("2026-01-10 12:00")])
+    # Une heure entière de barres le samedi : ce qu'une règle d'heure fausse produirait.
+    weekend = _bars(rule, [server_epoch_of("2026-01-10 12:00") + 60 * k for k in range(60)])
     bars = pd.concat([bars, weekend], ignore_index=True)
     text, alerts = render_report(
         bars, None, rule=rule, schedule=schedule, point=0.01, zone="Europe/Paris", file_problems=["x : manquant"]
@@ -178,3 +179,19 @@ def test_report_raises_alerts_on_bad_data(rule, schedule):
     assert any("doublons" in alert for alert in alerts)
     assert any("hors heures de cotation" in alert for alert in alerts)
     assert "## Ticks" not in text
+
+
+def test_a_few_off_hours_minutes_are_reported_without_alert(rule, schedule):
+    bars = _bars(rule, open_minutes(schedule, "2026-01-05", "2026-01-17"))
+    friday = _bars(rule, [server_epoch_of("2026-01-09 23:58")])  # ancien horaire de fermeture du vendredi
+    text, alerts = render_report(
+        pd.concat([bars, friday], ignore_index=True),
+        None,
+        rule=rule,
+        schedule=schedule,
+        point=0.01,
+        zone="Europe/Paris",
+        file_problems=[],
+    )
+    assert "vendredi après la fermeture : 1" in text
+    assert alerts == []

@@ -23,6 +23,8 @@ SPIKE_Z = 20.0
 # Spread jugé aberrant : plus de SPREAD_OUTLIER_FACTOR fois la médiane de son heure.
 SPREAD_OUTLIER_FACTOR = 10.0
 GAP_BUCKETS = ((1, 1), (2, 4), (5, 29), (30, 119), (120, None))
+# Alerte si plus de cette part des barres tombe hors des heures de cotation configurées.
+OFF_HOURS_ALERT_SHARE = 0.001
 _DAYS_FR = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 
 
@@ -280,11 +282,15 @@ def render_report(
     point: float,
     zone: str,
     file_problems: list[str],
+    notes: list[str] | None = None,
 ) -> tuple[str, list[str]]:
     """Rapport markdown complet et liste des alertes (lignes courtes pour la console)."""
     alerts: list[str] = list(file_problems)
     lines = ["# Contrôle qualité des données", ""]
     lines += [f"Heures affichées en {zone} sauf mention contraire. Spreads en points (1 point = {point:g}).", ""]
+    lines += [f"- {note}" for note in notes or []]
+    if notes:
+        lines.append("")
 
     lines += ["## Fichiers", ""]
     lines += [f"- PROBLÈME : {p}" for p in file_problems] or ["- Tous les fichiers correspondent au manifeste."]
@@ -313,7 +319,9 @@ def render_report(
     outside = off_hours(server, schedule)
     lines += ["", "## Barres hors heures de cotation (heure serveur)", ""]
     lines += [f"- {label} : {_fmt_int(count)}" for label, count in outside.items()]
-    if sum(outside.values()):
+    # Quelques minutes d'écart sur des horaires passés sont normales ; une règle d'heure fausse
+    # déplacerait des heures entières de barres.
+    if sum(outside.values()) > OFF_HOURS_ALERT_SHARE * len(bars):
         alerts.append(f"barres : {sum(outside.values())} hors heures de cotation (horaires ou règle d'heure à revoir)")
 
     expected, gaps = find_gaps(server, schedule)

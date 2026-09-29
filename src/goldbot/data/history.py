@@ -382,6 +382,27 @@ def load_bars(folder: Path, symbol: str, *, deduplicate: bool = True) -> pd.Data
     return bars.reset_index(drop=True)
 
 
+# Un jour de cotation complet compte environ 1 380 barres M1 : en dessous de ce seuil, ce n'est pas du M1.
+DENSE_DAY_BARS = 1000
+
+
+def minute_history_start(bars: pd.DataFrame, *, run_days: int = 5) -> int | None:
+    """Epoch serveur (s) du premier jour d'une série de run_days jours denses (vrai historique M1).
+
+    Avant, certains brokers ne gardent qu'environ une barre par jour (données journalières) :
+    inutilisable pour une stratégie à la minute.
+    """
+    days = bars["time_server"].to_numpy() // 86_400
+    counts = pd.Series(1, index=days).groupby(level=0).size()
+    dense = (counts >= DENSE_DAY_BARS).astype(int)
+    streak = dense.rolling(run_days).sum()
+    hits = streak.index[streak.to_numpy() >= run_days]
+    if len(hits) == 0:
+        return None
+    first = counts.index.get_loc(hits[0]) - run_days + 1
+    return int(counts.index[first]) * 86_400
+
+
 def exported_symbols(folder: Path) -> list[str]:
     """Symboles présents dans un dossier d'export (préfixe des fichiers *_M1_*.parquet)."""
     return sorted({path.name.rsplit("_M1_", 1)[0] for path in Path(folder).glob("*_M1_*.parquet")})
