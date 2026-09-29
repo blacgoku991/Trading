@@ -87,7 +87,10 @@ case "${1:-}" in
     mt5)
         ecran
         exe="$(terminal_exe)"
-        [ -n "$exe" ] || { say "terminal64.exe introuvable dans $WINEPREFIX : relance install_ubuntu.sh"; exit 4; }
+        if [ -z "$exe" ]; then
+            say "MT5 n'est pas installé dans $WINEPREFIX. Installe-le en le voyant : bash $REPO/scripts/linux/goldbot.sh installer-mt5"
+            exit 4
+        fi
         pgrep -f "terminal64.exe" >/dev/null || (cd "$(dirname "$exe")" && setsid nohup wine "$exe" >"$GB_HOME/mt5.log" 2>&1 &)
         say "terminal MT5 lancé sur l'écran virtuel $DISPLAY."
         say "Pour le voir : sur ton PC, ssh -L 5900:localhost:5900 $(id -un)@<IP du VPS>, puis un visualiseur VNC sur localhost:5900."
