@@ -15,7 +15,7 @@ Depuis PowerShell, dans ton dépôt existant :
 
 ```powershell
 cd "$HOME\Trading"
-git fetch origin
+git fetch origin codex/gold-demo-learning:refs/remotes/origin/codex/gold-demo-learning
 git switch codex/gold-demo-learning
 .\.venv\Scripts\python.exe -m pip install -e ".[dev,ml]"
 .\.venv\Scripts\python.exe scripts\run_learning_demo.py --minutes 20

@@ -37,7 +37,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # Tests unitaires.
-dev = ["pytest>=9.1,<10"]
+# Les tests du filtre statistique entraînent un modèle sur des données synthétiques.
+dev = ["pytest>=9.1,<10", "scikit-learn>=1.5,<2"]
 # Entraînement statistique hors ligne ; aucune dépendance ML dans la boucle MT5.
 ml = ["scikit-learn>=1.5,<2"]
 
