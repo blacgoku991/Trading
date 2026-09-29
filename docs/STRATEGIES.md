@@ -730,6 +730,11 @@ Plus de trades gagnants, mais des gains plus petits face au même spread : perte
 avec le minimum de 15 pips (compromis avec la demande précédente : « le spread fait passer en négatif »). Rejeu 4
 semaines : 26 trades, 35 % de gagnants, +15,0 / −13,2 pips en moyenne, PF 0,61, −290 €, arrêt le 03/09 (4e jour).
 
+**Retour à la v1** (demande de l'utilisateur après ses essais démo : « remets la version d'avant, elle fait plus de
+bénéfice ») : reprise, objectif fixe de 40 pips, lot 0,4 / 0,3 — la moins perdante des trois sur 7 ans de M1 (PF 0,88
+contre 0,88 pour « suivre » et 0,80 pour l'objectif au-delà des bougies). Mêmes règles que `d5d542ff` (rejeu
+identique : 43 trades, PF 0,74) ; l'empreinte devient `f8489472` car la configuration a gagné des champs depuis.
+
 
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 

@@ -558,7 +558,8 @@ _V1_EXITS = [
     ("  risk_per_trade_pct: 1.0\n", "  risk_per_trade_pct: 0.1\n"),
     ("  lot_choices: [0.4, 0.3]\n", ""),
     ("résultat (PF 0,90 contre 0,91).\n    enabled: false\n", "résultat (PF 0,90 contre 0,91).\n    enabled: true\n"),
-    ("avec 40 pips fixes (dernière année).\n    enabled: true\n", "avec 40 pips fixes (dernière année).\n    enabled: false\n"),
+    ("la moins perdante des trois sur 7 ans de M1 (PF 0,88).\n    enabled: true\n",
+     "la moins perdante des trois sur 7 ans de M1 (PF 0,88).\n    enabled: false\n"),
     ("à la demande de l'utilisateur.\n    enabled: false\n", "à la demande de l'utilisateur.\n    enabled: true\n"),
 ]
 

@@ -411,7 +411,8 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   Puis « suivre les bougies » (acheter sur une série haussière, changer quand ça se retourne) : deux bougies v2,
   mode « suivre » ; les 4 règles (reprise, retournement, série, suivre) se valent sur 7 ans de M1 (PF 0,88 la
   dernière année, toutes perdantes). Puis « le TP au-dessus de la bougie précédente » : v3, objectif juste au-delà
-  des deux dernières bougies, 15 à 40 pips (plus de gagnants, mais PF 0,80 contre 0,88 : annoncé).
+  des deux dernières bougies, 15 à 40 pips (plus de gagnants, mais PF 0,80 contre 0,88 : annoncé). Puis « remets la
+  version d'avant, elle fait plus de bénéfice » : retour à deux bougies v1 (reprise, 40 pips fixes, lot 0,4 / 0,3).
 
 ---
 

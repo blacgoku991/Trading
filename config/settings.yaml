@@ -177,11 +177,12 @@ scalping:
     # v3 (demande : « le TP au-dessus de la bougie précédente, pour pas que ce soit trop loin ») : objectif juste
     # au-delà des deux dernières bougies (leur plus haut pour un achat), entre 15 et 40 pips. 7 ans de M1 : plus de
     # trades gagnants (51 % contre 36 %) mais plus petits : PF 0,80 contre 0,88 avec 40 pips fixes (dernière année).
+    # Retour à la v1 (29/09, nuit, demande : « remets la version d'avant, elle fait plus de bénéfice ») : reprise,
+    # objectif fixe 40 pips, lot 0,4 / 0,3 ; la moins perdante des trois sur 7 ans de M1 (PF 0,88).
     enabled: true
-    version: 3
-    mode: suivre
-    target_mode: bougie
-    min_target_pips: 15
+    version: 1
+    mode: reprise
+    target_mode: fixe
     minutes: 1
     min_stop_pips: 10
     target_pips: [40]
