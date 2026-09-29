@@ -48,9 +48,14 @@ ecran() {
         for _ in $(seq 1 50); do [ -S "/tmp/.X11-unix/X$number" ] && break; sleep 0.2; done
         [ -S "/tmp/.X11-unix/X$number" ] || { say "écran virtuel $DISPLAY impossible à démarrer ($GB_HOME/xvfb.log)"; exit 2; }
     fi
-    pgrep -u "$(id -u)" -x openbox >/dev/null || setsid nohup openbox >"$GB_HOME/openbox.log" 2>&1 &
-    pgrep -u "$(id -u)" -f "x11vnc -display $DISPLAY" >/dev/null ||
-        setsid nohup x11vnc -display "$DISPLAY" -localhost -forever -shared -nopw -quiet >"$GB_HOME/x11vnc.log" 2>&1 &
+    # Lancés seuls en arrière-plan (pas de sous-shell qui resterait attaché au terminal SSH ou au journal).
+    if ! pgrep -u "$(id -u)" -x openbox >/dev/null; then
+        setsid nohup openbox </dev/null >"$GB_HOME/openbox.log" 2>&1 &
+    fi
+    if ! pgrep -u "$(id -u)" -f "x11vnc -display $DISPLAY" >/dev/null; then
+        setsid nohup x11vnc -display "$DISPLAY" -localhost -forever -shared -nopw -quiet </dev/null \
+            >"$GB_HOME/x11vnc.log" 2>&1 &
+    fi
 }
 
 python_win() {
