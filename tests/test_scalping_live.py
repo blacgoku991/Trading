@@ -124,7 +124,7 @@ def test_breakout_opens_a_demo_trade_with_its_server_stop_then_closes_at_max_dur
     assert position.magic == MAGIC and position.sl > 0 and position.tp > position.price_open
     (sent,) = _deals(broker)
     assert sent["sl"] == pytest.approx(3999.87) and sent["comment"] == f"SC-B-{BASE_MS + 10_000}-L#1"
-    assert any("signal ACHAT [cassure v1 + apprentissage v1 · " in line for line in lines)
+    assert any("signal ACHAT [cassure v1 + apprentissage v1 + cadence v1 · " in line for line in lines)
     assert any("entrée démo [cassure v1" in line for line in lines)
     # 121 s plus tard : sortie forcée à la durée maximale, même si la position perd.
     clock.advance(121)
@@ -346,7 +346,8 @@ def test_pullback_signal_is_traded_live(world):
     (sent,) = [r for r in _deals(broker) if r["comment"].startswith("SC-P-")]
     assert sent["sl"] == pytest.approx(4001.30 - 0.08 - 0.05)
     assert any(
-        "signal ACHAT [impulsion-repli v1 + apprentissage v1 · " in line and "repli de 46 %" in line for line in lines
+        "signal ACHAT [impulsion-repli v1 + apprentissage v1 + cadence v1 · " in line and "repli de 46 %" in line
+        for line in lines
     )
     assert {live.store.signal(r["comment"].split("#")[0])["strategy"] for r in _deals(broker)} == {BREAKOUT, PULLBACK}
 
@@ -391,8 +392,8 @@ def test_two_separate_reports(world):
     assert "Bilan 1 : exécutions démo" in demo and "simulation avec glissement supplémentaire" in simulation
     for block in (demo, simulation):
         assert (
-            "[cassure v1 + apprentissage v1 · " in block
-            and "[impulsion-repli v1 + apprentissage v1 · " in block
+            "[cassure v1 + apprentissage v1 + cadence v1 · " in block
+            and "[impulsion-repli v1 + apprentissage v1 + cadence v1 · " in block
             and "[total]" in block
         )
         for text in ("gains réalisés", "pertes réalisées", "dont frais", "résultat total", "durée", "sorties"):
@@ -521,7 +522,8 @@ def test_launch_registers_the_strategy_versions_and_shows_them(tmp_path, env_fil
     broker, clock, *_ = world
     code, output = _launch(tmp_path, env_file, broker, clock)
     assert (
-        code == EXIT_OK and "Stratégies (version · empreinte des réglages) : cassure v1 + apprentissage v1 · " in output
+        code == EXIT_OK
+        and "Stratégies (version · empreinte des réglages) : cassure v1 + apprentissage v1 + cadence v1 · " in output
     )
     assert "5 entrées par minute au plus" in output
     for secret in SECRETS:
@@ -601,3 +603,21 @@ def test_ctrl_c_closes_the_experiment_positions_then_prints_the_reports(tmp_path
     (trade,) = _deals(broker)
     tag, part = trade["comment"].split("#")
     assert store.order(tag, int(part))["exit_reason"] == "arrêt du bot"
+
+
+def test_cadence_is_rebuilt_from_the_closed_trades_after_a_restart(world, tmp_path):
+    broker, clock, quote, runner, lines = world
+    store = ScalpStore(tmp_path / "scalp.sqlite")
+    for k in range(30):  # 30 trades simulés fermés, tous gagnants
+        tag = f"SC-B-{k}-L"
+        store.record_sim(tag, "B", k * 1000, 1, 4000.0, 3999.0, 4001.2, 0.05, False)
+        store.close_sim(tag, 4001.2, "objectif", 6.0, 0.0, k * 1000 + 500)
+    live = runner(local_only=True, store=store)
+    assert live.policy.cadence.level == 1 and live._cadence_fed == 30
+    assert "cadence palier 1 : 10 entrées/min, 10 positions, risque ouvert 1 %" in live.status_line()
+    tag = "SC-B-99-L"  # une grosse perte : retour immédiat à la base, annoncé
+    store.record_sim(tag, "B", 99_000, 1, 4000.0, 3999.0, 4001.2, 0.05, False)
+    store.close_sim(tag, 3990.0, "stop", -500.0, 0.0, 99_500)
+    live._update_cadence(live.server_now_ms())  # appelé après chaque trade fermé
+    assert live.policy.cadence.level == 0
+    assert any("cadence : retour à la base" in line for line in lines)

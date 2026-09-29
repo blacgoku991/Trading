@@ -8,6 +8,10 @@ Trois cas à ne pas confondre :
   ils comptent pour une seule entrée ;
 - doublon accidentel : le même signal (même identifiant) ou la même occasion (même clé) rencontré une
   deuxième fois. Jamais de deuxième ordre : il est compté, pas envoyé.
+
+Cadence liée au bénéfice (Cadence) : les limites de positions, de risque cumulé et d'entrées par minute sont
+relevées par paliers tant que les derniers trades fermés sont en bénéfice net, et reviennent à la base dès qu'ils
+sont en perte. Le risque de chaque trade ne change jamais.
 """
 
 from __future__ import annotations
@@ -28,10 +32,98 @@ class Exposure:
     risk: float  # perte au stop, dans la devise du compte (tous ses ordres)
 
 
-class EntryPolicy:
+@dataclass(frozen=True)
+class Limits:
+    entries_per_minute: int
+    seconds_between_entries: float
+    open_positions: int
+    total_risk_pct: float
+
+
+class Cadence:
+    """Cadence liée au bénéfice (demande de l'utilisateur : « plus de trades tant qu'il génère du bénéfice »).
+
+    Après chaque trade fermé, résultat net frais compris : si les `window_trades` derniers trades sont en bénéfice
+    net et qu'au moins `window_trades` trades ont fermé depuis le dernier changement, la cadence monte d'un palier
+    (limites de base x multipliers[k]) ; dès qu'ils sont en perte nette, retour immédiat à la base. Monter
+    lentement, redescendre vite. Plafonds absolus : entrées par minute et risque ouvert (au plus la perte
+    journalière maximale). Le risque par trade ne change pas : ce n'est ni une martingale ni une logique de
+    récupération (CLAUDE.md règle 4), l'activité augmente après des gains, jamais après des pertes.
+    Même code dans le rejeu et le bot démo ; l'état se reconstruit à partir des trades fermés (rejouables).
+    """
+
     def __init__(self, config: ScalpingConfig) -> None:
         self.cfg = config
+        self.results: deque[float] = deque(maxlen=config.cadence.window_trades)
+        self.level = 0
+        self.since_change = 0
+
+    @property
+    def enabled(self) -> bool:
+        return self.cfg.cadence.enabled
+
+    def limits(self) -> Limits:
+        cfg, cadence = self.cfg, self.cfg.cadence
+        factor = cadence.multipliers[self.level] if self.enabled else 1.0
+        return Limits(
+            entries_per_minute=min(int(cfg.max_entries_per_minute * factor), cadence.ceiling_entries_per_minute),
+            seconds_between_entries=cfg.min_seconds_between_entries / factor,
+            open_positions=int(cfg.max_open_positions * factor),
+            total_risk_pct=min(cfg.max_total_risk_pct * factor, cadence.ceiling_total_risk_pct),
+        )
+
+    def recent_result(self) -> float:
+        return sum(self.results)
+
+    def on_close(self, pnl: float) -> str | None:
+        """Enregistre un trade fermé (résultat net) ; renvoie un message si le palier change."""
+        self.results.append(pnl)
+        self.since_change += 1
+        if not self.enabled or len(self.results) < self.results.maxlen:
+            return None
+        total, window = self.recent_result(), self.results.maxlen
+        if total <= 0 and self.level > 0:
+            self.level, self.since_change = 0, 0
+            return f"cadence : retour à la base, les {window} derniers trades perdent ({total:+.2f})"
+        top = len(self.cfg.cadence.multipliers) - 1
+        if total > 0 and self.level < top and self.since_change >= window:
+            self.level, self.since_change = self.level + 1, 0
+            return f"cadence : palier {self.level} (x{self.cfg.cadence.multipliers[self.level]:g}), les {window} " \
+                   f"derniers trades gagnent ({total:+.2f})"  # fmt: skip
+        return None
+
+    def rebuild(self, results: list[float]) -> None:
+        """Reconstruit l'état à partir des résultats des trades fermés, dans l'ordre (reprise après redémarrage)."""
+        self.results.clear()
+        self.level, self.since_change = 0, 0
+        for pnl in results:
+            self.on_close(pnl)
+
+    def describe(self) -> str:
+        limits = self.limits()
+        state = f"palier {self.level}" if self.enabled else "désactivée"
+        recent = f"{len(self.results)} derniers trades {self.recent_result():+.2f}" if self.results else "aucun trade"
+        return (
+            f"cadence {state} : {limits.entries_per_minute} entrées/min, {limits.open_positions} positions, "
+            f"risque ouvert {limits.total_risk_pct:g} % ({recent})"
+        )
+
+
+class EntryPolicy:
+    def __init__(self, config: ScalpingConfig) -> None:
+        self.cadence = Cadence(config)
         self.entries: deque[int] = deque()  # heures (ms) des entrées acceptées, 60 dernières secondes
+        self.paused_until: dict[int, int] = {}  # sens -> fin de la pause (stop touché trop vite, pertes d'affilée)
+        self.pause_reason: dict[int, str] = {}
+        self.streak: dict[int, int] = {}  # sens -> pertes d'affilée
+
+    @property
+    def cfg(self) -> ScalpingConfig:
+        return self.cadence.cfg
+
+    @cfg.setter
+    def cfg(self, config: ScalpingConfig) -> None:
+        self.cadence.cfg = config  # une seule config pour les limites de base et la cadence
 
     def refusal(
         self,
@@ -43,27 +135,56 @@ class EntryPolicy:
         day_result: float,
         day_start_equity: float,
         open_trades: list[Exposure],
+        side: int | None = None,
     ) -> str | None:
         """Motif du refus, ou None si l'entrée est permise."""
         cfg = self.cfg
+        limits = self.cadence.limits()
         if day_result <= -cfg.daily_loss_pct / 100 * day_start_equity:
             return f"perte du jour atteinte : {day_result:+.2f}, limite -{cfg.daily_loss_pct:g} %"
         if any(trade.key == key for trade in open_trades):
             return "même occasion déjà en position : doublon évité"
-        if len(open_trades) >= cfg.max_open_positions:
-            return f"positions ouvertes au maximum : {cfg.max_open_positions}"
-        if sum(trade.risk for trade in open_trades) + risk > cfg.max_total_risk_pct / 100 * equity:
-            return f"risque cumulé au maximum : {cfg.max_total_risk_pct:g} % de l'equity"
+        if len(open_trades) >= limits.open_positions:
+            return f"positions ouvertes au maximum : {limits.open_positions}"
+        if side is not None and cfg.max_same_side_positions is not None:
+            same = sum(1 for trade in open_trades if trade.side == side)
+            if same >= cfg.max_same_side_positions:
+                return f"trades ouverts dans ce sens au maximum : {cfg.max_same_side_positions}"
+        if side is not None and now_ms < self.paused_until.get(side, -1):
+            left = (self.paused_until[side] - now_ms) / 1000
+            return f"pause dans ce sens ({self.pause_reason[side]}) : encore {left:.0f} s"
+        if sum(trade.risk for trade in open_trades) + risk > limits.total_risk_pct / 100 * equity:
+            return f"risque cumulé au maximum : {limits.total_risk_pct:g} % de l'equity"
         while self.entries and self.entries[0] <= now_ms - 60_000:
             self.entries.popleft()
-        if len(self.entries) >= cfg.max_entries_per_minute:
-            return f"entrées par minute au maximum : {cfg.max_entries_per_minute} sur 60 s"
-        if self.entries and now_ms - self.entries[-1] < cfg.min_seconds_between_entries * 1000:
-            return f"délai entre deux entrées : moins de {cfg.min_seconds_between_entries:g} s"
+        if len(self.entries) >= limits.entries_per_minute:
+            return f"entrées par minute au maximum : {limits.entries_per_minute} sur 60 s"
+        if self.entries and now_ms - self.entries[-1] < limits.seconds_between_entries * 1000:
+            return f"délai entre deux entrées : moins de {limits.seconds_between_entries:g} s"
         return None
 
     def accept(self, now_ms: int) -> None:
         self.entries.append(now_ms)
+
+    def on_exit(self, side: int, reason: str, open_ms: int, exit_ms: int, pnl: float) -> None:
+        """Après chaque trade fermé : pauses dans un sens qui se trompe (si réglées).
+
+        - stop touché très vite : l'entrée était prise dans le bruit ;
+        - loss_streak pertes d'affilée dans ce sens : le marché ne va pas dans ce sens en ce moment.
+        """
+        cfg = self.cfg
+        self.streak[side] = self.streak.get(side, 0) + 1 if pnl < 0 else 0
+        if reason == "stop" and cfg.quick_stop_pause_s > 0 and exit_ms - open_ms < cfg.quick_stop_s * 1000:
+            self._pause(side, exit_ms + int(cfg.quick_stop_pause_s * 1000),
+                        f"stop touché en moins de {cfg.quick_stop_s:g} s")  # fmt: skip
+        if cfg.loss_streak_pause_s > 0 and self.streak[side] >= cfg.loss_streak:
+            self._pause(side, exit_ms + int(cfg.loss_streak_pause_s * 1000), f"{self.streak[side]} pertes d'affilée")
+            self.streak[side] = 0
+
+    def _pause(self, side: int, until_ms: int, why: str) -> None:
+        if until_ms > self.paused_until.get(side, 0):
+            self.paused_until[side] = until_ms
+            self.pause_reason[side] = why
 
 
 def split_volume(volume: float, volume_max: float, volume_step: float) -> list[float]:

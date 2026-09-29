@@ -291,8 +291,12 @@ toutes perdent (« refus : apprentissage : toutes les variantes perdent en ce mo
 avec les règles de départ, le temps de juger chaque variante sur 20 trades simulés. Rejoué sur 4 semaines : perd
 moins que sans apprentissage, mais perd (`docs/STRATEGIES.md`).
 
-Plusieurs entrées par minute : jusqu'à 5 nouvelles entrées sur 60 s glissantes quand des occasions **distinctes**
-apparaissent (au plus une par bougie de 5 s), 5 trades ouverts et 0,5 % de risque cumulé au plus. Le bot distingue :
+Plusieurs entrées par minute : de base, jusqu'à 5 nouvelles entrées sur 60 s glissantes quand des occasions
+**distinctes** apparaissent (au plus une par bougie de 5 s), 5 trades ouverts et 0,5 % de risque cumulé au plus.
+**Cadence liée au bénéfice** (« + cadence v1 ») : si les 30 derniers trades fermés sont en bénéfice net, frais
+compris, ces limites doublent (puis x4, x6), jusqu'à 30 entrées par minute et 1 % de risque ouvert au plus ; dès
+qu'ils sont en perte nette, retour à la base. Le bot l'annonce (« cadence : palier 1 (x2)… ») et l'affiche dans la
+ligne « en marche » et les bilans. Le risque de chaque trade ne change jamais. Le bot distingue :
 - un **nouveau signal** : une occasion différente (autre niveau cassé, autre impulsion) ; la même occasion n'est
   jamais prise deux fois tant que son trade est ouvert ;
 - un **fractionnement** : un trade trop gros pour un seul ordre part en plusieurs ordres `#1`, `#2`… qui partagent

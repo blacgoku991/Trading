@@ -148,8 +148,8 @@ scalping:
   risk_per_trade_pct: 0.1       # 5 € par trade sur 5 000 €
   max_open_positions: 5         # trades ouverts en même temps (démo et simulés)
   max_total_risk_pct: 0.5       # risque cumulé des trades ouverts
-  max_entries_per_minute: 5     # nouvelles entrées sur 60 s glissantes (5 au plus, autorisation de l'utilisateur)
-  min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s
+  max_entries_per_minute: 5     # nouvelles entrées sur 60 s glissantes (base ; la cadence peut les relever)
+  min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s (base)
   daily_loss_pct: 1.0           # plus d'entrée pour la journée au-delà de -1 % (démo, latent compris)
   min_free_margin_pct: 50       # marge libre après l'ordre >= 50 % de l'equity, sinon refus
   experiment_days: 10           # durée annoncée de la collecte (jours de cotation)
@@ -192,6 +192,18 @@ scalping:
     always_trade: false
     stop_mults: [1.0, 1.5, 2.0]
     target_ratios: [0.8, 1.2, 2.0]
+  cadence:
+    # « plus de trades par minute, sans limite, tant qu'il génère du bénéfice » (demande du 29/09/2026).
+    # Après chaque trade fermé : si les 30 derniers trades sont en bénéfice net (frais compris), les limites de
+    # base (entrées par minute, positions, risque cumulé) sont multipliées par le palier suivant (x2, x4, x6), au plus
+    # un palier par série de 30 trades ; dès qu'ils sont en perte nette, retour immédiat à la base.
+    # Le risque par trade (0,1 %) ne change jamais. Plafonds absolus ci-dessous.
+    enabled: true
+    version: 1
+    window_trades: 30
+    multipliers: [1, 2, 4, 6]
+    ceiling_entries_per_minute: 30  # 1 toutes les 2 s en moyenne : limite des requêtes serveur, pas de HFT chez Axi
+    ceiling_total_risk_pct: 1.0     # risque ouvert jamais au-delà de la perte journalière maximale (daily_loss_pct)
 
 logging:
   level: INFO

@@ -358,6 +358,49 @@ Le total dépend surtout de la limite journalière (environ −1 % par jour sur 
 donc trade plus longtemps avant d'atteindre la limite. Aucune journée n'est positive quand les deux tournent
 ensemble.
 
+### Cadence liée au bénéfice (« + cadence v1 », demande du 29/09/2026)
+
+Demande de l'utilisateur : « augmente le nombre de trades par minute, pas de limite tant qu'il arrive à générer du
+bénéfice, juste qu'il prenne intelligemment ».
+
+**D'abord, la limite par minute freine-t-elle le bot ?** Rejeu des 4 semaines (les deux stratégies ensemble,
+prix exécutables, compte de 5 000 €, 0,1 % par trade, limite de −1 % par jour) :
+
+| Limites | v2 + apprentissage | v1 sans apprentissage |
+|---|---|---|
+| actuelles : 5 entrées/min, 5 positions, 0,5 % de risque ouvert | 3 363 trades, PF 0,81, −958 € | 1 043 trades, PF 0,55, −989 € |
+| 10/min, 10 positions, 1 % | 3 467 trades, PF 0,81, −957 € | 948 trades, PF 0,51, −993 € |
+| 30/min, 20 positions, 2 % | 3 467 trades, PF 0,81, −957 € | 948 trades, PF 0,51, −993 € |
+| sans limite (1 000/min, 1 000 positions) | 3 467 trades, PF 0,81, −957 € | 948 trades, PF 0,51, −993 € |
+
+Non : environ 160 trades par jour sont déjà pris, et ce qui retient le bot, ce sont les signaux eux-mêmes et
+l'apprentissage, qui refuse 13 905 signaux quand toutes les variantes perdent. Lever toutes les limites n'ajoute
+que 3 % de trades, sans rien changer au résultat. Supprimer aussi la perte maximale du jour **double la perte**
+(6 457 trades, −1 757 €) : cette limite protège le compte.
+
+**Règle ajoutée** (`policy.py`, classe `Cadence`, même code dans le rejeu et le bot démo) : après chaque trade
+fermé, si les 30 derniers trades sont en bénéfice net (frais compris), les limites de base (entrées par minute,
+délai entre entrées, positions, risque ouvert) passent au palier suivant, x2 puis x4 puis x6, au plus un palier par
+série de 30 trades. Dès que les 30 derniers trades sont en perte nette, retour immédiat à la base. Plafonds
+absolus : 30 entrées par minute (limite des requêtes au serveur ; Axi n'accepte pas le HFT) et un risque ouvert
+jamais au-delà de la perte maximale du jour (1 %). Le risque de chaque trade (0,1 %) ne change jamais : l'activité
+augmente après des gains, jamais après des pertes. Ce n'est donc pas une logique de récupération (règle 4).
+Au pire, une journée perd environ −2 % : −1 % atteint, plus 1 % de risque encore ouvert.
+
+Rejeu avec cette règle :
+
+| Réglage | Trades | Résultat | Trades par palier (résultat moyen) |
+|---|---|---|---|
+| fenêtre de 30 trades (retenu) | 3 365 | PF 0,81, −957 € | base 2 755 (−0,34 €), x2 566 (−0,19 €), x4 44 (−0,98 €) |
+| fenêtre de 10 trades | 3 391 | PF 0,81, −955 € | base 2 441, x2 702, x4 179, x6 69 |
+| fenêtre de 30, sans perte maximale du jour | 6 457 | PF 0,80, −1 757 € | base 5 121, x2 1 110, x4 156, x6 70 |
+
+Lecture : la cadence monte après des séries gagnantes, mais les trades pris aux paliers supérieurs perdent aussi
+en moyenne. Le résultat est inchangé (−957 € contre −958 €). La règle fait ce qui est demandé (plus de trades
+seulement tant que les derniers rapportent), mais **elle ne crée pas d'avantage** : une série de 30 trades
+gagnante sur ces stratégies relève surtout du hasard. Elle est mise en démo à la demande de l'utilisateur, sans
+être présentée comme rentable.
+
 ### Historique des réglages
 
 - 29/09/2026 matin (cassure seule, avant versionnage) : 3 positions, 0,3 % de risque cumulé, 10 s entre deux
@@ -366,3 +409,5 @@ ensemble.
   0,78 et −3 042 € sans limite journalière).
 - 29/09/2026 après-midi : versions `cassure v1` et `impulsion-repli v1`, règles communes ci-dessus (jusqu'à
   5 entrées par minute, autorisation de l'utilisateur).
+- 29/09/2026 soir : « + apprentissage v1 » (variantes apprises à chaque trade).
+- 29/09/2026 fin de journée : « + cadence v1 » (cadence liée au bénéfice, plafond de 30 entrées par minute).

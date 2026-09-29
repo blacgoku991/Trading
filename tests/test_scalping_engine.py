@@ -21,7 +21,7 @@ from goldbot.scalping.engine import (
     make_detectors,
     plan_trade,
 )
-from goldbot.scalping.policy import EntryPolicy, Exposure, reason_key, split_volume
+from goldbot.scalping.policy import Cadence, EntryPolicy, Exposure, Limits, reason_key, split_volume
 from tests.conftest import CONFIG_PATH, server_epoch_of
 
 SETTINGS = load_settings(CONFIG_PATH)
@@ -418,3 +418,153 @@ def test_backtest_refuses_an_entry_when_the_market_closes_before_the_max_duratio
     result = _replay(_breakout_history, server_epoch_of("2026-01-06 23:57") * 1000 + 30_000, (BREAKOUT,))
     assert result.signals == {BREAKOUT: 1} and result.trades.empty  # pause quotidienne à 23:59
     assert result.refusals == {(BREAKOUT, "le marché ferme avant la durée max"): 1}
+
+
+# --- cadence liée au bénéfice -------------------------------------------------------------------------------
+
+
+def _cadence(**changes):
+    return Cadence(CONFIG.model_copy(update={"cadence": CONFIG.cadence.model_copy(update=changes)}))
+
+
+def test_cadence_starts_at_the_base_limits():
+    cadence = _cadence()
+    assert cadence.limits() == Limits(5, 5.0, 5, 0.5)
+    off = _cadence(enabled=False)
+    for _ in range(100):
+        off.on_close(1.0)
+    assert off.level == 0 and off.limits() == Limits(5, 5.0, 5, 0.5)
+
+
+def test_cadence_climbs_one_level_per_winning_window_within_the_ceilings():
+    cadence = _cadence(window_trades=10)
+    messages = [cadence.on_close(1.0) for _ in range(10)]
+    assert cadence.level == 1 and messages[-1].startswith("cadence : palier 1 (x2)")
+    assert cadence.limits() == Limits(10, 2.5, 10, 1.0)  # risque ouvert plafonné à la perte journalière (1 %)
+    for _ in range(9):
+        cadence.on_close(1.0)
+    assert cadence.level == 1  # au plus un palier par série de 10 trades
+    cadence.on_close(1.0)
+    assert cadence.level == 2 and cadence.limits() == Limits(20, 1.25, 20, 1.0)
+    for _ in range(20):
+        cadence.on_close(1.0)
+    assert cadence.level == 3 and cadence.limits() == Limits(30, 5.0 / 6, 30, 1.0)  # plafond de 30 entrées/min
+    for _ in range(30):
+        cadence.on_close(1.0)
+    assert cadence.level == 3  # dernier palier
+
+
+def test_cadence_falls_back_to_the_base_as_soon_as_the_recent_trades_lose():
+    cadence = _cadence(window_trades=10)
+    for _ in range(20):
+        cadence.on_close(1.0)
+    assert cadence.level == 2
+    message = None
+    for pnl in [-3.0, -3.0, -3.0, -3.0]:  # 10 derniers : six gains de 1, quatre pertes de 3 -> -6
+        message = cadence.on_close(pnl) or message
+    assert cadence.level == 0 and "retour à la base" in message
+    assert cadence.limits() == Limits(5, 5.0, 5, 0.5)
+
+
+def test_cadence_never_rises_after_losses_and_needs_a_full_window():
+    cadence = _cadence(window_trades=10)
+    for _ in range(9):
+        cadence.on_close(5.0)
+    assert cadence.level == 0  # pas encore 10 trades
+    for _ in range(50):
+        cadence.on_close(-1.0)
+    assert cadence.level == 0
+
+
+def test_cadence_state_is_rebuilt_from_the_closed_trades():
+    results = [1.0] * 25 + [-0.5] * 3
+    live = _cadence(window_trades=10)
+    for pnl in results:
+        live.on_close(pnl)
+    restarted = _cadence(window_trades=10)
+    restarted.rebuild(results)
+    assert (restarted.level, restarted.since_change, list(restarted.results)) == (
+        live.level,
+        live.since_change,
+        list(live.results),
+    )
+
+
+def test_policy_limits_follow_the_cadence():
+    policy = EntryPolicy(CONFIG)
+    five = [Exposure(f"t{k}", f"k{k}", LONG, 4.0) for k in range(5)]
+    assert reason_key(_policy_check(policy, 0, open_trades=five, risk=4.0)) == "positions ouvertes au maximum"
+    for _ in range(CONFIG.cadence.window_trades):
+        policy.cadence.on_close(2.0)
+    assert policy.cadence.level == 1
+    assert _policy_check(policy, 0, open_trades=five, risk=4.0) is None  # 6e position : 24 $ <= 1 % de 5 000
+    ten = [Exposure(f"t{k}", f"k{k}", LONG, 5.0) for k in range(10)]
+    assert reason_key(_policy_check(policy, 0, open_trades=ten[:9], risk=6.0)) == "risque cumulé au maximum"
+
+
+def test_cadence_config_is_checked():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="commence à 1"):
+        CONFIG.cadence.model_validate({**CONFIG.cadence.model_dump(), "multipliers": [2, 4]})
+    with pytest.raises(ValidationError, match="perte journalière"):
+        CONFIG.model_validate({**CONFIG.model_dump(), "cadence": {**CONFIG.cadence.model_dump(),
+                                                                  "ceiling_total_risk_pct": 2.0}})  # fmt: skip
+    with pytest.raises(ValidationError, match="plafond technique"):
+        CONFIG.model_validate({**CONFIG.model_dump(), "max_entries_per_minute": 31})
+
+
+# --- corrections tirées des trades démo -----------------------------------------------------------------------
+
+
+def _policy_with(**changes):
+    return EntryPolicy(CONFIG.model_copy(update=changes))
+
+
+def test_same_side_cap_counts_only_trades_in_that_direction():
+    policy = _policy_with(max_same_side_positions=2)
+    two_sells = [Exposure(f"s{k}", f"s{k}", SHORT, 4.0) for k in range(2)]
+    refusal = policy.refusal(0, key="new", risk=4.0, equity=5000.0, day_result=0.0, day_start_equity=5000.0,
+                             open_trades=two_sells, side=SHORT)  # fmt: skip
+    assert reason_key(refusal) == "trades ouverts dans ce sens au maximum"
+    assert policy.refusal(0, key="new", risk=4.0, equity=5000.0, day_result=0.0, day_start_equity=5000.0,
+                          open_trades=two_sells, side=LONG) is None  # fmt: skip
+
+
+def _check_side(policy, now_ms, side):
+    return policy.refusal(now_ms, key=f"k{now_ms}", risk=4.0, equity=5000.0, day_result=0.0,
+                          day_start_equity=5000.0, open_trades=[], side=side)  # fmt: skip
+
+
+def test_a_stop_hit_within_seconds_pauses_that_direction_only():
+    policy = _policy_with(quick_stop_s=20, quick_stop_pause_s=60)
+    policy.on_exit(SHORT, "stop", 100_000, 108_000, -4.5)  # stop touché en 8 s
+    assert "stop touché en moins de 20 s" in _check_side(policy, 150_000, SHORT)
+    assert _check_side(policy, 150_000, LONG) is None
+    assert _check_side(policy, 168_001, SHORT) is None  # 60 s après la sortie
+    policy.on_exit(SHORT, "stop", 200_000, 290_000, -4.5)  # stop après 90 s : pas une entrée dans le bruit
+    assert _check_side(policy, 291_000, SHORT) is None
+
+
+def test_a_loss_streak_in_one_direction_pauses_it():
+    policy = _policy_with(loss_streak=3, loss_streak_pause_s=900)
+    policy.on_exit(SHORT, "stop", 0, 60_000, -4.5)
+    policy.on_exit(SHORT, "objectif", 0, 70_000, 5.0)  # un gain remet le compteur à zéro
+    for k in range(2):
+        policy.on_exit(SHORT, "stop", 0, 80_000 + k, -4.5)
+    assert _check_side(policy, 90_000, SHORT) is None
+    policy.on_exit(LONG, "stop", 0, 90_000, -4.5)  # les achats ont leur propre compteur
+    assert _check_side(policy, 95_000, SHORT) is None
+    policy.on_exit(SHORT, "durée max", 0, 100_000, -0.4)  # 3e perte d'affilée dans ce sens
+    assert "3 pertes d'affilée" in _check_side(policy, 101_000, SHORT)
+    assert _check_side(policy, 101_000, LONG) is None
+    assert _check_side(policy, 1_000_001, SHORT) is None  # 15 min après
+
+
+def test_new_policy_options_are_off_by_default():
+    policy = EntryPolicy(CONFIG)
+    for k in range(10):
+        policy.on_exit(SHORT, "stop", k * 1000, k * 1000 + 2_000, -4.5)
+    sells = [Exposure(f"s{k}", f"s{k}", SHORT, 4.0) for k in range(4)]
+    assert policy.refusal(20_000, key="n", risk=4.0, equity=5000.0, day_result=0.0, day_start_equity=5000.0,
+                          open_trades=sells, side=SHORT) is None  # fmt: skip

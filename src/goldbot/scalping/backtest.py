@@ -4,7 +4,8 @@ Mêmes briques que le bot en direct (engine.py, policy.py), rejouées tick par t
 premier tick après la bougie de signal, à l'ask ou au bid, plus le glissement choisi. Mêmes refus qu'en
 direct : signal périmé, marché qui ferme avant la durée maximale, plan (stop, coût), lot minimal
 au-dessus du budget, perte du jour, même occasion déjà en position, positions et risque cumulé au
-maximum, entrées par minute, délai entre entrées.
+maximum, entrées par minute, délai entre entrées ; cadence liée au bénéfice (policy.Cadence), mise à jour à
+chaque trade fermé comme en direct.
 """
 
 from __future__ import annotations
@@ -117,6 +118,9 @@ def run_backtest(
             for trade, exposure, strategy, parts, variant in open_trades:
                 if trade.on_tick(now, bid, ask):
                     pnl = trade.move * trade.volume * instrument.contract_size
+                    level = policy.cadence.level  # palier au moment de la sortie (avant sa mise à jour)
+                    policy.cadence.on_close(pnl)
+                    policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
                     equity += pnl
                     day_pnl += pnl
                     low = min(low, equity)
@@ -139,6 +143,7 @@ def run_backtest(
                             "risk": exposure.risk,
                             "fees": trade.fee * trade.volume * instrument.contract_size,
                             "pnl": pnl,
+                            "palier": level,
                         }
                     )
                 else:
@@ -203,6 +208,7 @@ def run_backtest(
                     day_result=day_pnl,
                     day_start_equity=day_start_equity,
                     open_trades=[exposure for _, exposure, _, _, _ in open_trades],
+                    side=plan.side,
                 )
                 if reason is not None:
                     refusals[(code, reason_key(reason))] += 1

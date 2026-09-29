@@ -85,7 +85,8 @@ _DEAL_REASONS = {
 def strategy_label(code: str, config: ScalpingConfig, version: int, digest: str) -> str:
     """« cassure v1 + apprentissage v1 · 1a2b3c4d » : nom, versions et empreinte des réglages."""
     learning = f" + apprentissage v{config.learning.version}" if config.learning.enabled else ""
-    return f"{STRATEGY_NAMES[code]} v{version}{learning} · {digest}"
+    cadence = f" + cadence v{config.cadence.version}" if config.cadence.enabled else ""
+    return f"{STRATEGY_NAMES[code]} v{version}{learning}{cadence} · {digest}"
 
 
 def strategy_versions(config: ScalpingConfig) -> dict[str, tuple[int, str, dict[str, object]]]:
@@ -169,6 +170,10 @@ class ScalpRunner:
                     best = self.book.learner.best(key)
                     if best:
                         self._best_said[key] = best[0]
+        # Cadence liée au bénéfice : reconstruite à partir des trades fermés enregistrés (reprise après redémarrage).
+        self._cadence_fed = 0
+        self._cadence_dirty = False  # un trade vient de fermer : cadence à mettre à jour
+        self._update_cadence(None)
 
     # --- affichage ----------------------------------------------------------------------------
 
@@ -214,6 +219,32 @@ class ScalpRunner:
             self.store.set_meta(LEARNER, json.dumps(self.book.learner.to_dict()))
             self._learning_dirty = False
         self._manage_positions(now_ms)
+        if self._cadence_dirty:
+            self._update_cadence(now_ms)
+
+    def _trade_results(self) -> list[float]:
+        """Résultat net de chaque trade fermé de l'expérience, dans l'ordre de clôture (démo, ou simulés)."""
+        if self.local_only:
+            return [float(row["pnl"]) for row in self.store.closed_sims()]
+        pending = {order.tag for order in self.store.orders(OPEN, SENDING)}  # trade fractionné pas encore fini
+        totals: dict[str, float] = {}
+        last: dict[str, int] = {}
+        for row in self.store.closed_orders():
+            if row["tag"] in pending:
+                continue
+            totals[row["tag"]] = totals.get(row["tag"], 0.0) + float(row["real_pnl"])
+            last[row["tag"]] = int(row["closed_ms"])
+        return [totals[tag] for tag in sorted(totals, key=lambda tag: (last[tag], tag))]
+
+    def _update_cadence(self, now_ms: int | None) -> None:
+        """Donne à la cadence les trades fermés depuis le dernier passage ; annonce les changements de palier."""
+        results = self._trade_results()
+        for pnl in results[self._cadence_fed :]:
+            message = self.policy.cadence.on_close(pnl)
+            if message and now_ms is not None:
+                self.say(f"{self._clock(now_ms)} {message} -> {self.policy.cadence.describe()}")
+        self._cadence_fed = len(results)
+        self._cadence_dirty = False
 
     def _context_label(self, key: str) -> str:
         name = STRATEGY_NAMES.get(key[0], key[0])
@@ -379,6 +410,7 @@ class ScalpRunner:
             day_result=self._day_result(),
             day_start_equity=self.day_start_equity,
             open_trades=self._exposures(),
+            side=plan.side,
         )
         if reason is None and not self.local_only:
             reason = self._account_refusal(order_type, volume, plan.entry, account.equity, account.margin_free, now_ms)
@@ -439,6 +471,9 @@ class ScalpRunner:
                 fees = -self._to_account(trade.fee, trade.volume)
                 self.store.close_sim(tag, trade.exit_price, trade.reason, pnl, fees, time_ms)
                 del self.shadow[tag]
+                self._cadence_dirty = True
+                if not sent:  # --simulation : les trades simulés sont les trades de l'essai
+                    self.policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
                 if not sent:
                     self.say(f"{self._clock(time_ms)} sortie simulée {tag} [{self.labels.get(strategy, strategy)}] "
                              f"({trade.reason}) : {self._money(pnl)}")  # fmt: skip
@@ -654,6 +689,9 @@ class ScalpRunner:
         self.store.update_order(order.tag, order.part, status=CLOSED, exit_price=price, exit_reason=reason,
                                 exit_ms=exit_ms, open_ms=open_ms, est_pnl=estimate, profit=profit,
                                 commission=commission, swap=swap, fee=fee, real_pnl=real, closed_ms=now_ms)  # fmt: skip
+        self._cadence_dirty = True
+        if open_ms:
+            self.policy.on_exit(order.side, reason, open_ms, exit_ms, real)
         held = f" après {(exit_ms - open_ms) / 1000:.0f} s" if open_ms else ""
         self.say(
             f"{self._clock(now_ms)} sortie {order.label} [{self.labels.get(order.strategy, order.strategy)}] "
@@ -688,7 +726,8 @@ class ScalpRunner:
         return (
             f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | ATR M1 {self.atr:.2f} $ | "
             f"spread {tick.ask - tick.bid:.2f} $ | signaux : {counts.get(SENT, 0)} envoyés, "
-            f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} refusés | {self.running_total()}"
+            f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} refusés | {self.running_total()} | "
+            f"{self.policy.cadence.describe()}"
         )
 
     def _block(self, label: str, trades: dict[str, dict[str, float]], durations: list[float], reasons: Counter,
@@ -742,6 +781,7 @@ class ScalpRunner:
         )
         lines.append(f"  valeur du compte (equity, compte entier) : {account.equity:.2f} {self.currency} "
                      f"(départ {start:.2f})")  # fmt: skip
+        lines.append(f"  {self.policy.cadence.describe()}")
         lines.append(
             f"=== Bilan 2 : simulation avec glissement supplémentaire (+{self.cfg.extra_slippage_points:g} points), "
             "tous les signaux acceptés ==="

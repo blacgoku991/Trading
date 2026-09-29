@@ -100,9 +100,7 @@ class MarketHoursConfig(_Section):
     def _break_spans_midnight(self) -> MarketHoursConfig:
         # Modèle Axi : la pause quotidienne chevauche minuit (23:59 -> 01:01).
         if self.daily_break_start <= self.daily_break_end:
-            raise ValueError(
-                "la pause quotidienne doit chevaucher minuit (daily_break_start > daily_break_end)"
-            )
+            raise ValueError("la pause quotidienne doit chevaucher minuit (daily_break_start > daily_break_end)")
         return self
 
 
@@ -273,6 +271,25 @@ class ScalpLearningConfig(_Section):
         return self
 
 
+class ScalpCadenceConfig(_Section):
+    """Cadence liée au bénéfice : plus de trades par minute seulement tant que les derniers trades rapportent."""
+
+    enabled: bool
+    version: int = Field(ge=1)
+    window_trades: int = Field(ge=5)  # jugée sur les N derniers trades fermés, frais compris
+    multipliers: list[float] = Field(min_length=1)  # niveau k : limites de base x multipliers[k] ; niveau 0 = x1
+    # Plafonds absolus, quel que soit le niveau : requêtes au serveur (TOO_MANY_REQUESTS), règles d'Axi (pas de
+    # HFT), bug qui enverrait des ordres en rafale ; risque ouvert au plus égal à la perte journalière maximale.
+    ceiling_entries_per_minute: int = Field(ge=1, le=60)
+    ceiling_total_risk_pct: float = Field(gt=0)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ScalpCadenceConfig:
+        if self.multipliers[0] != 1 or any(b <= a for a, b in zip(self.multipliers, self.multipliers[1:])):
+            raise ValueError("multipliers : commence à 1 (limites de base), puis strictement croissant")
+        return self
+
+
 class ScalpingConfig(_Section):
     """Expérience de scalping (démo uniquement), séparée de la stratégie principale."""
 
@@ -291,14 +308,21 @@ class ScalpingConfig(_Section):
     risk_per_trade_pct: float = Field(gt=0, le=RISK_PER_TRADE_HARD_CAP_PCT)
     max_open_positions: int = Field(ge=1)
     max_total_risk_pct: float = Field(gt=0)
-    max_entries_per_minute: int = Field(ge=1, le=5)  # autorisation de l'utilisateur : 5 au plus
+    max_entries_per_minute: int = Field(ge=1)  # de base ; la cadence peut la relever (plafond technique)
     min_seconds_between_entries: float = Field(ge=0)
     daily_loss_pct: float = Field(gt=0)
     min_free_margin_pct: float = Field(ge=0, lt=100)
     experiment_days: int = Field(ge=1)
+    # Corrections tirées des trades démo (29/09/2026) ; défauts = sans effet.
+    max_same_side_positions: int | None = Field(default=None, ge=1)  # trades ouverts dans le même sens, au plus
+    quick_stop_s: float = Field(default=20.0, gt=0)  # stop touché plus vite que ça : entrée prise dans le bruit
+    quick_stop_pause_s: float = Field(default=0.0, ge=0)  # pause des entrées dans ce sens après un tel stop
+    loss_streak: int = Field(default=3, ge=1)  # pertes d'affilée dans un même sens...
+    loss_streak_pause_s: float = Field(default=0.0, ge=0)  # ...puis pause des entrées dans ce sens (0 : jamais)
     breakout: ScalpBreakoutConfig
     pullback: ScalpPullbackConfig
     learning: ScalpLearningConfig
+    cadence: ScalpCadenceConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> ScalpingConfig:
@@ -306,6 +330,11 @@ class ScalpingConfig(_Section):
             raise ValueError("min_stop_points doit être inférieur à max_stop_points")
         if self.max_total_risk_pct < self.risk_per_trade_pct:
             raise ValueError("max_total_risk_pct doit couvrir au moins un trade")
+        if self.max_entries_per_minute > self.cadence.ceiling_entries_per_minute:
+            raise ValueError("max_entries_per_minute dépasse le plafond technique de la cadence")
+        ceiling = self.cadence.ceiling_total_risk_pct
+        if not self.max_total_risk_pct <= ceiling <= self.daily_loss_pct:
+            raise ValueError("cadence : plafond du risque ouvert entre max_total_risk_pct et la perte journalière")
         if not (self.breakout.enabled or self.pullback.enabled):
             raise ValueError("au moins une stratégie de scalping doit être active")
         return self
@@ -390,8 +419,7 @@ def _read_env_file(env_path: Path) -> dict[str, str | None]:
         return {}
     if env_path.read_bytes()[:2] in (b"\xff\xfe", b"\xfe\xff"):
         raise ConfigError(
-            f"{env_path} est enregistré en UTF-16 : dans le Bloc-notes, Fichier > Enregistrer sous, "
-            "encodage UTF-8"
+            f"{env_path} est enregistré en UTF-16 : dans le Bloc-notes, Fichier > Enregistrer sous, encodage UTF-8"
         )
     try:
         return dotenv_values(env_path)
@@ -449,8 +477,7 @@ def load_secrets(env_path: Path | None) -> Secrets:
     terminal_path = get("MT5_PATH")
     if any(ord(char) < 32 for char in terminal_path):
         raise ConfigError(
-            "MT5_PATH contient un caractère invisible : écris le chemin sans guillemets "
-            "ou entre guillemets simples"
+            "MT5_PATH contient un caractère invisible : écris le chemin sans guillemets ou entre guillemets simples"
         )
 
     return Secrets(
