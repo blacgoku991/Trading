@@ -6,6 +6,8 @@ La recherche préalable est dans [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 **État : Phase 5 (démo).** Le bot est prêt à trader seul sur le compte démo la stratégie validée par backtest
 (`docs/STRATEGIES.md`). Le passage en réel reste une décision humaine, après plusieurs semaines de démo.
+À part : une **expérience de scalping** (bougies de 5 s), compte démo uniquement, pour observer de vraies
+exécutions (section 9). Elle est perdante sur le rejeu des ticks Axi : ce n'est pas une stratégie rentable.
 
 ## Principes de sécurité
 
@@ -29,12 +31,19 @@ src/goldbot/
   execution/              arrondi au tick, mode de remplissage, ordre de test
   risk/guards.py          garde-fous sur le type de compte
   monitoring/             journalisation (fichiers rotatifs UTC + console)
+  indicators/, strategies/, backtest/   stratégies et moteur de backtest (docs/STRATEGIES.md)
+  live/                   bot principal (run_live.py)
+  scalping/               expérience de scalping : moteur 5 s, rejeu des ticks, bot démo, état SQLite
   diagnostics.py          logique de check_connection.py
   export.py               logique de export_history.py
   data_report.py          logique de data_report.py
 scripts/check_connection.py
 scripts/export_history.py  export de l'historique (Windows)
 scripts/data_report.py     contrôle qualité des données exportées (partout)
+scripts/run_backtest.py    backtest des stratégies (partout)
+scripts/run_live.py        bot principal (Windows)
+scripts/run_scalp.py       expérience de scalping sur compte démo (Windows)
+scripts/backtest_scalp.py  rejeu de l'expérience sur les ticks exportés (partout)
 tests/                    tests unitaires (sans MT5)
 docs/RESEARCH.md
 ```
@@ -215,7 +224,71 @@ Puis pour de vrai, sur le compte démo :
   arrêt total à −10 %).
 - Journal détaillé : `logs\goldbot.log`.
 
-### 9. (Optionnel) Tests sous Windows
+### 9. Expérience de scalping (compte démo uniquement)
+
+Version expérimentale, **séparée** de la stratégie Londres / New York : bougies de 5 s construites à partir des
+ticks, cassure du plus haut ou du plus bas des 60 s précédentes confirmée par deux clôtures, dans le sens de la
+tendance M1 (EMA20 / EMA50), toutes sessions ouvertes. Stop côté serveur derrière la structure des 30 dernières
+secondes, objectif à 1,2 fois le stop, sortie forcée au bout de 120 s même en perte. Règles détaillées et
+résultats du rejeu : `docs/STRATEGIES.md`, section « Expérience de scalping ».
+
+**À savoir avant de lancer** : rejouée sur les 4 semaines de ticks Axi, elle **perd** (profit factor 0,75 aux
+prix exécutables, 0,42 avec 10 points de glissement). Elle sert à observer de vraies ouvertures et clôtures,
+pas à gagner. Les premières opérations vérifient le fonctionnement ; elles ne prouvent rien sur la rentabilité.
+
+1. Vérification technique, **pendant les heures de cotation** (terminal MT5 ouvert, Algo Trading vert) :
+
+   ```powershell
+   cd $HOME\Trading
+   git pull
+   .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+   .\.venv\Scripts\python.exe scripts\run_scalp.py --verification
+   ```
+
+   Le bot ouvre un achat de test au lot minimal (stop à 3 $), vérifie le stop côté serveur, le resserre de
+   0,50 $, simule un redémarrage (reprise depuis l'état), ferme la position au bout de 15 s et compare le
+   résultat estimé avant clôture au résultat exécuté. Il affiche six lignes `OK` ou `ÉCHEC`.
+   Coût : le spread (environ 0,15 € pour 0,01 lot), plus ou moins le mouvement de l'or pendant ces 15 s ;
+   perte maximale environ 2,5 $ (stop resserré). Ce trade de test est exclu des bilans.
+
+2. Collecte des résultats, **sans modifier les réglages** pendant les 10 jours de cotation annoncés
+   (`experiment_days`) :
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\run_scalp.py
+   ```
+
+   En direct : chaque signal (niveau cassé, tendance, spread), le motif d'entrée ou de refus, le lot, le stop,
+   l'objectif, la durée maximale, puis le motif de sortie, la durée réelle et le résultat net estimé contre
+   exécuté. Deux bilans toutes les 15 minutes et à l'arrêt :
+   - **Bilan 1 : exécutions démo** (gains et pertes clôturés, positions ouvertes, valeur du compte) ;
+   - **Bilan 2 : simulation** de tous les signaux acceptés avec 10 points de glissement en plus.
+
+   Une ligne « en marche » toutes les 5 minutes montre que le bot tourne (tendance, spread, compteurs).
+   Ctrl+C arrête le bot : il ferme d'abord les positions de l'expérience, puis affiche les deux bilans. Si la
+   fermeture échoue (marché fermé, connexion perdue), leur stop reste sur le serveur et le bot les reprend au
+   redémarrage.
+   Si les réglages de la section `scalping` changent en cours de collecte, le bot refuse de repartir ; pour
+   démarrer une nouvelle expérience (l'ancienne est archivée) : `run_scalp.py --nouvelle-experience`.
+
+3. Bilans à tout moment : `.\.venv\Scripts\python.exe scripts\run_scalp.py --bilan`.
+   Sans aucun ordre (tout simulé localement) : `run_scalp.py --simulation`.
+
+Garde-fous : compte **démo obligatoire, sans exception** (aucune option ne permet le réel), compte en hedging,
+Algo Trading actif, un seul exemplaire à la fois ; 0,1 % de risque par trade (signal ignoré si le lot minimal
+dépasse ce budget), 3 positions au plus, 0,3 % de risque cumulé, arrêt des entrées pour la journée à −1 %
+(démo ou simulation) ; pas d'entrée si le marché ferme avant la fin des 120 s ; stop manquant reposé, sinon
+position fermée ; ordres idempotents (identifiant du signal en commentaire et état dans `data\scalp.sqlite`).
+Magic `20260929` : le bot principal (`20260928`) et tes trades manuels ne sont jamais touchés.
+
+**Cadence d'envoi** : tant que la politique d'Axi sur les ordres très fréquents n'est pas confirmée
+(support Axi ou conditions générales), le bot envoie **au plus un ordre par minute** ; les autres signaux
+acceptés sont seulement simulés (Bilan 2). Après confirmation écrite d'Axi, passer `cadence_verified: true`
+dans `config/settings.yaml` (nouvelle expérience).
+
+Rejeu sur les ticks exportés (Codespaces ou Windows) : `python scripts/backtest_scalp.py`.
+
+### 10. (Optionnel) Tests sous Windows
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
@@ -237,6 +310,9 @@ Sous Windows, un test supplémentaire compare les constantes du bot à celles du
 
 `export_history.py` : 0 export complet, 1 export incomplet (tranches en échec ou aucune barre), 2 connexion
 impossible, 4 configuration invalide, 130 interrompu (Ctrl+C).
+
+`run_scalp.py` : 0 OK, 1 vérification en échec, 2 connexion impossible, 3 refus (compte non démo, netting,
+Algo Trading coupé, réglages modifiés en cours d'expérience), 4 configuration invalide, 5 déjà en cours.
 
 `run_live.py` : 0 arrêt normal, 2 connexion impossible, 3 refus (compte réel, netting, Algo Trading désactivé),
 4 configuration invalide, 5 un autre bot tourne déjà.

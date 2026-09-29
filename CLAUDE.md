@@ -347,6 +347,12 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   démo qu'après un backtest sur les données Axi avec les coûts réels (spread mesuré : environ 0,14 € par 0,01 lot
   aller-retour). Trader chaque minute sans avantage mesuré est exclu : le spread seul coûterait environ 3,6 % du
   capital par jour.
+- **2026-09-29 (suite)** : l'utilisateur demande une **expérience de scalping** séparée (bougies de 5 s, cassure des
+  60 s confirmée par deux clôtures, tendance M1 EMA20/50, stop derrière la structure, objectif 1,2 × stop, sortie à
+  120 s même en perte, 0,1 % par trade, 3 positions), « pour observer de vraies ouvertures et clôtures », en sachant
+  qu'elle n'est pas annoncée rentable. Faite : `scripts/run_scalp.py`, **compte démo obligatoire sans exception**,
+  magic 20260929, réglages figés pendant la collecte (10 jours de cotation). Rejeu sur les ticks Axi : perdante
+  (profit factor 0,75). Cadence limitée à un ordre par minute tant qu'Axi n'a pas confirmé la fréquence acceptée.
 
 ---
 
@@ -360,5 +366,6 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
 | 3 Backtest + risque + S1 | fait | 2026-09-29 | Moteur événementiel M1 (bid/ask, stop au niveau ou au gap, SL avant TP dans la même barre, spread de la barre avec plancher 15 points, glissement, swaps réels, triple le mercredi), sizing arrondi vers le bas, limites du §3.5 communes backtest/live, mode recherche, chauffe des indicateurs. Test anti look-ahead automatique. Métriques, rapport et PNG, journal des essais. S1 sans avantage (PF 0,98). |
 | 4 Stratégies + validation | fait (accéléré) | 2026-09-29 | Environ 175 variantes sur 2019-07 → 2025-09 : les setups M1-M15 simples ne battent pas les coûts (environ 0,30 $/oz). Retenu : **S7 momentum intraday** (Londres 10:00 → 16:00, New York 09:30 → 16:00 ; mouvement depuis l'ouverture ≥ 0,5 ATR, SL 0,3 ATR, sortie à l'heure). Étude : PF 1,29-1,34, Monte Carlo 95 % −12 %. Hors échantillon (une fois) : Londres +0,39 R, New York +0,32 R ; S8 Asie échoue (désactivée). Avantage modeste : PF 1,14-1,24 sans signal ignoré. Avec 5 000 €, environ la moitié des signaux sont ignorés en 2026 (SL > 28 $ pour 0,01 lot). Détails : `docs/STRATEGIES.md`. |
 | 5 Live démo | code fait, démo à lancer | 2026-09-29 | `scripts/run_live.py` : même code de stratégie qu'en backtest (portefeuille S7 Londres + New York depuis la config), décision à la clôture de chaque barre M1, taille via `order_calc_profit` arrondie vers le bas, `order_check` puis envoi avec SL, sorties horaires, idempotence et reprise via SQLite (`data/live.sqlite`), réconciliation (SL manquant reposé ou position fermée, positions inconnues du bot fermées, trades manuels jamais touchés), limites du §3.5 sur l'equity réelle, flux figé = pas d'entrée, instance unique, mode `--simulation`. Refus : compte réel sans double accord, netting, Algo Trading coupé. 277 tests OK. Reste : Telegram, rapports quotidiens, kill switch par stratégie. |
+| 5b Expérience scalping | code fait, démo à lancer | 2026-09-29 | Demande de l'utilisateur, séparée du bot principal (`scripts/run_scalp.py`, `src/goldbot/scalping/`). Bougies de 5 s au prix médian, cassure des 60 s confirmée, tendance M1, stop serveur derrière la structure, objectif 1,2 × stop, sortie à 120 s, 0,1 %/trade, 3 positions, −1 %/jour ; démo obligatoire sans exception ; idempotence, reprise, stop reposé ; `--verification` (ouverture, stop, redémarrage, sortie, estimé contre exécuté) ; deux bilans (démo, simulation +10 points). Rejeu sur 4 semaines de ticks Axi : **perdant** (PF 0,75 ; 0,42 avec +10 points ; aucune journée positive). Cadence : un ordre par minute au plus tant qu'Axi n'a pas confirmé. Détails : `docs/STRATEGIES.md`. 318 tests OK. |
 | 6 Déploiement Windows | à faire | | |
 | 7 ML (optionnel) | à faire | | |

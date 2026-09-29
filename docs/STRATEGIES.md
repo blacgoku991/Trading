@@ -156,3 +156,51 @@ Lecture honnête :
 **Verdict** : S7 Londres + New York montre un avantage réel mais **modeste** (profit factor d'environ 1,15 à 1,3
 selon la période, sans filtre). Il est suffisant pour passer en **démo**, qui servira de test « en avant » sur des
 données futures, mais pas pour promettre des gains. Environ 10 trades par mois au rythme actuel.
+
+## Expérience de scalping 5 s (demande du 29/09/2026)
+
+Point de départ **fourni par l'utilisateur**, pas une stratégie validée : il sert à observer de vraies ouvertures
+et clôtures sur le compte démo (`scripts/run_scalp.py`, README §9). Code : `src/goldbot/scalping/` (le même moteur
+sert au rejeu et au bot démo). Réglages : section `scalping` de `config/settings.yaml`, figés pendant la collecte.
+
+Règles :
+- bougies de 5 s au prix médian (bid + ask) / 2, heures de cotation seulement ;
+- signal : clôture au-delà du plus haut (ou plus bas) des 60 s précédentes, bougie de signal exclue (au moins
+  6 bougies dans la fenêtre), puis une deuxième clôture au-delà du même niveau ; tendance M1 sur barres clôturées
+  EMA20 > EMA50 pour acheter, inverse pour vendre ; le côté est réarmé quand une clôture revient dans le range ;
+  10 s au moins entre deux entrées ;
+- exécution au prix disponible au moment de la décision (ask à l'achat, bid à la vente) ;
+- stop côté serveur derrière la structure des 30 dernières secondes (+ demi-spread + 5 points), entre 0,50 $ et
+  6 $, au-delà des distances minimales du broker ; objectif à 1,2 fois le stop ; refus si l'objectif est
+  inférieur à 3 fois le coût estimé (spread + 2 × 5 points de glissement + commission) ;
+- sortie forcée à 120 s, même en perte ; pas d'entrée si le marché ferme avant ; signal périmé (plus de 5 s
+  après sa bougie) refusé ;
+- 0,1 % de risque par trade (signal ignoré si le lot minimal dépasse ce budget), 3 positions, 0,3 % de risque
+  cumulé, plus d'entrée pour la journée à −1 %.
+
+### Rejeu sur les ticks Axi (`scripts/backtest_scalp.py`)
+
+Du 30/08 au 28/09/2026 (21 jours de cotation, 7,7 M ticks), compte de 5 000 €, mêmes refus qu'en direct :
+
+| Hypothèse | Trades | Gagnants | Gain / perte moyens | Profit factor | Net | Pire baisse | Jours positifs |
+|---|---|---|---|---|---|---|---|
+| Prix exécutables, sans glissement | 2 281 | 43 % | +2,98 € / −2,97 € | 0,75 | −983 € | −21,5 % | 0 sur 21 |
+| + 10 points de glissement | 767 | 34 % | +2,70 € / −3,39 € | 0,42 | −1 000 € | −20,0 % | 0 sur 21 |
+| Au plus une entrée par minute | 1 828 | 41 % | +3,01 € / −3,03 € | 0,70 | −978 € | −20,7 % | 0 sur 21 |
+| Sans la limite de −1 % par jour | 11 531 | 43 % | +2,14 € / −2,07 € | 0,78 | −3 042 € | −61,8 % | 0 sur 21 |
+
+Sorties (prix exécutables) : objectif 477, stop 829, durée maximale 975. Durée moyenne : 83 s.
+
+Lecture honnête :
+- **La perte n'est pas du bruit** : −0,43 € par trade en moyenne, écart-type 3,35 €, soit environ 6 erreurs-types
+  sous zéro. Aucune journée positive sur 21 : la limite de −1 % est atteinte chaque jour et plafonne les dégâts.
+- Gain moyen ≈ perte moyenne (objectif à 1,2 fois le stop, moins le spread) : il faudrait plus de 50 % de
+  gagnants, on en a 43 %. Sur l'or à l'échelle de la minute, la cassure des 60 s ne se prolonge pas assez : 43 %
+  des trades finissent à la durée maximale sans avoir touché ni stop ni objectif.
+- Le coût (spread d'environ 0,16 $ plus le glissement) pèse lourd face au mouvement typique de 2 minutes :
+  10 points de glissement font tomber le profit factor de 0,75 à 0,42.
+
+**Verdict** : rejeté comme stratégie. Gardé comme **expérience démo** à la demande de l'utilisateur, pour mesurer
+en réel le glissement, l'écart entre résultat estimé et exécuté, et vérifier la chaîne d'exécution. Tant que la
+cadence acceptée par Axi n'est pas confirmée, au plus un ordre par minute part au broker ; les autres signaux
+acceptés sont simulés (bilan 2).
