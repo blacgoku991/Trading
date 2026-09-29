@@ -157,50 +157,130 @@ Lecture honnête :
 selon la période, sans filtre). Il est suffisant pour passer en **démo**, qui servira de test « en avant » sur des
 données futures, mais pas pour promettre des gains. Environ 10 trades par mois au rythme actuel.
 
-## Expérience de scalping 5 s (demande du 29/09/2026)
+## Expérience de scalping 5 s (demandes du 29/09/2026)
 
-Point de départ **fourni par l'utilisateur**, pas une stratégie validée : il sert à observer de vraies ouvertures
-et clôtures sur le compte démo (`scripts/run_scalp.py`, README §9). Code : `src/goldbot/scalping/` (le même moteur
-sert au rejeu et au bot démo). Réglages : section `scalping` de `config/settings.yaml`, figés pendant la collecte.
+Points de départ **fournis par l'utilisateur**, pas des stratégies validées : l'expérience sert à observer de
+vraies ouvertures et clôtures sur le compte démo (`scripts/run_scalp.py`, README §9). Code :
+`src/goldbot/scalping/` ; le même moteur (`engine.py`) et les mêmes règles d'entrée (`policy.py`) servent au rejeu
+et au bot démo. Réglages : section `scalping` de `config/settings.yaml`, figés pendant la collecte.
 
-Règles :
-- bougies de 5 s au prix médian (bid + ask) / 2, heures de cotation seulement ;
-- signal : clôture au-delà du plus haut (ou plus bas) des 60 s précédentes, bougie de signal exclue (au moins
-  6 bougies dans la fenêtre), puis une deuxième clôture au-delà du même niveau ; tendance M1 sur barres clôturées
-  EMA20 > EMA50 pour acheter, inverse pour vendre ; le côté est réarmé quand une clôture revient dans le range ;
-  10 s au moins entre deux entrées ;
-- exécution au prix disponible au moment de la décision (ask à l'achat, bid à la vente) ;
-- stop côté serveur derrière la structure des 30 dernières secondes (+ demi-spread + 5 points), entre 0,50 $ et
-  6 $, au-delà des distances minimales du broker ; objectif à 1,2 fois le stop ; refus si l'objectif est
-  inférieur à 3 fois le coût estimé (spread + 2 × 5 points de glissement + commission) ;
-- sortie forcée à 120 s, même en perte ; pas d'entrée si le marché ferme avant ; signal périmé (plus de 5 s
-  après sa bougie) refusé ;
-- 0,1 % de risque par trade (signal ignoré si le lot minimal dépasse ce budget), 3 positions, 0,3 % de risque
-  cumulé, plus d'entrée pour la journée à −1 %.
+**Versions.** Chaque stratégie est identifiée par son nom, un numéro de version et l'empreinte de ses réglages
+(8 caractères, calculée sur ses règles et les réglages communs) : par exemple `cassure v1 · a496a8fc`. Chaque
+signal enregistre stratégie, version et empreinte ; la table `versions` de `data/scalp.sqlite` garde le JSON
+complet des réglages. Modifier un réglage change l'empreinte (et le bot refuse de repartir en cours de collecte) ;
+modifier une règle dans le code impose d'augmenter `version`.
 
-### Rejeu sur les ticks Axi (`scripts/backtest_scalp.py`)
+### Règles communes (comparaison à risque égal)
 
-Du 30/08 au 28/09/2026 (21 jours de cotation, 7,7 M ticks), compte de 5 000 €, mêmes refus qu'en direct :
+- Bougies de 5 s au prix médian (bid + ask) / 2, heures de cotation seulement.
+- Exécution au prix disponible au moment de la décision (ask à l'achat, bid à la vente).
+- Stop côté serveur derrière la structure du signal (+ demi-spread + 5 points), entre 0,50 $ et 6 $, au-delà des
+  distances minimales du broker ; objectif à 1,2 fois le stop ; refus si l'objectif est inférieur à 3 fois le coût
+  estimé (spread + 2 × 5 points de glissement + commission).
+- Sortie forcée à 120 s, même en perte ; pas d'entrée si le marché ferme avant ; signal périmé (plus de 5 s après
+  sa bougie) refusé.
+- 0,1 % de risque par trade (signal ignoré si le lot minimal dépasse ce budget), 5 trades ouverts et 0,5 % de
+  risque cumulé au plus, 5 entrées au plus sur 60 s glissantes, 5 s entre deux entrées (une par bougie), plus
+  d'entrée pour la journée à −1 %, marge libre après l'ordre d'au moins 50 % de l'equity.
+- Nouveaux signaux, fractionnement et doublons (`policy.py`) : une **occasion** a une clé (niveau cassé pour la
+  cassure, départ et sommet de l'impulsion pour l'impulsion-repli) ; la même clé ne peut pas être prise deux fois
+  tant que son trade est ouvert. Un trade trop gros pour un seul ordre (volume maximal par ordre : 20 lots chez
+  Axi) est **fractionné** en ordres égaux `tag#1`, `tag#2`… qui partagent un seul budget de risque et comptent
+  pour une seule entrée. Le **même signal** revu (relance, réponse perdue du broker) n'est jamais renvoyé ; une
+  position en double chez le broker est fermée ; les deux cas sont comptés (« doublons accidentels évités »).
 
-| Hypothèse | Trades | Gagnants | Gain / perte moyens | Profit factor | Net | Pire baisse | Jours positifs |
+### Stratégie « cassure » v1
+
+Clôture au-delà du plus haut (ou plus bas) des 60 s précédentes, bougie de signal exclue (au moins 6 bougies dans
+la fenêtre), puis une deuxième clôture au-delà du même niveau ; tendance M1 sur barres clôturées EMA20 > EMA50 pour
+acheter, inverse pour vendre ; le côté est réarmé quand une clôture revient dans le range. Stop derrière le creux
+(ou sommet) des 30 dernières secondes.
+
+### Stratégie « impulsion-repli » v1
+
+Principe public de GOLD Scalper PRO (« impulsion puis correction », `docs/RESEARCH.md` annexe F), réécrit en règles
+numériques ici. **Ce n'est pas le code de ce produit commercial**, qui n'est pas public ; seules ses descriptions
+publiques ont été lues, et ses résultats annoncés n'ont pas pu être vérifiés.
+
+Achat (vente symétrique) :
+1. **Impulsion** : entre le plus bas des 60 dernières secondes et le plus haut de la bougie qui vient de clôturer,
+   au moins 1 ATR M1 (ATR 14 sur barres M1 clôturées). Le départ est le plus récent des plus bas égaux.
+2. **Repli** : après le sommet, le creux descend de 30 % à 70 % de l'impulsion. Plus profond, l'impulsion est
+   abandonnée ; un nouveau sommet avant un repli suffisant prolonge l'impulsion.
+3. **Reprise** : une bougie clôture au-dessus du plus haut de la bougie précédente, au plus 60 s après le sommet.
+   Entrée à l'ask ; stop sous le creux du repli.
+4. Une seule entrée par impulsion ; l'impulsion suivante doit partir d'un point situé après le sommet précédent.
+
+Paramètres libres (5) : `impulse_atr` 1,0, `impulse_max_s` 60, `retrace_min` 0,3, `retrace_max` 0,7,
+`pullback_max_s` 60. Valeurs fixées **avant** le rejeu, par raisonnement, pas par optimisation.
+
+### Comparaison à risque égal sur les ticks Axi (`scripts/backtest_scalp.py`)
+
+Du 30/08 au 28/09/2026 (21 jours de cotation, 7,7 M ticks), compte de 5 000 €, 0,1 % de risque par trade, mêmes
+sorties et mêmes règles de compte pour les deux stratégies. Montants en euros ; E[R] = résultat moyen par trade en
+multiples du risque ; t = résultat moyen divisé par son erreur-type.
+
+Avec les règles du compte (limite de −1 % par jour comprise) :
+
+| Stratégie | Glissement | Trades | Gagnants | Gain / perte moyens | Profit factor | Net | E[R] | t | Jours positifs |
+|---|---|---|---|---|---|---|---|---|---|
+| cassure v1 · a496a8fc | 0 | 2 177 | 42 % | +2,96 / −2,96 | 0,73 | −987 | −0,120 | −6,4 | 0 sur 21 |
+| impulsion-repli v1 · adfe954a | 0 | 1 378 | 39 % | +4,11 / −3,82 | 0,69 | −994 | −0,184 | −6,6 | 0 sur 21 |
+| les deux ensemble | 0 | 1 043 | 37 % | +3,12 / −3,33 | 0,55 | −989 | −0,245 | −8,8 | 0 sur 21 |
+| cassure v1 | +10 points | 712 | 33 % | +2,65 / −3,40 | 0,38 | −1 012 | −0,366 | −11,4 | 0 sur 21 |
+| impulsion-repli v1 | +10 points | 551 | 32 % | +3,66 / −4,41 | 0,39 | −999 | −0,457 | −10,5 | 0 sur 21 |
+| les deux ensemble | +10 points | 664 | 32 % | +3,03 / −3,75 | 0,38 | −1 045 | −0,407 | −11,3 | 0 sur 21 |
+
+La limite journalière arrête chaque jour les entrées vers −1 % : le net (environ −1 000 €, soit 20 jours × 1 %)
+reflète surtout cette limite. Pour juger les signaux eux-mêmes, sans limite journalière :
+
+| Stratégie | Glissement | Trades | Gagnants | Profit factor | E[R] | t | Durée moyenne |
 |---|---|---|---|---|---|---|---|
-| Prix exécutables, sans glissement | 2 281 | 43 % | +2,98 € / −2,97 € | 0,75 | −983 € | −21,5 % | 0 sur 21 |
-| + 10 points de glissement | 767 | 34 % | +2,70 € / −3,39 € | 0,42 | −1 000 € | −20,0 % | 0 sur 21 |
-| Au plus une entrée par minute | 1 828 | 41 % | +3,01 € / −3,03 € | 0,70 | −978 € | −20,7 % | 0 sur 21 |
-| Sans la limite de −1 % par jour | 11 531 | 43 % | +2,14 € / −2,07 € | 0,78 | −3 042 € | −61,8 % | 0 sur 21 |
+| cassure v1 | 0 | 11 678 | 43 % | 0,78 | −0,104 | −11,3 | 81 s |
+| impulsion-repli v1 | 0 | 7 751 | 39 % | 0,68 | −0,189 | −15,2 | 44 s |
+| cassure v1 | +10 points | 8 521 | 39 % | 0,60 | −0,229 | −19,1 | 78 s |
+| impulsion-repli v1 | +10 points | 6 413 | 38 % | 0,51 | −0,363 | −22,8 | 42 s |
 
-Sorties (prix exécutables) : objectif 477, stop 829, durée maximale 975. Durée moyenne : 83 s.
+**Diagnostic sans aucun coût** (exécution au prix médian, spread et glissement nuls, filtre de coût coupé ; ce
+n'est pas un scénario réalisable, il mesure seulement si les signaux prédisent la direction) :
+
+| Stratégie | Trades | Gagnants | Profit factor | E[R] | t |
+|---|---|---|---|---|---|
+| cassure v1 | 12 865 | 48 % | 0,98 | −0,010 | −1,1 |
+| impulsion-repli v1 | 7 871 | 46 % | 0,90 | −0,057 | −4,5 |
+
+**Sensibilité d'impulsion-repli** (sans limite journalière, prix exécutables ; toutes les variantes essayées sont
+listées, conscience du multiple testing) :
+
+| Impulsion | Repli 30-70 % | Repli 38,2-61,8 % | Repli 20-50 % |
+|---|---|---|---|
+| 1,0 ATR | PF 0,68 · 7 751 trades | PF 0,66 · 4 928 | PF 0,71 · 6 999 |
+| 1,5 ATR | PF 0,69 · 3 097 | PF 0,65 · 1 893 | PF 0,71 · 3 105 |
+| 2,0 ATR | PF 0,71 · 1 073 | PF 0,72 · 631 | PF 0,73 · 1 161 |
 
 Lecture honnête :
-- **La perte n'est pas du bruit** : −0,43 € par trade en moyenne, écart-type 3,35 €, soit environ 6 erreurs-types
-  sous zéro. Aucune journée positive sur 21 : la limite de −1 % est atteinte chaque jour et plafonne les dégâts.
-- Gain moyen ≈ perte moyenne (objectif à 1,2 fois le stop, moins le spread) : il faudrait plus de 50 % de
-  gagnants, on en a 43 %. Sur l'or à l'échelle de la minute, la cassure des 60 s ne se prolonge pas assez : 43 %
-  des trades finissent à la durée maximale sans avoir touché ni stop ni objectif.
-- Le coût (spread d'environ 0,16 $ plus le glissement) pèse lourd face au mouvement typique de 2 minutes :
-  10 points de glissement font tomber le profit factor de 0,75 à 0,42.
+- **Les deux stratégies perdent, nettement** (t entre −6 et −23 selon le scénario) : aucune journée positive sur
+  21 avec les règles du compte, dans aucun scénario.
+- **La cassure ne prédit pas la direction** : sans aucun coût, elle est à l'équilibre (profit factor 0,98, t −1,1).
+  Le spread (environ 0,16 $ pour des stops de 0,5 à 1,5 $) en fait une perte.
+- **L'impulsion-repli fait pire que le hasard** : elle perd même sans aucun coût (profit factor 0,90, t −4,5). À
+  l'échelle de quelques secondes, la « reprise » après un repli a plutôt tendance à se retourner. Aucune des
+  9 variantes (impulsion de 1 à 2 ATR, trois zones de repli) ne dépasse un profit factor de 0,73 : le problème
+  n'est pas un réglage mal choisi.
+- Ses trades sont plus courts (44 à 47 s) : ils touchent plus souvent le stop ou l'objectif que la durée maximale.
+- Combiner les deux n'aide pas : les signaux perdants se cumulent et la limite journalière arrive plus vite.
 
-**Verdict** : rejeté comme stratégie. Gardé comme **expérience démo** à la demande de l'utilisateur, pour mesurer
-en réel le glissement, l'écart entre résultat estimé et exécuté, et vérifier la chaîne d'exécution. Tant que la
-cadence acceptée par Axi n'est pas confirmée, au plus un ordre par minute part au broker ; les autres signaux
-acceptés sont simulés (bilan 2).
+**Verdict** : aucune des deux n'est une stratégie rentable ; l'impulsion-repli v1 est moins bonne que la cassure.
+Les deux restent dans l'expérience démo **à la demande de l'utilisateur**, pour mesurer en réel le glissement,
+l'écart entre résultat estimé et exécuté, et la tenue de la chaîne d'exécution avec plusieurs entrées par minute.
+Quelques clôtures en bénéfice sur le compte démo ne changeront pas ce verdict : il faudrait des centaines de trades
+et un résultat nettement positif, confirmé sur des données nouvelles, pour le remettre en cause.
+
+### Historique des réglages
+
+- 29/09/2026 matin (cassure seule, avant versionnage) : 3 positions, 0,3 % de risque cumulé, 10 s entre deux
+  entrées, au plus un ordre par minute envoyé au broker. Rejeu : 2 281 trades, 43 % de gagnants, profit factor
+  0,75, −983 €, aucune journée positive (0,42 avec 10 points de glissement ; 0,70 avec une entrée par minute ;
+  0,78 et −3 042 € sans limite journalière).
+- 29/09/2026 après-midi : versions `cassure v1` et `impulsion-repli v1`, règles communes ci-dessus (jusqu'à
+  5 entrées par minute, autorisation de l'utilisateur).

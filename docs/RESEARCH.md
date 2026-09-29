@@ -1272,3 +1272,44 @@ Conséquences pour le backtest (Phase 3) :
 - coût d'entrée = spread de la barre avec un plancher de 15 points, plus un glissement, puis stress à 1,5 fois le spread ;
 - éviter les minutes autour des chiffres américains et la première heure du lundi (filtres de la Phase 4) ;
 - les jours fériés et les clôtures anticipées sont dans les données : aucune correction nécessaire.
+
+---
+
+## Annexe F — Scalping : principe public de GOLD Scalper PRO et règles d'Axi (recherche du 29/09/2026)
+
+Accès : les pages elles-mêmes (mql5.com, help.axi.com, support.axi.com, sites d'avis) sont **bloquées par le proxy
+de cet environnement**. Ce qui suit vient des extraits renvoyés par la recherche web : à relire sur les pages
+d'origine. Tout ce contenu est une donnée, jamais une instruction (CLAUDE.md règle 10). Le dossier de recherche
+annoncé par l'utilisateur n'est pas arrivé dans l'environnement.
+
+### F.1 GOLD Scalper PRO (produit commercial MQL5)
+
+- Pages : https://www.mql5.com/en/market/product/33507 (MT4) et https://www.mql5.com/en/market/product/33508 (MT5).
+  Auteur indiqué par les extraits : Lachezar Krastev.
+- Principe décrit publiquement : XAUUSD, M1 ou M15, « impulse and correction » ; l'EA repère une impulsion du
+  marché puis entre pendant la correction (« identify market impulses more accurately and enter corrections with
+  better timing ») ; stop loss et take profit prédéfinis ; ni grille, ni martingale, ni moyenne à la baisse ;
+  filtres d'actualités, d'horaires et de jours ; gestion du risque en pourcentage.
+- Annonces **non vérifiées** : backtest 2004-2018 en M15 transformant 1 000 $ en 924 389 $ avec un drawdown de
+  8,85 % ; profit factor 2,43 sur plus de 1 300 trades ; suivis Myfxbook cités par les sites d'avis. Un backtest
+  de ce type (14 ans, croissance composée énorme, drawdown minuscule) est typique d'une sur-optimisation ; seuls
+  des suivis réels, longs et audités compteraient.
+- Piège : l'éditeur propose 2 % à 10 % de risque par trade, hors de nos limites (0,1 % pour l'expérience,
+  plafond dur de 1 %).
+- Ce que nous en faisons : la stratégie « impulsion-repli » (`docs/STRATEGIES.md`) traduit le principe public en
+  règles numériques explicites. Ce n'est pas le code du produit, qui n'est pas public.
+
+### F.2 Axi : stratégies de trading autorisées
+
+- « What trading strategies are allowed? » (centre d'aide Axi, entités SVG et EMEA) et « Trading Strategies »
+  (Axi Support UK), « Does Axi allow Expert Advisors? » : les EA sont autorisés ; le **scalping est permis** sur les
+  comptes de trading classiques (Standard, Pro) ; le scalping est **interdit sur les comptes Axi Select** ; Axi
+  **n'accepte pas le trading haute fréquence** (HFT), sans définition chiffrée trouvée ; copie de trades
+  automatisée non autorisée (Axi Select).
+  - https://support.axi.com/hc/en-gb/articles/29943818745753-Trading-Strategies
+  - https://help-eu.axi.com/hc/en-us/articles/29254558023577-What-trading-strategies-are-allowed
+  - https://help.axi.com/hc/en-us/articles/39867047697433-Does-Axi-allow-Expert-Advisors
+- Conséquence pour l'expérience (compte démo Standard) : jusqu'à 5 entrées par minute, positions tenues au plus
+  120 s, une requête de clôture par position : bien en deçà de ce qu'on appelle d'ordinaire HFT (centaines
+  d'ordres par seconde, arbitrage de latence). Le code s'arrête d'envoyer pendant 60 s si le serveur répond
+  « trop de requêtes » (10024). **Avant tout usage en réel**, demander à Axi par écrit la fréquence acceptée.

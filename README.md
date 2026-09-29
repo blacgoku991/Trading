@@ -6,8 +6,9 @@ La recherche préalable est dans [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 **État : Phase 5 (démo).** Le bot est prêt à trader seul sur le compte démo la stratégie validée par backtest
 (`docs/STRATEGIES.md`). Le passage en réel reste une décision humaine, après plusieurs semaines de démo.
-À part : une **expérience de scalping** (bougies de 5 s), compte démo uniquement, pour observer de vraies
-exécutions (section 9). Elle est perdante sur le rejeu des ticks Axi : ce n'est pas une stratégie rentable.
+À part : une **expérience de scalping** (bougies de 5 s, deux stratégies versionnées), compte démo uniquement,
+pour observer de vraies exécutions (section 9). Elle perd sur le rejeu des ticks Axi : ce n'est pas une stratégie
+rentable.
 
 ## Principes de sécurité
 
@@ -226,15 +227,20 @@ Puis pour de vrai, sur le compte démo :
 
 ### 9. Expérience de scalping (compte démo uniquement)
 
-Version expérimentale, **séparée** de la stratégie Londres / New York : bougies de 5 s construites à partir des
-ticks, cassure du plus haut ou du plus bas des 60 s précédentes confirmée par deux clôtures, dans le sens de la
-tendance M1 (EMA20 / EMA50), toutes sessions ouvertes. Stop côté serveur derrière la structure des 30 dernières
-secondes, objectif à 1,2 fois le stop, sortie forcée au bout de 120 s même en perte. Règles détaillées et
-résultats du rejeu : `docs/STRATEGIES.md`, section « Expérience de scalping ».
+Version expérimentale, **séparée** de la stratégie Londres / New York, sur des bougies de 5 s construites à partir
+des ticks, toutes sessions ouvertes. Deux stratégies tournent ensemble, chacune identifiée par sa version et
+l'empreinte de ses réglages (par exemple `cassure v1 · a496a8fc`) :
+- **cassure** : cassure du plus haut ou du plus bas des 60 s précédentes, confirmée par deux clôtures, dans le sens
+  de la tendance M1 (EMA20 / EMA50) ;
+- **impulsion-repli** : impulsion d'au moins 1 ATR M1, repli de 30 à 70 %, puis reprise dans le sens de
+  l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code).
 
-**À savoir avant de lancer** : rejouée sur les 4 semaines de ticks Axi, elle **perd** (profit factor 0,75 aux
-prix exécutables, 0,42 avec 10 points de glissement). Elle sert à observer de vraies ouvertures et clôtures,
-pas à gagner. Les premières opérations vérifient le fonctionnement ; elles ne prouvent rien sur la rentabilité.
+Pour les deux : stop côté serveur derrière la structure du signal, objectif à 1,2 fois le stop, sortie forcée au
+bout de 120 s même en perte. Règles détaillées et résultats : `docs/STRATEGIES.md`, « Expérience de scalping ».
+
+**À savoir avant de lancer** : rejouées sur les 4 semaines de ticks Axi, **les deux perdent** (profit factor 0,73
+pour la cassure, 0,69 pour l'impulsion-repli ; aucune journée positive sur 21). L'expérience sert à observer de
+vraies ouvertures et clôtures, pas à gagner. Quelques trades gagnants ne prouveront pas qu'elle est rentable.
 
 1. Vérification technique, **pendant les heures de cotation** (terminal MT5 ouvert, Algo Trading vert) :
 
@@ -258,35 +264,44 @@ pas à gagner. Les premières opérations vérifient le fonctionnement ; elles n
    .\.venv\Scripts\python.exe scripts\run_scalp.py
    ```
 
-   En direct : chaque signal (niveau cassé, tendance, spread), le motif d'entrée ou de refus, le lot, le stop,
-   l'objectif, la durée maximale, puis le motif de sortie, la durée réelle et le résultat net estimé contre
-   exécuté. Deux bilans toutes les 15 minutes et à l'arrêt :
-   - **Bilan 1 : exécutions démo** (gains et pertes clôturés, positions ouvertes, valeur du compte) ;
-   - **Bilan 2 : simulation** de tous les signaux acceptés avec 10 points de glissement en plus.
+   En direct : chaque signal avec sa stratégie et sa version, le motif d'entrée ou de refus, le spread, le lot,
+   le stop, l'objectif, la durée maximale ; à chaque sortie, le motif, la durée réelle, le résultat estimé et
+   exécuté, les frais, puis le **résultat de l'essai : réalisé, latent (positions ouvertes) et total**. Une ligne
+   « en marche » toutes les 5 minutes (tendance, ATR, spread, compteurs, résultat total). Deux bilans toutes les
+   15 minutes et à l'arrêt, par stratégie et au total :
+   - **Bilan 1 : exécutions démo** : gains et pertes réalisés, frais (commission, swap ; le spread payé est
+     indiqué à part, il est déjà dans les prix), positions ouvertes et résultat latent, résultat total, durée des
+     trades, motifs de sortie, doublons évités, trades fractionnés, valeur du compte ;
+   - **Bilan 2 : simulation** des mêmes signaux avec 10 points de glissement en plus, mêmes rubriques.
 
-   Une ligne « en marche » toutes les 5 minutes montre que le bot tourne (tendance, spread, compteurs).
    Ctrl+C arrête le bot : il ferme d'abord les positions de l'expérience, puis affiche les deux bilans. Si la
    fermeture échoue (marché fermé, connexion perdue), leur stop reste sur le serveur et le bot les reprend au
-   redémarrage.
-   Si les réglages de la section `scalping` changent en cours de collecte, le bot refuse de repartir ; pour
-   démarrer une nouvelle expérience (l'ancienne est archivée) : `run_scalp.py --nouvelle-experience`.
+   redémarrage. Si les réglages de la section `scalping` changent en cours de collecte, le bot refuse de
+   repartir ; pour démarrer une nouvelle expérience (l'ancienne est archivée) : `run_scalp.py --nouvelle-experience`.
 
 3. Bilans à tout moment : `.\.venv\Scripts\python.exe scripts\run_scalp.py --bilan`.
    Sans aucun ordre (tout simulé localement) : `run_scalp.py --simulation`.
 
+Plusieurs entrées par minute : jusqu'à 5 nouvelles entrées sur 60 s glissantes quand des occasions **distinctes**
+apparaissent (au plus une par bougie de 5 s), 5 trades ouverts et 0,5 % de risque cumulé au plus. Le bot distingue :
+- un **nouveau signal** : une occasion différente (autre niveau cassé, autre impulsion) ; la même occasion n'est
+  jamais prise deux fois tant que son trade est ouvert ;
+- un **fractionnement** : un trade trop gros pour un seul ordre part en plusieurs ordres `#1`, `#2`… qui partagent
+  un seul budget de risque et comptent pour une seule entrée ;
+- un **doublon accidentel** : le même signal revu (relance, réponse perdue du broker) n'est jamais renvoyé, et une
+  position en double chez le broker est fermée ; ces cas sont comptés dans le bilan.
+
 Garde-fous : compte **démo obligatoire, sans exception** (aucune option ne permet le réel), compte en hedging,
 Algo Trading actif, un seul exemplaire à la fois ; 0,1 % de risque par trade (signal ignoré si le lot minimal
-dépasse ce budget), 3 positions au plus, 0,3 % de risque cumulé, arrêt des entrées pour la journée à −1 %
-(démo ou simulation) ; pas d'entrée si le marché ferme avant la fin des 120 s ; stop manquant reposé, sinon
-position fermée ; ordres idempotents (identifiant du signal en commentaire et état dans `data\scalp.sqlite`).
-Magic `20260929` : le bot principal (`20260928`) et tes trades manuels ne sont jamais touchés.
+dépasse ce budget) ; plus d'entrée pour la journée à −1 % (démo, latent compris) ; marge libre d'au moins 50 % de
+l'equity après l'ordre ; pas d'entrée si le marché ferme avant la fin des 120 s ; stop manquant reposé, sinon
+position fermée ; si le serveur répond « trop de requêtes », plus d'envoi pendant 60 s. Magic `20260929` : le bot
+principal (`20260928`) et tes trades manuels ne sont jamais touchés. D'après le centre d'aide d'Axi, le scalping
+est permis sur les comptes Standard et le trading haute fréquence ne l'est pas (sans seuil chiffré) : avant tout
+usage en réel, demander à Axi par écrit la fréquence acceptée.
 
-**Cadence d'envoi** : tant que la politique d'Axi sur les ordres très fréquents n'est pas confirmée
-(support Axi ou conditions générales), le bot envoie **au plus un ordre par minute** ; les autres signaux
-acceptés sont seulement simulés (Bilan 2). Après confirmation écrite d'Axi, passer `cadence_verified: true`
-dans `config/settings.yaml` (nouvelle expérience).
-
-Rejeu sur les ticks exportés (Codespaces ou Windows) : `python scripts/backtest_scalp.py`.
+Rejeu et comparaison des deux stratégies sur les ticks exportés (Codespaces ou Windows) :
+`python scripts/backtest_scalp.py` (options : `--strategie B`, `P` ou `ensemble`).
 
 ### 10. (Optionnel) Tests sous Windows
 
