@@ -47,6 +47,21 @@ def test_full_cycle_on_demo(broker, settings, rule, schedule):
     assert report.volume == 0.01
 
 
+def test_exit_price_comes_from_deals_when_the_reply_has_no_price(broker, settings, rule, schedule):
+    broker.zero_price_in_results = True  # comportement observé sur le compte démo Axi
+    report = _run(broker, settings, rule, schedule)
+    assert report.exit_price == broker.ticks["XAUUSD"].bid
+    assert report.entry_price == broker.ticks["XAUUSD"].ask
+
+
+def test_zero_commission_account_shows_no_rounding_note(broker, settings, rule, schedule):
+    broker.commission_per_lot_side = 0.0
+    report = _run(broker, settings, rule, schedule)
+    assert report.commission_per_lot_round_trip == 0.0
+    assert f"{report.commission_per_lot_round_trip:.2f}" == "0.00"  # pas « -0.00 »
+    assert not any("arrondit" in note for note in report.notes)
+
+
 def test_sl_distance_respects_broker_stops_level(broker, settings, rule, schedule):
     spec = make_symbol(trade_stops_level=1000, trade_freeze_level=500)  # 10 USD + 5 USD
     _run(broker, settings, rule, schedule, spec=spec)

@@ -79,7 +79,8 @@ class TestOrderReport:
     @property
     def commission_per_lot_round_trip(self) -> float:
         """Coût de commission aller-retour pour 1 lot (positif = coût)."""
-        return -(self.commission_in + self.commission_out) / self.volume
+        cost = -(self.commission_in + self.commission_out) / self.volume
+        return cost + 0.0  # -0.0 + 0.0 == 0.0 : évite d'afficher « -0.00 »
 
     @property
     def net_result(self) -> float:
@@ -235,13 +236,19 @@ def run_test_order(
             raise TestOrderFailed(
                 f"clôture impossible ({exc}) : ferme la position à la main dans MT5 (le SL serveur est en place)"
             ) from exc
-    report.exit_price = closed.price
     report.deals = _exit_deals(broker, position.ticket, sleep)
-    if not any(d.entry in _EXIT_ENTRIES for d in report.deals):
+    exits = [d for d in report.deals if d.entry in _EXIT_ENTRIES]
+    if exits:
+        # Le prix réel est dans les deals : sur le compte démo Axi, la réponse d'order_send
+        # à la clôture au marché contenait price = 0.0 (docs/RESEARCH.md, annexe D).
+        report.exit_price = sum(d.price * d.volume for d in exits) / sum(d.volume for d in exits)
+    else:
+        report.exit_price = closed.price or None
         report.notes.append("deal de sortie pas encore visible dans l'historique : commission de sortie incomplète")
-    # Deux deals arrondis au centime : erreur maximale de 0,01 sur le total, rapportée à 1 lot.
-    report.notes.append(
-        f"si le broker arrondit les commissions au centime, la commission par lot est précise "
-        f"à ±{0.01 / report.volume:.2f} près avec {report.volume:g} lot"
-    )
+    if report.commission_in or report.commission_out:
+        # Deux deals arrondis au centime : erreur maximale de 0,01 sur le total, rapportée à 1 lot.
+        report.notes.append(
+            f"si le broker arrondit les commissions au centime, la commission par lot est précise "
+            f"à ±{0.01 / report.volume:.2f} près avec {report.volume:g} lot"
+        )
     return report

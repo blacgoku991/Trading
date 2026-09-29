@@ -155,6 +155,8 @@ class FakeBroker(Broker):
         self.hide_positions = False
         # Prochain order_send exécuté mais réponse perdue (retcode TIMEOUT) : état incertain.
         self.lose_next_reply = False
+        # Comme sur le compte démo Axi : price = 0.0 dans la réponse aux ordres au marché.
+        self.zero_price_in_results = False
         self.connected = False
         self.connect_calls = 0
         self.shutdown_calls = 0
@@ -255,6 +257,8 @@ class FakeBroker(Broker):
             result = self._modify(request)
         else:
             result = self._result(C.TRADE_RETCODE_INVALID, request["symbol"], 0, 0.0, 0.0, "not simulated")
+        if self.zero_price_in_results and request["action"] == C.TRADE_ACTION_DEAL:
+            result = replace(result, price=0.0)
         if self.lose_next_reply:
             self.lose_next_reply = False
             return replace(result, retcode=C.TRADE_RETCODE_TIMEOUT, comment="reply lost")
