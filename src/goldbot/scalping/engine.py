@@ -320,6 +320,11 @@ class Plan:
     spread: float
 
 
+def pips(price_distance: float, config: ScalpingConfig) -> str:
+    """Distance de prix en pips (« 25.3 pips »), l'unité de l'utilisateur."""
+    return f"{price_distance / config.pip_size:.1f} pips"
+
+
 def plan_trade(
     setup: Setup,
     bid: float,
@@ -337,18 +342,26 @@ def plan_trade(
     spread = ask - bid
     entry = ask if side == LONG else bid
     buffer = config.stop_buffer_points * point
-    # La structure est en prix médian : le stop d'un achat se déclenche au bid (médian - spread / 2).
-    sl = round(setup.structure - side * (spread / 2 + buffer), digits)
+    if config.fixed_stop_pips is not None:
+        # Stop fixe en pips depuis le prix d'entrée (vente à 4000, 30 pips : stop à 4003).
+        sl = round(entry - side * config.fixed_stop_pips * config.pip_size, digits)
+    else:
+        # La structure est en prix médian : le stop d'un achat se déclenche au bid (médian - spread / 2).
+        sl = round(setup.structure - side * (spread / 2 + buffer), digits)
     distance = round((entry - sl) * side, digits)
     minimum = max(config.min_stop_points * point, (stops_level_points + freeze_level_points) * point + spread)
-    if distance < minimum:
-        return f"stop trop proche : {distance:.2f} $ < {minimum:.2f} $"
-    if distance > config.max_stop_points * point:
-        return f"stop trop loin : {distance:.2f} $ > {config.max_stop_points * point:.2f} $"
-    target = round(config.target_ratio * distance, digits)
+    if distance < minimum - 1e-9:
+        return f"stop trop proche : {pips(distance, config)} < {pips(minimum, config)}"
+    if distance > config.max_stop_points * point + 1e-9:
+        return f"stop trop loin : {pips(distance, config)} > {pips(config.max_stop_points * point, config)}"
+    if config.fixed_target_pips is not None:
+        target = round(config.fixed_target_pips * config.pip_size, digits)
+    else:
+        target = round(config.target_ratio * distance, digits)
     cost = spread + 2 * config.expected_slippage_points * point + commission_per_oz
     if target < config.min_target_cost_ratio * cost:
-        return f"objectif trop faible face au coût : {target:.2f} $ < {config.min_target_cost_ratio:g} x {cost:.2f} $"
+        return (f"objectif trop faible face au coût : {pips(target, config)} < {config.min_target_cost_ratio:g} x "
+                f"{pips(cost, config)}")  # fmt: skip
     tp = round(entry + side * target, digits)
     return Plan(side, entry, sl, tp, distance, target, cost, spread)
 

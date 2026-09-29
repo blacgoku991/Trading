@@ -435,6 +435,10 @@ def _echo_replay(echo: Callable[[str], None], title: str, result, days: float, r
             f"{m['perte_moyenne'] * rate:+.2f} | profit factor {m['profit_factor']:.2f}"
         )
         echo(
+            f"en pips : total {m['pips_total']:+.0f} | gain moyen {m['pips_gain_moyen']:+.1f} | perte moyenne "
+            f"{m['pips_perte_moyenne']:+.1f} (1 pip = 0,10 $, spread et glissement compris)"
+        )
+        echo(
             f"gains {m['gains'] * rate:+.0f} | pertes {m['pertes'] * rate:+.0f} | net {m['net'] * rate:+.0f} (dont "
             f"frais {0.0 - m['frais'] * rate:+.0f}) | espérance {m['esperance_r']:+.3f} R | t {m['t_stat']:+.1f} | "
             f"pire baisse {m['drawdown_pct']:.1f} % | jours positifs {m['jours_positifs']} sur {m['jours']}"

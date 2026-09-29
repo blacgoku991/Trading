@@ -298,6 +298,12 @@ class ScalpingConfig(_Section):
     # Sorties, communes aux stratégies (comparaison à risque et sorties égaux).
     stop_buffer_points: float = Field(ge=0)
     min_stop_points: float = Field(gt=0)
+    # Pips (demande de l'utilisateur : « compter en pips ») : 1 pip = pip_size en prix (or à 2 décimales : 0,10 $).
+    pip_size: float = Field(default=0.1, gt=0)
+    # Stop fixe en pips depuis l'entrée (ex. vente à 4000, 30 pips -> stop à 4003) au lieu du stop derrière la
+    # structure du signal ; objectif fixe en pips, sinon target_ratio x le stop. None : stop derrière la structure.
+    fixed_stop_pips: float | None = Field(default=None, gt=0)
+    fixed_target_pips: float | None = Field(default=None, gt=0)
     max_stop_points: float = Field(gt=0)
     target_ratio: float = Field(gt=0)
     min_target_cost_ratio: float = Field(ge=0)
@@ -335,6 +341,10 @@ class ScalpingConfig(_Section):
     def _consistent(self) -> ScalpingConfig:
         if self.min_stop_points >= self.max_stop_points:
             raise ValueError("min_stop_points doit être inférieur à max_stop_points")
+        if self.fixed_stop_pips is not None:
+            distance = self.fixed_stop_pips * self.pip_size
+            if not self.min_stop_points * 0.01 - 1e-9 <= distance <= self.max_stop_points * 0.01 + 1e-9:
+                raise ValueError("fixed_stop_pips hors de [min_stop_points, max_stop_points]")
         if self.max_total_risk_pct < self.risk_per_trade_pct:
             raise ValueError("max_total_risk_pct doit couvrir au moins un trade")
         if self.max_entries_per_minute > self.cadence.ceiling_entries_per_minute:

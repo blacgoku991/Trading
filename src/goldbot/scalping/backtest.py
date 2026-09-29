@@ -246,7 +246,7 @@ def run_backtest(
     return ScalpResult(frame, refusals, signals, initial_equity, equity, low, Counter(per_minute.values()), halted_ms)
 
 
-def summary(result: ScalpResult, days: float, strategy: str | None = None) -> dict[str, float]:
+def summary(result: ScalpResult, days: float, strategy: str | None = None, pip_size: float = 0.1) -> dict[str, float]:
     """Mesures d'un rejeu (toutes stratégies, ou une seule), montants en devise de cotation."""
     trades = result.trades
     if not trades.empty and strategy is not None:
@@ -262,7 +262,11 @@ def summary(result: ScalpResult, days: float, strategy: str | None = None) -> di
     error = pnl.std(ddof=1) / np.sqrt(len(pnl)) if len(pnl) > 1 else float("nan")
     by_day = trades.groupby(trades["open_ms"] // 86_400_000)["pnl"].sum()
     in_r = trades["pnl"] / trades["risk"]
+    in_pips = (trades["exit"] - trades["entry"]) * trades["side"] / pip_size  # spread et glissement compris
     return {
+        "pips_total": float(in_pips.sum()),
+        "pips_gain_moyen": float(in_pips[in_pips > 0].mean()) if (in_pips > 0).any() else 0.0,
+        "pips_perte_moyenne": float(in_pips[in_pips <= 0].mean()) if (in_pips <= 0).any() else 0.0,
         "trades": len(trades),
         "par_jour": len(trades) / days,
         "gagnants_pct": len(wins) / len(trades) * 100,

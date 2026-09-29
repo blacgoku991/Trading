@@ -15,6 +15,7 @@ from goldbot.scalping.engine import (
     Candle,
     CandleBuilder,
     PullbackDetector,
+    Setup,
     SimTrade,
     ema_trend,
     make_detectors,
@@ -675,3 +676,30 @@ def test_replay_stops_everything_at_the_maximum_drawdown():
 
 def test_drawdown_is_measured_from_the_peak():
     assert drawdown_pct(9000.0, 10_000.0) == pytest.approx(10.0) and drawdown_pct(10_500.0, 10_000.0) < 0
+
+
+# --- pips et stop fixe en pips ----------------------------------------------------------------------------------
+
+
+def test_fixed_pip_stop_is_placed_from_the_entry_like_the_user_example():
+    config = CONFIG.model_copy(update={"fixed_stop_pips": 30.0, "fixed_target_pips": 90.0, "min_stop_points": 200})
+    candle = Candle(0, 4000.40, 4000.50, 4000.40, 4000.50, 4000.42, 4000.58, 0.16, 5)
+    sell = Setup(BREAKOUT, SHORT, 4000.60, 4000.95, candle, key="B-1", reason="test")  # structure à 0,35 $
+    plan = plan_trade(sell, 4000.00, 4000.16, config, point=0.01, stops_level_points=0, freeze_level_points=0)
+    assert plan.entry == 4000.00 and plan.sl == pytest.approx(4003.00) and plan.tp == pytest.approx(3991.00)
+    assert plan.stop_distance == pytest.approx(3.00) and plan.target == pytest.approx(9.00)
+
+
+def test_refusals_are_written_in_pips():
+    candle = Candle(0, 4000.40, 4000.50, 4000.40, 4000.50, 4000.42, 4000.58, 0.16, 5)
+    buy = Setup(BREAKOUT, LONG, 4000.20, 4000.10, candle, key="B+1", reason="test")
+    config = CONFIG.model_copy(update={"min_stop_points": 200})
+    refusal = plan_trade(buy, 4000.42, 4000.58, config, point=0.01, stops_level_points=0, freeze_level_points=0)
+    assert refusal == "stop trop proche : 6.1 pips < 20.0 pips"  # 4000.58 - (4000.10 - 0.08 - 0.05) = 0,61 $
+
+
+def test_a_fixed_pip_stop_outside_the_allowed_range_is_rejected():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="fixed_stop_pips"):
+        CONFIG.model_validate({**CONFIG.model_dump(), "fixed_stop_pips": 100.0})  # 10 $ > 6 $ maximum

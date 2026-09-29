@@ -47,6 +47,7 @@ from goldbot.scalping.engine import (
     SimTrade,
     ema_trend,
     make_detectors,
+    pips,
     plan_trade,
 )
 from goldbot.scalping.learning import LearningBook
@@ -409,7 +410,7 @@ class ScalpRunner:
         spread = tick.ask - tick.bid
         side_text = "ACHAT" if setup.side == LONG else "VENTE"
         self.say(f"{self._clock(now_ms)} signal {side_text} [{self.labels[setup.strategy]}] : {setup.reason}, "
-                 f"spread {spread:.2f} $")  # fmt: skip
+                 f"spread {pips(spread, self.cfg)}")  # fmt: skip
         if self.halted:
             self._refuse(setup, spread, "arrêt total : drawdown maximal atteint (relance manuelle)")
             return
@@ -477,8 +478,8 @@ class ScalpRunner:
         direction = ("ACHAT" if plan.side == LONG else "VENTE") + (" (signal joué à l'envers)" if plan.side != setup.side
                                                                    else "")  # fmt: skip
         details = (
-            f"{direction} {volume:g} lot{split} à {plan.entry:.2f} | spread {plan.spread:.2f} | stop {plan.sl:.2f} "
-            f"(-{plan.stop_distance:.2f} $) | objectif {plan.tp:.2f} (+{plan.target:.2f} $) | "
+            f"{direction} {volume:g} lot{split} à {plan.entry:.2f} | spread {pips(plan.spread, cfg)} | stop "
+            f"{plan.sl:.2f} (-{pips(plan.stop_distance, cfg)}) | objectif {plan.tp:.2f} (+{pips(plan.target, cfg)}) | "
             f"durée max {cfg.max_hold_s} s | risque {self._money(-risk)}"
         )
         self._start_shadow(setup, plan, tick.bid, tick.ask, now_ms, volume, risk, sent=not self.local_only)
@@ -784,7 +785,8 @@ class ScalpRunner:
         held = f" après {(exit_ms - open_ms) / 1000:.0f} s" if open_ms else ""
         self.say(
             f"{self._clock(now_ms)} sortie {order.label} [{self.labels.get(order.strategy, order.strategy)}] "
-            f"({reason}){held} à {price:.2f} : estimé {self._money(estimate)}, exécuté {self._money(real)} "
+            f"({reason}){held} à {price:.2f} ({(price - order.open_price) * order.side / self.cfg.pip_size:+.1f} "
+            f"pips) : estimé {self._money(estimate)}, exécuté {self._money(real)} "
             f"(écart {self._money(real - estimate)}, frais {self._money(commission + swap + fee)})"
         )
         self.say(f"   {self.running_total()}")
@@ -813,8 +815,8 @@ class ScalpRunner:
         trend = {1: "haussière", -1: "baissière"}.get(self.trend, "indécise")
         market = "marché ouvert" if self._is_open(now_ms) else "marché fermé"
         return (
-            f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | ATR M1 {self.atr:.2f} $ | "
-            f"spread {tick.ask - tick.bid:.2f} $ | signaux : {counts.get(SENT, 0)} envoyés, "
+            f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | ATR M1 {pips(self.atr, self.cfg)} | "
+            f"spread {pips(tick.ask - tick.bid, self.cfg)} | signaux : {counts.get(SENT, 0)} envoyés, "
             f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} refusés | {self.running_total()} | "
             f"{self.policy.cadence.describe()}" + (f" | ARRÊT TOTAL : {self.halted}" if self.halted else "")
         )
