@@ -238,9 +238,10 @@ seule la cassure tourne en démo (l'impulsion-repli perd dans toutes ses version
   l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code) ;
 - **deux bougies** (idée de l'utilisateur, seule active depuis le 29/09 au soir) : bougie baissière puis haussière
   → vente (haussière puis baissière → achat), stop au-delà des deux bougies (10 pips au moins), une position de
-  0,4 lot (0,3 si 0,4 perdrait plus de 1 % au stop), objectif 40 pips ; un achat et une vente peuvent être ouverts
-  en même temps (option `opposite_signals: retourner_si_gain` : fermer le trade contraire s'il est en gain, sinon
-  ignorer le signal). Rejeu 4 semaines : perdante (PF 0,74, arrêt à −10 % au 4e jour de cotation).
+  0,4 lot (0,3 si 0,4 perdrait plus de 1 % au stop), objectif 40 pips ; deux positions au plus, un achat et une
+  vente pouvant être ouverts en même temps (option `opposite_signals: retourner_si_gain` : fermer le trade
+  contraire s'il est en gain, sinon ignorer le signal). Rejeu 4 semaines : perdante (PF 0,74, arrêt à −10 % au
+  4e jour de cotation).
 
 Pour les deux (sorties v2, d'après les trades démo du 29/09) : stop côté serveur derrière la structure du signal,
 d'au moins 2 $, objectif à 3 fois le stop (un gain couvre trois pertes), sortie forcée au bout de 10 minutes même
@@ -298,6 +299,21 @@ et clôtures, pas à gagner. Quelques trades gagnants ne prouveront pas qu'elle 
    (refus si le marché est fermé : leur stop reste sur le serveur, relance à la réouverture).
 
 3. Bilans à tout moment : `.\.venv\Scripts\python.exe scripts\run_scalp.py --bilan`.
+
+4. **Rejeu d'une journée** (terminal MT5 ouvert ; lecture de l'historique seulement, aucun ordre) : la version
+   démo et 8 variantes d'un seul réglage (objectif 30 ou 50 pips, stop d'au moins 15 pips, durée 5 ou 15 min,
+   spread maximal, pause d'une heure à la réouverture, retournement si gain), rejouées sur les ticks du jour avec
+   le même code que le bot, puis la liste des trades de la version démo (heure de Paris) :
+
+   ```powershell
+   .\.venv\Scripts\python.exe scripts\rejeu_jour.py
+   .\.venv\Scripts\python.exe scripts\rejeu_jour.py --jour 2026-09-29 --de 21:55 --a 23:00 --capital 4940
+   ```
+
+   Sans `--jour` : la journée en cours (ou la dernière si le marché est fermé). `--de` / `--a` : heures de Paris.
+   `--capital` : capital de départ (défaut : equity du compte). Prix exécutables, sans glissement : les trades
+   réels peuvent différer un peu (glissement, T/P déplacés à la main). Une journée ne prouve rien : le meilleur
+   réglage d'un jour est souvent un autre le lendemain.
    Sans aucun ordre (tout simulé localement) : `run_scalp.py --simulation`.
 
 **Apprentissage à chaque trade** (« + apprentissage v1 », désactivé en v4) : chaque signal est aussi simulé avec 18 variantes
