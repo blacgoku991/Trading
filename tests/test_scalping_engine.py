@@ -510,8 +510,8 @@ def test_cadence_config_is_checked():
     with pytest.raises(ValidationError, match="perte journalière"):
         CONFIG.model_validate({**CONFIG.model_dump(), "cadence": {**CONFIG.cadence.model_dump(),
                                                                   "ceiling_total_risk_pct": 2.0}})  # fmt: skip
-    with pytest.raises(ValidationError, match="plafond technique"):
-        CONFIG.model_validate({**CONFIG.model_dump(), "max_entries_per_minute": 31})
+    with pytest.raises(ValidationError, match="less than or equal to 5"):  # la base reste à 5 (accord de l'utilisateur)
+        CONFIG.model_validate({**CONFIG.model_dump(), "max_entries_per_minute": 6})
 
 
 # --- corrections tirées des trades démo -----------------------------------------------------------------------
@@ -568,3 +568,31 @@ def test_new_policy_options_are_off_by_default():
     sells = [Exposure(f"s{k}", f"s{k}", SHORT, 4.0) for k in range(4)]
     assert policy.refusal(20_000, key="n", risk=4.0, equity=5000.0, day_result=0.0, day_start_equity=5000.0,
                           open_trades=sells, side=SHORT) is None  # fmt: skip
+
+
+def test_a_losing_close_never_raises_the_cadence_and_losses_need_a_new_full_window():
+    cadence = _cadence(window_trades=10)
+    for pnl in [-6.0] + [0.6] * 8 + [-0.5]:
+        cadence.on_close(pnl)
+    assert cadence.recent_result() < 0
+    cadence.on_close(-1.0)  # la perte de -6 sort de la fenêtre : la somme repasse positive sur un trade perdant
+    assert cadence.recent_result() > 0 and cadence.level == 0
+    for _ in range(8):
+        cadence.on_close(1.0)
+    assert cadence.level == 0  # pas encore 10 trades depuis le dernier passage en perte
+    cadence.on_close(1.0)
+    assert cadence.level == 1  # série complète, en bénéfice, close sur un trade gagnant
+
+
+def test_open_risk_never_exceeds_what_is_left_of_the_daily_loss_budget():
+    policy = EntryPolicy(CONFIG)
+    for _ in range(CONFIG.cadence.window_trades * 3):
+        policy.cadence.on_close(2.0)
+    assert policy.cadence.level == 3  # risque ouvert permis : 1 % de 5 000 = 50
+    open_trades = [Exposure(f"t{k}", f"k{k}", LONG, 5.0) for k in range(4)]  # 20 en jeu
+    # Perte du jour -30 (0,6 %) : il reste 20 de budget, déjà en jeu : pas de nouveau trade.
+    refusal = policy.refusal(0, key="n", risk=5.0, equity=5000.0, day_result=-30.0, day_start_equity=5000.0,
+                             open_trades=open_trades)  # fmt: skip
+    assert reason_key(refusal) == "budget de perte du jour"
+    assert policy.refusal(0, key="n", risk=5.0, equity=5000.0, day_result=-20.0, day_start_equity=5000.0,
+                          open_trades=open_trades) is None  # fmt: skip

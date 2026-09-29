@@ -308,7 +308,9 @@ class ScalpingConfig(_Section):
     risk_per_trade_pct: float = Field(gt=0, le=RISK_PER_TRADE_HARD_CAP_PCT)
     max_open_positions: int = Field(ge=1)
     max_total_risk_pct: float = Field(gt=0)
-    max_entries_per_minute: int = Field(ge=1)  # de base ; la cadence peut la relever (plafond technique)
+    max_entries_per_minute: int = Field(
+        ge=1, le=5
+    )  # de base, 5 au plus (accord de l'utilisateur) ; seule la cadence liée au bénéfice peut aller au-delà
     min_seconds_between_entries: float = Field(ge=0)
     daily_loss_pct: float = Field(gt=0)
     min_free_margin_pct: float = Field(ge=0, lt=100)

@@ -613,7 +613,7 @@ def test_cadence_is_rebuilt_from_the_closed_trades_after_a_restart(world, tmp_pa
         store.record_sim(tag, "B", k * 1000, 1, 4000.0, 3999.0, 4001.2, 0.05, False)
         store.close_sim(tag, 4001.2, "objectif", 6.0, 0.0, k * 1000 + 500)
     live = runner(local_only=True, store=store)
-    assert live.policy.cadence.level == 1 and live._cadence_fed == 30
+    assert live.policy.cadence.level == 1 and len(live._cadence_fed) == 30
     assert "cadence palier 1 : 10 entrées/min, 10 positions, risque ouvert 1 %" in live.status_line()
     tag = "SC-B-99-L"  # une grosse perte : retour immédiat à la base, annoncé
     store.record_sim(tag, "B", 99_000, 1, 4000.0, 3999.0, 4001.2, 0.05, False)

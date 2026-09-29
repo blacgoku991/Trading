@@ -297,9 +297,17 @@ def live_main(
         day = store.trading_days()
         say(
             f"Compte DÉMO, equity {account.equity:.2f} {account.currency}. Risque {cfg.risk_per_trade_pct:g} % "
-            f"par trade, {cfg.max_open_positions} positions et {cfg.max_total_risk_pct:g} % de risque cumulé au plus, "
-            f"{cfg.max_entries_per_minute} entrées par minute au plus, -{cfg.daily_loss_pct:g} % par jour au plus."
+            f"par trade, -{cfg.daily_loss_pct:g} % par jour au plus. De base : {cfg.max_open_positions} positions, "
+            f"{cfg.max_total_risk_pct:g} % de risque cumulé, {cfg.max_entries_per_minute} entrées par minute au plus."
         )
+        if cfg.cadence.enabled:
+            top = runner.policy.cadence.top_limits()
+            say(
+                f"Cadence liée au bénéfice : si les {cfg.cadence.window_trades} derniers trades gagnent au total, "
+                f"jusqu'à {top.open_positions} positions, {top.total_risk_pct:g} % de risque cumulé et "
+                f"{top.entries_per_minute} entrées par minute ; retour à la base dès qu'ils perdent. "
+                f"Maintenant : {runner.policy.cadence.describe()}."
+            )
         say(
             f"Jour de collecte {day + 1} sur {cfg.experiment_days} annoncés. Ne pas modifier les réglages avant la fin."
         )

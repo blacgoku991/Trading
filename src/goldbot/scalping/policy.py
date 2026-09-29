@@ -62,15 +62,19 @@ class Cadence:
     def enabled(self) -> bool:
         return self.cfg.cadence.enabled
 
-    def limits(self) -> Limits:
+    def limits(self, level: int | None = None) -> Limits:
         cfg, cadence = self.cfg, self.cfg.cadence
-        factor = cadence.multipliers[self.level] if self.enabled else 1.0
+        level = self.level if level is None else level
+        factor = cadence.multipliers[level] if self.enabled else 1.0
         return Limits(
             entries_per_minute=min(int(cfg.max_entries_per_minute * factor), cadence.ceiling_entries_per_minute),
             seconds_between_entries=cfg.min_seconds_between_entries / factor,
             open_positions=int(cfg.max_open_positions * factor),
             total_risk_pct=min(cfg.max_total_risk_pct * factor, cadence.ceiling_total_risk_pct),
         )
+
+    def top_limits(self) -> Limits:
+        return self.limits(len(self.cfg.cadence.multipliers) - 1)
 
     def recent_result(self) -> float:
         return sum(self.results)
@@ -82,11 +86,15 @@ class Cadence:
         if not self.enabled or len(self.results) < self.results.maxlen:
             return None
         total, window = self.recent_result(), self.results.maxlen
-        if total <= 0 and self.level > 0:
-            self.level, self.since_change = 0, 0
-            return f"cadence : retour à la base, les {window} derniers trades perdent ({total:+.2f})"
+        if total <= 0:
+            # En perte : base, et il faudra une nouvelle série complète de trades en bénéfice pour remonter.
+            self.since_change = 0
+            if self.level > 0:
+                self.level = 0
+                return f"cadence : retour à la base, les {window} derniers trades perdent ({total:+.2f})"
+            return None
         top = len(self.cfg.cadence.multipliers) - 1
-        if total > 0 and self.level < top and self.since_change >= window:
+        if pnl > 0 and self.level < top and self.since_change >= window:  # jamais sur un trade perdant
             self.level, self.since_change = self.level + 1, 0
             return f"cadence : palier {self.level} (x{self.cfg.cadence.multipliers[self.level]:g}), les {window} " \
                    f"derniers trades gagnent ({total:+.2f})"  # fmt: skip
@@ -153,8 +161,13 @@ class EntryPolicy:
         if side is not None and now_ms < self.paused_until.get(side, -1):
             left = (self.paused_until[side] - now_ms) / 1000
             return f"pause dans ce sens ({self.pause_reason[side]}) : encore {left:.0f} s"
-        if sum(trade.risk for trade in open_trades) + risk > limits.total_risk_pct / 100 * equity:
+        open_risk = sum(trade.risk for trade in open_trades)
+        if open_risk + risk > limits.total_risk_pct / 100 * equity:
             return f"risque cumulé au maximum : {limits.total_risk_pct:g} % de l'equity"
+        # Tous les stops touchés ne doivent pas faire dépasser la perte maximale du jour (flottant compris).
+        budget = cfg.daily_loss_pct / 100 * day_start_equity + day_result
+        if open_risk + risk > budget:
+            return f"budget de perte du jour : {budget:.2f} restants, {open_risk:.2f} déjà en jeu"
         while self.entries and self.entries[0] <= now_ms - 60_000:
             self.entries.popleft()
         if len(self.entries) >= limits.entries_per_minute:

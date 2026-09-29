@@ -171,8 +171,7 @@ class ScalpRunner:
                     if best:
                         self._best_said[key] = best[0]
         # Cadence liée au bénéfice : reconstruite à partir des trades fermés enregistrés (reprise après redémarrage).
-        self._cadence_fed = 0
-        self._cadence_dirty = False  # un trade vient de fermer : cadence à mettre à jour
+        self._cadence_fed: set[str] = set()  # trades déjà donnés à la cadence (par identifiant, jamais deux fois)
         self._update_cadence(None)
 
     # --- affichage ----------------------------------------------------------------------------
@@ -219,13 +218,14 @@ class ScalpRunner:
             self.store.set_meta(LEARNER, json.dumps(self.book.learner.to_dict()))
             self._learning_dirty = False
         self._manage_positions(now_ms)
-        if self._cadence_dirty:
-            self._update_cadence(now_ms)
 
-    def _trade_results(self) -> list[float]:
-        """Résultat net de chaque trade fermé de l'expérience, dans l'ordre de clôture (démo, ou simulés)."""
+    def _trade_results(self) -> list[tuple[str, float]]:
+        """(identifiant, résultat net) de chaque trade fermé de l'expérience, dans l'ordre de clôture.
+
+        Démo : ordres fermés regroupés par signal, une fois toutes ses parts fermées ; --simulation : trades simulés.
+        """
         if self.local_only:
-            return [float(row["pnl"]) for row in self.store.closed_sims()]
+            return [(str(row["tag"]), float(row["pnl"])) for row in self.store.closed_sims()]
         pending = {order.tag for order in self.store.orders(OPEN, SENDING)}  # trade fractionné pas encore fini
         totals: dict[str, float] = {}
         last: dict[str, int] = {}
@@ -234,17 +234,17 @@ class ScalpRunner:
                 continue
             totals[row["tag"]] = totals.get(row["tag"], 0.0) + float(row["real_pnl"])
             last[row["tag"]] = int(row["closed_ms"])
-        return [totals[tag] for tag in sorted(totals, key=lambda tag: (last[tag], tag))]
+        return [(tag, totals[tag]) for tag in sorted(totals, key=lambda tag: (last[tag], tag))]
 
     def _update_cadence(self, now_ms: int | None) -> None:
-        """Donne à la cadence les trades fermés depuis le dernier passage ; annonce les changements de palier."""
-        results = self._trade_results()
-        for pnl in results[self._cadence_fed :]:
+        """Donne à la cadence chaque trade fermé pas encore compté (une fois chacun) ; annonce les changements."""
+        for tag, pnl in self._trade_results():
+            if tag in self._cadence_fed:
+                continue
+            self._cadence_fed.add(tag)
             message = self.policy.cadence.on_close(pnl)
             if message and now_ms is not None:
                 self.say(f"{self._clock(now_ms)} {message} -> {self.policy.cadence.describe()}")
-        self._cadence_fed = len(results)
-        self._cadence_dirty = False
 
     def _context_label(self, key: str) -> str:
         name = STRATEGY_NAMES.get(key[0], key[0])
@@ -471,9 +471,9 @@ class ScalpRunner:
                 fees = -self._to_account(trade.fee, trade.volume)
                 self.store.close_sim(tag, trade.exit_price, trade.reason, pnl, fees, time_ms)
                 del self.shadow[tag]
-                self._cadence_dirty = True
-                if not sent:  # --simulation : les trades simulés sont les trades de l'essai
+                if not sent:  # --simulation : les trades simulés sont les trades de l'essai (comme au rejeu)
                     self.policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
+                    self._update_cadence(time_ms)
                 if not sent:
                     self.say(f"{self._clock(time_ms)} sortie simulée {tag} [{self.labels.get(strategy, strategy)}] "
                              f"({trade.reason}) : {self._money(pnl)}")  # fmt: skip
@@ -689,9 +689,9 @@ class ScalpRunner:
         self.store.update_order(order.tag, order.part, status=CLOSED, exit_price=price, exit_reason=reason,
                                 exit_ms=exit_ms, open_ms=open_ms, est_pnl=estimate, profit=profit,
                                 commission=commission, swap=swap, fee=fee, real_pnl=real, closed_ms=now_ms)  # fmt: skip
-        self._cadence_dirty = True
         if open_ms:
             self.policy.on_exit(order.side, reason, open_ms, exit_ms, real)
+        self._update_cadence(now_ms)
         held = f" après {(exit_ms - open_ms) / 1000:.0f} s" if open_ms else ""
         self.say(
             f"{self._clock(now_ms)} sortie {order.label} [{self.labels.get(order.strategy, order.strategy)}] "
