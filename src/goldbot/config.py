@@ -142,6 +142,55 @@ class ExportConfig(_Section):
     tick_days: int = Field(ge=0, le=3650)
 
 
+def _require_quoted_time(value: object) -> object:
+    # Sans guillemets, YAML lit 23:59 comme le nombre 1439 (base 60) : on exige une chaîne.
+    if not isinstance(value, str):
+        raise ValueError('heure à écrire entre guillemets au format "HH:MM", par exemple "07:00"')
+    return value
+
+
+class BacktestConfig(_Section):
+    # Capital de départ, dans la devise de cotation (USD) : résultats en % et en R indépendants de la devise.
+    initial_equity: float = Field(gt=0)
+    # Début de la période hors échantillon (UTC) : réservée à la validation finale, exclue par défaut.
+    out_of_sample_start: date
+    # Coût d'entrée : spread de chaque barre x multiplicateur, avec un plancher (points).
+    spread_multiplier: float = Field(ge=1.0)
+    min_spread_points: float = Field(ge=0)
+    # Glissement défavorable par exécution au marché ou au SL (points).
+    slippage_points: float = Field(ge=0)
+    commission_per_lot_side: float = Field(ge=0)
+
+
+class AsianBreakoutConfig(_Section):
+    # Heures de Londres (zoneinfo : changements d'heure gérés).
+    range_start: time
+    range_end: time
+    entry_end: time
+    exit_time: time
+    buffer_atr: float = Field(ge=0)
+    tp_r: float = Field(gt=0)
+    min_range_atr: float = Field(ge=0)
+    max_range_atr: float = Field(gt=0)
+
+    @field_validator("range_start", "range_end", "entry_end", "exit_time", mode="before")
+    @classmethod
+    def _quoted_time(cls, value: object) -> object:
+        return _require_quoted_time(value)
+
+    @model_validator(mode="after")
+    def _ordered(self) -> AsianBreakoutConfig:
+        if not self.range_start < self.range_end < self.entry_end < self.exit_time:
+            raise ValueError("il faut range_start < range_end < entry_end < exit_time")
+        if self.min_range_atr >= self.max_range_atr:
+            raise ValueError("min_range_atr doit être inférieur à max_range_atr")
+        return self
+
+
+class StrategiesConfig(_Section):
+    asian_breakout: AsianBreakoutConfig
+
+
 class LoggingConfig(_Section):
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     max_bytes: int = Field(gt=0)
@@ -159,6 +208,8 @@ class Settings(_Section):
     test_order: TestOrderConfig
     paths: PathsConfig
     export: ExportConfig
+    backtest: BacktestConfig
+    strategies: StrategiesConfig
     logging: LoggingConfig
 
 

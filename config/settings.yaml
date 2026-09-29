@@ -74,6 +74,32 @@ export:
   # Ticks : nombre de jours récents exportés (environ 1 Mo par jour de cotation).
   tick_days: 30
 
+backtest:
+  # scripts/run_backtest.py. Capital en USD (devise de cotation) : 5 000 € ≈ 5 700 $.
+  initial_equity: 5700
+  # Les 12 derniers mois sont mis de côté pour la validation finale (utilisés une seule fois).
+  out_of_sample_start: "2025-10-01"
+  # Spread des barres = spread minimal de la minute (docs/RESEARCH.md annexe E) :
+  # plancher à 15 points (spreads nuls en 2019) et glissement de 5 points à chaque exécution défavorable.
+  spread_multiplier: 1.0
+  min_spread_points: 15
+  slippage_points: 5
+  # Compte Standard : aucune commission (mesuré en Phase 1).
+  commission_per_lot_side: 0.0
+
+strategies:
+  asian_breakout:
+    # S1 : cassure du range asiatique, heures de Londres.
+    range_start: "00:00"
+    range_end: "07:00"
+    entry_end: "11:00"
+    exit_time: "20:00"
+    # Paramètres libres (docs/STRATEGIES.md) :
+    buffer_atr: 0.05        # marge au-delà du range, en fraction de l'ATR journalier
+    tp_r: 1.5               # objectif en multiple du risque
+    min_range_atr: 0.15     # range trop étroit : faux signaux
+    max_range_atr: 0.8      # range trop large : risque trop grand
+
 logging:
   level: INFO
   max_bytes: 5000000

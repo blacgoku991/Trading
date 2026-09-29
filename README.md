@@ -51,6 +51,7 @@ docs/RESEARCH.md
 | `numpy` | Calcul vectorisé sur les barres et les ticks (tableaux renvoyés par MT5) |
 | `pandas` | Séries temporelles de l'historique, conversion heure serveur -> UTC |
 | `pyarrow` | Fichiers parquet compressés (historique) |
+| `matplotlib` | Courbe d'equity des backtests (PNG) |
 | `pytest` (dev) | Tests |
 
 Python **3.13** recommandé des deux côtés (Windows et Codespaces) ; 3.12 à 3.14 acceptés.
@@ -71,6 +72,16 @@ python scripts/data_report.py
 ```
 
 Le rapport (trous, doublons, pics, spreads, validation de l'heure serveur) est écrit dans `reports/`.
+
+Backtest d'une stratégie sur ces données (la dernière année est réservée à la validation finale) :
+
+```bash
+python scripts/run_backtest.py                  # S1 sur la période d'étude
+python scripts/run_backtest.py --spread-x 1.5   # stress des coûts
+```
+
+Rapport, courbe d'equity (PNG) et journal de tous les essais (`essais.csv`) dans `reports/`.
+Les stratégies et leurs résultats sont décrits dans [`docs/STRATEGIES.md`](docs/STRATEGIES.md).
 
 ## Windows : connexion au compte Axi
 

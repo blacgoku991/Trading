@@ -31,6 +31,8 @@ dependencies = [
     "pandas>=3.0.6,<4",
     # Lecture et écriture des fichiers parquet compressés (format demandé par CLAUDE.md §8).
     "pyarrow>=25.0.1,<26",
+    # Courbe d'equity des backtests en PNG (demandée par CLAUDE.md §9).
+    "matplotlib>=3.11.2,<4",
 ]
 
 [project.optional-dependencies]
