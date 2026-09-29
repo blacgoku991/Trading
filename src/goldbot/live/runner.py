@@ -42,7 +42,7 @@ from goldbot.indicators.sessions import next_session_start
 from goldbot.risk.limits import RiskLimits
 from goldbot.risk.sizing import position_size
 from goldbot.state.store import CLOSED, FAILED, OPEN, SENDING, SIMULATED, SKIPPED, SignalRow, StateStore
-from goldbot.strategies.base import LONG, OrderIntent, StopUpdate, Strategy
+from goldbot.strategies.base import LONG, MARKET, OrderIntent, StopUpdate, Strategy
 
 log = logging.getLogger("goldbot.live")
 _MINUTE = pd.Timedelta(minutes=1)
@@ -292,6 +292,10 @@ class LiveRunner:
 
     def _execute(self, intent: OrderIntent, now: pd.Timestamp) -> None:
         log.info("signal %s : %s", intent.tag, intent.reason)
+        if intent.kind != MARKET:
+            # Les ordres stop (cassures) ne sont pas encore envoyés en live : jamais convertis en ordre au marché.
+            self._skip(intent, SKIPPED, "ordre stop pas encore géré par le bot live")
+            return
         tick = self.broker.tick(self.spec.name)
         feed = evaluate_feed(tick, now.to_pydatetime(), self.rule, self.schedule, self.settings.feed)
         if feed.state in (FeedState.STALE, FeedState.CLOSED):

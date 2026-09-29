@@ -10,7 +10,7 @@ from goldbot.broker.fake_broker import FakeBroker, make_account, make_bars
 from goldbot.broker.supervisor import ConnectionSupervisor
 from goldbot.live.runner import LiveOptions, LiveRunner
 from goldbot.state.store import CLOSED, OPEN, SIMULATED, SKIPPED, StateStore
-from goldbot.strategies.base import LONG, MARKET, OrderIntent, StopUpdate, Strategy
+from goldbot.strategies.base import LONG, MARKET, STOP, OrderIntent, StopUpdate, Strategy
 from tests.conftest import open_minutes, tick_at
 
 MAGIC = 20260928
@@ -254,3 +254,12 @@ def test_stop_already_crossed_or_strategy_exit_closes_the_position(world):
     set_time2(clock2.now + pd.Timedelta(minutes=1))
     live2.step()
     assert broker2.positions() == []
+
+
+def test_stop_orders_are_never_sent_as_market_orders(world):
+    broker, clock, _, runner = world
+    base = _intent(_signal_time(clock))
+    breakout = OrderIntent(**{**base.__dict__, "kind": STOP, "price": 4005.0})
+    live = runner(Scripted([breakout]))
+    live.step()
+    assert broker.sent == [] and live.store.detail("T-1")["status"] == SKIPPED
