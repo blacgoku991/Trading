@@ -235,11 +235,13 @@ l'empreinte de ses réglages (par exemple `cassure v1 · a496a8fc`) :
 - **impulsion-repli** : impulsion d'au moins 1 ATR M1, repli de 30 à 70 %, puis reprise dans le sens de
   l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code).
 
-Pour les deux : stop côté serveur derrière la structure du signal, objectif à 1,2 fois le stop, sortie forcée au
-bout de 120 s même en perte. Règles détaillées et résultats : `docs/STRATEGIES.md`, « Expérience de scalping ».
+Pour les deux (sorties v2, d'après les trades démo du 29/09) : stop côté serveur derrière la structure du signal,
+d'au moins 2 $, objectif à 3 fois le stop (un gain couvre trois pertes), sortie forcée au bout de 10 minutes même
+en perte. Règles détaillées et résultats : `docs/STRATEGIES.md`, « Expérience de scalping ».
 
-**À savoir avant de lancer** : rejouées sur les 4 semaines de ticks Axi, **les deux perdent** (profit factor 0,73
-pour la cassure, 0,69 pour l'impulsion-repli ; aucune journée positive sur 21). L'expérience sert à observer de
+**À savoir avant de lancer** : rejouées sur les 4 semaines de ticks Axi, **les deux perdent**. Règles v1 : profit
+factor 0,73 pour la cassure, 0,69 pour l'impulsion-repli, aucune journée positive sur 21. Réglages actuels
+(sorties v2, apprentissage, cadence) : profit factor d'environ 0,9, perte réduite de moitié, mais toujours une perte. L'expérience sert à observer de
 vraies ouvertures et clôtures, pas à gagner. Quelques trades gagnants ne prouveront pas qu'elle est rentable.
 
 1. Vérification technique, **pendant les heures de cotation** (terminal MT5 ouvert, Algo Trading vert) :
@@ -307,7 +309,8 @@ ligne « en marche » et les bilans. Le risque de chaque trade ne change jamais.
 Garde-fous : compte **démo obligatoire, sans exception** (aucune option ne permet le réel), compte en hedging,
 Algo Trading actif, un seul exemplaire à la fois ; 0,1 % de risque par trade (signal ignoré si le lot minimal
 dépasse ce budget) ; plus d'entrée pour la journée à −1 % (démo, latent compris) ; marge libre d'au moins 50 % de
-l'equity après l'ordre ; pas d'entrée si le marché ferme avant la fin des 120 s ; stop manquant reposé, sinon
+l'equity après l'ordre ; pas d'entrée si le marché ferme avant la durée maximale ; pas d'entrée si, tous les
+stops touchés, la journée dépasserait −1 % (budget du jour) ; stop manquant reposé, sinon
 position fermée ; si le serveur répond « trop de requêtes », plus d'envoi pendant 60 s. Magic `20260929` : le bot
 principal (`20260928`) et tes trades manuels ne sont jamais touchés. D'après le centre d'aide d'Axi, le scalping
 est permis sur les comptes Standard et le trading haute fréquence ne l'est pas (sans seuil chiffré) : avant tout

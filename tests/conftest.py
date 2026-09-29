@@ -42,9 +42,19 @@ def server_epoch_of(text):
     return int((pd.Timestamp(text) - pd.Timestamp(0)) // pd.Timedelta(seconds=1))
 
 
+def v1_exit_settings():
+    """Réglages du dépôt, sauf les sorties du scalper figées sur celles de la v1 : les tests de scalping sont écrits
+    avec ces valeurs et ne doivent pas dépendre des réglages choisis pour la démo (validés comme un fichier lu)."""
+    settings = load_settings(CONFIG_PATH)
+    data = settings.scalping.model_dump()
+    data.update(min_stop_points=50, target_ratio=1.2, max_hold_s=120)
+    data["learning"].update(version=1, target_ratios=[0.8, 1.2, 2.0])
+    return settings.model_copy(update={"scalping": type(settings.scalping).model_validate(data)})
+
+
 @pytest.fixture(scope="session")
 def settings():
-    return load_settings(CONFIG_PATH)
+    return v1_exit_settings()
 
 
 @pytest.fixture

@@ -4,15 +4,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from goldbot.config import load_settings
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.timezones import ServerTimeRule
 from goldbot.scalping.backtest import Instrument
 from goldbot.scalping.engine import BREAKOUT, LONG, SimTrade
 from goldbot.scalping.research import bucket_report, learn, predict, signal_table, walk_forward
-from tests.conftest import CONFIG_PATH, server_epoch_of
+from tests.conftest import server_epoch_of, v1_exit_settings
 
-SETTINGS = load_settings(CONFIG_PATH)
+SETTINGS = v1_exit_settings()
 CONFIG = SETTINGS.scalping
 
 

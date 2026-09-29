@@ -137,13 +137,13 @@ scalping:
   candle_seconds: 5             # bougies de 5 s construites à partir des ticks bid/ask (prix médian)
   # Sorties communes aux deux stratégies (comparaison à risque et à sorties égaux).
   stop_buffer_points: 5         # marge au-delà de la structure qui porte le stop
-  min_stop_points: 50           # stop d'au moins 0,50 $
+  min_stop_points: 200          # stop d'au moins 2,00 $ (trades démo du 29/09 : stops serrés touchés par le bruit)
   max_stop_points: 600          # et d'au plus 6,00 $
-  target_ratio: 1.2             # objectif = 1,2 x la distance du stop
+  target_ratio: 3.0             # objectif = 3 x la distance du stop (un gain couvre trois pertes)
   min_target_cost_ratio: 3.0    # objectif >= 3 x le coût estimé (spread + glissements + commission), sinon refus
   expected_slippage_points: 5   # glissement supposé par exécution (filtre de coût et calcul du lot)
   extra_slippage_points: 10     # bilan séparé « simulation avec glissement supplémentaire »
-  max_hold_s: 120               # durée maximale : fermeture même en perte
+  max_hold_s: 600               # durée maximale (10 min, le temps d'atteindre 3 x le stop) : fermeture même en perte
   # Compte (communs aux deux stratégies).
   risk_per_trade_pct: 0.1       # 5 € par trade sur 5 000 €
   max_open_positions: 5         # trades ouverts en même temps (démo et simulés)
@@ -178,20 +178,20 @@ scalping:
     pullback_max_s: 60
     atr_period: 14
   learning:
-    # « apprend à chaque trade » v1 : chaque signal est aussi simulé avec d'autres variantes (stop x1 / x1,5 / x2,
-    # objectif 0,8 / 1,2 / 2 R, et à l'envers : vendre quand le signal dit d'acheter). Après chaque trade simulé
+    # « apprend à chaque trade » v2 : chaque signal est aussi simulé avec d'autres variantes (stop x1 / x1,5 / x2,
+    # objectif 2 / 3 / 4 R, et à l'envers : vendre quand le signal dit d'acheter). Après chaque trade simulé
     # fermé, le score de la variante est mis à jour (les trades récents pèsent plus), séparément pour les achats et
     # les ventes de chaque stratégie. Au signal suivant : la meilleure variante du moment, ou aucun trade si toutes
     # perdent. Rejeu sur 4 semaines : perd moins que sans apprentissage, mais perd (docs/STRATEGIES.md).
     enabled: true
-    version: 1
+    version: 2                    # v1 : objectifs 0,8 / 1,2 / 2 R
     by_side: true
     allow_invert: true
     half_life_trades: 100
     min_trades: 20
     always_trade: false
     stop_mults: [1.0, 1.5, 2.0]
-    target_ratios: [0.8, 1.2, 2.0]
+    target_ratios: [2.0, 3.0, 4.0]
   cadence:
     # « plus de trades par minute, sans limite, tant qu'il génère du bénéfice » (demande du 29/09/2026).
     # Après chaque trade fermé : si les 30 derniers trades sont en bénéfice net (frais compris), les limites de

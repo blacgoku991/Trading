@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from goldbot.config import load_settings
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.scalping.backtest import Instrument, run_backtest
 from goldbot.scalping.engine import (
@@ -22,9 +21,9 @@ from goldbot.scalping.engine import (
     plan_trade,
 )
 from goldbot.scalping.policy import Cadence, EntryPolicy, Exposure, Limits, reason_key, split_volume
-from tests.conftest import CONFIG_PATH, server_epoch_of
+from tests.conftest import server_epoch_of, v1_exit_settings
 
-SETTINGS = load_settings(CONFIG_PATH)
+SETTINGS = v1_exit_settings()
 CONFIG = SETTINGS.scalping
 KWARGS = dict(point=0.01, stops_level_points=1, freeze_level_points=0)
 

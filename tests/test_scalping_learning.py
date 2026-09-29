@@ -2,7 +2,6 @@
 
 import pytest
 
-from goldbot.config import load_settings
 from goldbot.scalping.engine import BREAKOUT, LONG, SHORT, Candle, Plan, Setup
 from goldbot.scalping.learning import (
     BASE_VARIANT,
@@ -13,9 +12,9 @@ from goldbot.scalping.learning import (
     variant_grid,
     variant_plan,
 )
-from tests.conftest import CONFIG_PATH
+from tests.conftest import v1_exit_settings
 
-CONFIG = load_settings(CONFIG_PATH).scalping
+CONFIG = v1_exit_settings().scalping
 BASE = Plan(LONG, 4000.58, 3999.87, 4001.43, 0.71, 0.85, 0.26, 0.16)  # achat : ask 4000.58, bid 4000.42
 
 

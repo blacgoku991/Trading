@@ -496,10 +496,30 @@ def env_file(tmp_path, monkeypatch):
     return path
 
 
-def _launch(tmp_path, env_file, broker, clock, *args, config=CONFIG_PATH, sleep=None, max_steps=2):
+# Réglages du dépôt avec les sorties de la v1 : ces tests sont écrits avec ces valeurs (voir tests/conftest.py).
+_V1_EXITS = [
+    ("min_stop_points: 200", "min_stop_points: 50"),
+    ("target_ratio: 3.0", "target_ratio: 1.2"),
+    ("max_hold_s: 600", "max_hold_s: 120"),
+    ("version: 2                    # v1", "version: 1                    # v1"),
+    ("target_ratios: [2.0, 3.0, 4.0]", "target_ratios: [0.8, 1.2, 2.0]"),
+]
+
+
+def _v1_config(tmp_path, text=None):
+    text = text or CONFIG_PATH.read_text(encoding="utf-8")
+    for old, new in _V1_EXITS:
+        assert old in text, old
+        text = text.replace(old, new)
+    path = tmp_path / "settings_v1.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _launch(tmp_path, env_file, broker, clock, *args, config=None, sleep=None, max_steps=2):
     lines = []
     code = live_main(
-        ["--config", str(config), "--env", str(env_file), *args],
+        ["--config", str(config or _v1_config(tmp_path)), "--env", str(env_file), *args],
         root=tmp_path / "project",
         broker_factory=lambda settings, secrets: broker,
         now_utc=clock,
@@ -547,7 +567,7 @@ def test_changed_settings_are_refused_during_an_experiment(tmp_path, env_file, w
     )  # l'expérience a commencé
     store.close()
     changed = tmp_path / "changed.yaml"
-    changed.write_text(CONFIG_PATH.read_text(encoding="utf-8").replace("target_ratio: 1.2", "target_ratio: 1.5"),
+    changed.write_text(_v1_config(tmp_path).read_text(encoding="utf-8").replace("target_ratio: 1.2", "target_ratio: 1.5"),
                        encoding="utf-8")  # fmt: skip
     code, output = _launch(tmp_path, env_file, broker, clock, config=changed)
     assert code == EXIT_REFUSED and "réglages" in output

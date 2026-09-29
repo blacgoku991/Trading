@@ -379,15 +379,20 @@ que 3 % de trades, sans rien changer au résultat. Supprimer aussi la perte maxi
 (6 457 trades, −1 757 €) : cette limite protège le compte.
 
 **Règle ajoutée** (`policy.py`, classe `Cadence`, même code dans le rejeu et le bot démo) : après chaque trade
-fermé, si les 30 derniers trades sont en bénéfice net (frais compris), les limites de base (entrées par minute,
-délai entre entrées, positions, risque ouvert) passent au palier suivant, x2 puis x4 puis x6, au plus un palier par
-série de 30 trades. Dès que les 30 derniers trades sont en perte nette, retour immédiat à la base. Plafonds
-absolus : 30 entrées par minute (limite des requêtes au serveur ; Axi n'accepte pas le HFT) et un risque ouvert
-jamais au-delà de la perte maximale du jour (1 %). Le risque de chaque trade (0,1 %) ne change jamais : l'activité
-augmente après des gains, jamais après des pertes. Ce n'est donc pas une logique de récupération (règle 4).
-Au pire, une journée perd environ −2 % : −1 % atteint, plus 1 % de risque encore ouvert.
+fermé, si les 30 derniers trades sont en bénéfice net (frais compris) **et que ce trade est gagnant**, les limites
+de base (entrées par minute, délai entre entrées, positions, risque ouvert) passent au palier suivant, x2 puis x4
+puis x6, au plus un palier par série complète de 30 trades depuis le dernier passage en perte. Dès que les 30
+derniers trades sont en perte nette, retour immédiat à la base. Plafonds absolus : une entrée par bougie de 5 s,
+soit 12 par minute (les signaux d'une même bougie sont décidés au même instant ; limite des requêtes au serveur ;
+Axi n'accepte pas le HFT), et un risque ouvert jamais au-delà de la perte maximale du jour (1 %). Le risque de
+chaque trade (0,1 %) ne change jamais : l'activité augmente après des gains, jamais après des pertes. Ce n'est donc
+pas une logique de récupération (règle 4). **Budget du jour** (ajouté après la relecture critique) : une entrée est
+refusée si, tous les stops touchés, la journée dépasserait sa perte maximale (réalisé du jour moins risque ouvert,
+sans compter les gains latents qui peuvent disparaître). Au pire, une journée perd donc environ −1 %, plus le
+glissement éventuel sur les stops.
 
-Rejeu avec cette règle :
+Rejeu avec cette règle (avant l'ajout du budget du jour ; avec lui, réglages démo d'alors : 3 165 trades, PF 0,81,
+−892 €) :
 
 | Réglage | Trades | Résultat | Trades par palier (résultat moyen) |
 |---|---|---|---|
@@ -401,6 +406,56 @@ seulement tant que les derniers rapportent), mais **elle ne crée pas d'avantage
 gagnante sur ces stratégies relève surtout du hasard. Elle est mise en démo à la demande de l'utilisateur, sans
 être présentée comme rentable.
 
+### Trades démo du 29/09 et corrections testées (sorties v2)
+
+**Diagnostic** (capture de l'utilisateur, 31 trades de 18:22 à 19:01 heure serveur, lisibles : −13,17 € ; le compte
+affiche −22,70 € avec des trades hors capture) :
+- 10 trades à l'objectif (+47,81 €), 15 au stop (−64,82 €), 5 à la durée maximale (+2,60 €) : un gain rapporte
+  à peu près ce que coûte une perte (objectif 1,2 x le stop), il faut donc plus de 45 % de gagnants ; il y en a 40 % ;
+- stops serrés : les 12 trades au stop de 1,30 $ ou moins font −19,25 € (4 gagnants) ; 5 stops touchés en moins de
+  20 s (le bruit du prix, pas une erreur de direction) ;
+- achats contre la baisse : 5 achats, 4 perdants, −17,02 € ; les ventes (26) font +3,85 €, avec des pertes
+  d'affilée quand le prix tourne en rond ;
+- glissement sur 3 stops sur 15 : jusqu'à 0,44 $ au-delà du stop (le rejeu en suppose 0,05 $).
+
+**Corrections testées** sur les 4 semaines de ticks Axi (les deux stratégies, apprentissage et cadence, compte de
+5 000 €, 0,1 % par trade). Toutes les variantes sont listées : 21 essais sur les mêmes données, la meilleure est
+donc flattée par le hasard.
+
+| Variante | Trades | PF | Résultat | Espérance | +10 pts de glissement |
+|---|---|---|---|---|---|
+| démo d'avant (stop ≥ 0,50 $, objectif 1,2 x, 120 s) | 3 165 | 0,81 | −892 € | −0,071 R | PF 0,51, −929 € |
+| stop ≥ 1 $ / 1,50 $ / 2 $ | 2 861 / 2 699 / 2 725 | 0,78 / 0,80 / 0,86 | −904 / −680 / −460 € | −0,083 / −0,075 / −0,046 R | PF 0,60 / 0,64 / 0,67 |
+| stop ≥ 3 $ / 4 $ | 796 / 301 | 0,85 / 0,79 | −156 / −98 € | −0,063 / −0,074 R | PF 0,74 / 0,71 |
+| au plus 1 / 2 trades ouverts par sens | 2 860 / 3 716 | 0,80 / 0,83 | −880 / −951 € | −0,081 / −0,064 R | PF 0,60 / 0,56 |
+| pause 60 s / 180 s dans le sens d'un stop touché en moins de 20 s | 3 281 / 3 974 | 0,80 / 0,84 | −958 / −958 € | −0,074 / −0,062 R | PF 0,51 / 0,52 |
+| pause 15 min / 60 min après 3 pertes d'affilée dans un sens | 2 801 / 2 086 | 0,79 / 0,83 | −893 / −554 € | −0,085 / −0,068 R | PF 0,62 / 0,61 |
+| apprentissage plus rapide (demi-vie 20, jugé après 10) | 3 051 | 0,80 | −988 € | −0,084 R | PF 0,55 |
+| objectif 3 x le stop, 120 s, sans apprentissage | 1 468 | 0,68 | −1 004 € | −0,173 R | PF 0,31 |
+| objectif 3 x le stop, 10 min, sans apprentissage | 1 494 | 0,77 | −1 031 € | −0,178 R | PF 0,53 |
+| objectif 3 x le stop, 10 min, apprentissage (objectifs 2 / 3 / 4 R) | 3 469 | 0,90 | −795 € | −0,054 R | PF 0,82 |
+| **stop ≥ 2 $ + objectif 3 x, 10 min, apprentissage 2 / 3 / 4 R (retenu)** | 2 218 | **0,905** | −428 € | −0,055 R | **PF 0,84**, −640 € |
+| stop ≥ 2 $ + pause 60 min après 3 pertes | 1 686 | 0,80 | −404 € | −0,066 R | PF 0,68 |
+| retenu + pause 60 min après 3 pertes | 1 442 | 0,82 | −542 € | −0,104 R | PF 0,76 |
+
+Lecture :
+- **Rien ne rend le scalper gagnant.** Toutes les variantes perdent, avec ou sans glissement.
+- **Un stop plus large aide** (le spread et le bruit pèsent moins dans chaque trade), jusqu'à 2 $ ; au-delà, il
+  reste trop peu de signaux pour que la perte par trade baisse encore.
+- **Objectif à 3 x le stop (« 1 gain = 3 pertes »)** : seul, c'est pire (le prix revient au stop plus souvent
+  qu'il n'atteint 3 fois la distance : 25 à 35 % de gagnants). Avec l'apprentissage et 10 minutes pour l'atteindre,
+  c'est mieux que l'objectif de 1,2 x (PF 0,90 contre 0,81).
+- **Contrer les pertes d'affilée dans un sens** : une pause de 60 minutes après 3 pertes réduit la perte seule,
+  mais ajoutée aux réglages retenus elle l'aggrave (−542 € contre −428 €) ; elle n'est donc pas activée. Le choix
+  « acheter ou vendre » d'après les derniers résultats reste fait par l'apprentissage (scores séparés par sens).
+- Limiter les trades par sens, faire une pause après un stop rapide, apprendre plus vite : sans effet utile.
+
+**Retenu pour la démo** (sorties v2, « + apprentissage v2 ») : stop d'au moins 2 $, objectif 3 x le stop,
+10 minutes au plus, variantes apprises avec des objectifs de 2, 3 ou 4 R. Meilleur profit factor et meilleure
+tenue au glissement des 21 essais, mais **perdant** : environ −0,055 R par trade au rejeu. Les options « trades
+par sens » et « pauses » restent dans le code, désactivées. Les prochains jours de démo, sur des données jamais
+vues, diront si ce classement tient.
+
 ### Historique des réglages
 
 - 29/09/2026 matin (cassure seule, avant versionnage) : 3 positions, 0,3 % de risque cumulé, 10 s entre deux
@@ -410,4 +465,6 @@ gagnante sur ces stratégies relève surtout du hasard. Elle est mise en démo �
 - 29/09/2026 après-midi : versions `cassure v1` et `impulsion-repli v1`, règles communes ci-dessus (jusqu'à
   5 entrées par minute, autorisation de l'utilisateur).
 - 29/09/2026 soir : « + apprentissage v1 » (variantes apprises à chaque trade).
-- 29/09/2026 fin de journée : « + cadence v1 » (cadence liée au bénéfice, plafond de 30 entrées par minute).
+- 29/09/2026 fin de journée : « + cadence v1 » (cadence liée au bénéfice, 12 entrées par minute au plus, budget
+  du jour), puis sorties v2 d'après les trades démo : stop d'au moins 2 $, objectif 3 x le stop, 10 minutes au
+  plus, « + apprentissage v2 » (objectifs 2 / 3 / 4 R). Voir la section suivante.
