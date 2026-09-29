@@ -356,13 +356,17 @@ class Backtest:
                 self._close(position, i, self._exit_price(position, i, "close"), crossed[0], end=True)
 
     def _close(self, position: _Position, i: int, price: float, reason: str, *, end: bool = False) -> None:
+        # Une limite de risque franchie pendant une boucle de sorties peut déjà avoir fermé cette position.
+        index = next((k for k, open_ in enumerate(self.positions) if open_ is position), None)
+        if index is None:
+            return
+        del self.positions[index]
         intent = position.intent
         size = self.instrument.contract_size
         commission = -self.costs.commission_per_lot_side * position.lots
         gross = (price - position.entry_price) * intent.side * position.lots * size
         pnl = gross + position.commission + commission + position.swap
         self.balance += gross + commission
-        self.positions.remove(position)
         when = self.times[i] + (_MINUTE if end else pd.Timedelta(0))
         distance = abs(position.entry_price - intent.sl)
         self.trades.append(

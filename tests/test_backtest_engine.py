@@ -172,3 +172,14 @@ def test_swap_is_charged_three_times_on_wednesday_night(settings):
     costs = Costs(swap_long_points=-61.6, swap_short_points=40.5, triple_swap_weekday=2)
     (trade,) = run(bars, [order], settings=settings, costs=costs).trades.itertuples()
     assert trade.swap == pytest.approx(-61.6 * 0.01 * 100 * trade.lots * 3)
+
+
+def test_a_limit_crossed_while_closing_several_positions_closes_each_once(settings):
+    # Deux achats ouverts ; le gap suivant les sort tous les deux au SL et franchit la perte journalière
+    # pendant la boucle des sorties : chaque position ne doit être fermée qu'une fois.
+    bars = frame([QUIET, BELOW_TRIGGER, TRIGGER, (2001.40, 2001.50, 2001.30, 2001.40), (1960.0, 1961.0, 1959.0, 1960.5)])
+    first = intent(bars, price=2001.0, sl=1999.0, tp=2010.0)
+    second = OrderIntent(**{**first.__dict__, "tag": "second", "price": 2001.2, "sl": 1999.2})
+    result = run(bars, [first, second], settings=settings, halt=False)
+    assert len(result.trades) == 2
+    assert sorted(result.trades["strategy_tag"]) == ["second", "test-0-1"]
