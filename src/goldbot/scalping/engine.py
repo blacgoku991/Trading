@@ -24,7 +24,7 @@ ticks un par un, dans l'ordre, et il ne regarde jamais le futur.
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from goldbot.config import ScalpingConfig
 
@@ -104,6 +104,7 @@ class Setup:
     candle: Candle  # bougie qui déclenche le signal
     key: str  # identifiant de l'occasion : deux signaux de même clé sont la même occasion
     reason: str  # motif d'entrée, en clair
+    features: dict[str, float] = field(default_factory=dict)  # contexte chiffré du signal (analyse des erreurs)
 
     @property
     def tag(self) -> str:
@@ -146,14 +147,14 @@ class BreakoutDetector:
                     count += 1
                     if count >= self.confirm:
                         self._disarmed[side] = level
-                        setup = setup or self._setup(side, level, candle, trend)
+                        setup = setup or self._setup(side, level, candle, trend, atr, window)
                     else:
                         self._pending[side] = (level, count)
                 # sinon : retour dans le range ou tendance retournée, pas de confirmation
             elif side not in self._disarmed and beyond_now and trend == side:
                 if self.confirm <= 1:
                     self._disarmed[side] = level_now
-                    setup = setup or self._setup(side, level_now, candle, trend)
+                    setup = setup or self._setup(side, level_now, candle, trend, atr, window)
                 else:
                     self._pending[side] = (level_now, 1)
         self.history.append(candle)
@@ -161,11 +162,12 @@ class BreakoutDetector:
             self.history.popleft()
         return setup
 
-    def _setup(self, side: int, level: float, candle: Candle, trend: int) -> Setup:
+    def _setup(self, side: int, level: float, candle: Candle, trend: int, atr: float, window: list[Candle]) -> Setup:
         cutoff = candle.start_ms - self.stop_lookback_ms
         recent = [c for c in self.history if c.start_ms >= cutoff] + [candle]
         structure = min(c.low for c in recent) if side == LONG else max(c.high for c in recent)
         trend_text = "haussière" if trend > 0 else "baissière"
+        width = max(c.high for c in window) - min(c.low for c in window) if window else 0.0
         return Setup(
             BREAKOUT,
             side,
@@ -174,6 +176,11 @@ class BreakoutDetector:
             candle,
             key=f"B{side:+d}@{level:.2f}",
             reason=f"cassure de {level:.2f} confirmée (tendance M1 {trend_text})",
+            features={
+                "break_atr": (candle.close - level) * side / atr if atr > 0 else 0.0,  # clôture au-delà du niveau
+                "range_atr": width / atr if atr > 0 else 0.0,  # largeur du range des 60 s cassé
+                "trend_aligned": 1.0,
+            },
         )
 
 
@@ -222,14 +229,14 @@ class PullbackDetector:
         previous = self.history[-1] if self.history else None
         setup = None
         for side in (LONG, SHORT):
-            found = self._step(side, candle, previous, atr)
+            found = self._step(side, candle, previous, trend, atr)
             setup = setup or found
         self.history.append(candle)
         while self.history and self.history[0].start_ms < candle.start_ms - self.impulse_ms:
             self.history.popleft()
         return setup
 
-    def _step(self, side: int, candle: Candle, previous: Candle | None, atr: float) -> Setup | None:
+    def _step(self, side: int, candle: Candle, previous: Candle | None, trend: int, atr: float) -> Setup | None:
         high, low, close = _oriented(candle, side)
         state = self._state.get(side)
         if state is None:
@@ -244,7 +251,7 @@ class PullbackDetector:
             depth = (state.extreme - state.pull) / size
             if depth >= self.cfg.retrace_min and close > _oriented(previous, side)[0]:
                 self._drop(side, state)
-                return self._setup(side, state, pull, depth, candle, atr)
+                return self._setup(side, state, pull, depth, candle, trend, atr)
         if high > state.extreme:  # nouveau sommet avant un repli suffisant : l'impulsion continue
             state.extreme, state.extreme_ms, state.pull = high, candle.start_ms, None
             return None
@@ -271,7 +278,8 @@ class PullbackDetector:
         del self._state[side]
         self._floor[side] = state.extreme_ms
 
-    def _setup(self, side: int, state: _Impulse, pull: float, depth: float, candle: Candle, atr: float) -> Setup:
+    def _setup(self, side: int, state: _Impulse, pull: float, depth: float, candle: Candle, trend: int,
+               atr: float) -> Setup:  # fmt: skip
         size = state.extreme - state.low
         seconds = (state.extreme_ms + self.candle_ms - state.start_ms) / 1000
         return Setup(
@@ -283,6 +291,12 @@ class PullbackDetector:
             key=f"P{side:+d}@{state.start_ms}-{state.extreme_ms}",
             reason=f"impulsion de {size:.2f} $ ({size / atr:.1f} ATR M1) en {seconds:.0f} s, "
             f"repli de {depth * 100:.0f} %, reprise",
+            features={
+                "impulse_atr": size / atr,
+                "impulse_s": seconds,
+                "depth": depth,
+                "trend_aligned": float(trend * side),  # 1 dans le sens de la tendance M1, -1 contre, 0 indécise
+            },
         )
 
 
@@ -356,6 +370,8 @@ class SimTrade:
     exit_price: float | None = None
     exit_ms: int | None = None
     reason: str | None = None
+    mfe: float = 0.0  # meilleure excursion (prix par once) au prix de sortie possible (bid à l'achat)
+    mae: float = 0.0  # pire excursion (négative)
 
     @classmethod
     def open(cls, tag: str, plan: Plan, bid: float, ask: float, time_ms: int, max_hold_s: int, slip: float,
@@ -367,6 +383,11 @@ class SimTrade:
         """Met à jour le trade ; True s'il vient d'être fermé."""
         if self.exit_price is not None:
             return False
+        excursion = (bid - self.entry) if self.side == LONG else (self.entry - ask)
+        if excursion > self.mfe:
+            self.mfe = excursion
+        elif excursion < self.mae:
+            self.mae = excursion
         if self.side == LONG:
             if bid <= self.sl:
                 return self._close(time_ms, min(self.sl, bid) - self.slip, "stop")
