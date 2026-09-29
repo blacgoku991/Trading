@@ -99,7 +99,7 @@ def test_vectorized_conversion_marks_dst_changes_as_nat(rule):
         server_epoch_of("2026-11-01 08:30"),
         server_epoch_of("2026-01-06 13:00"),
     ]
-    converted = rule.server_ms_to_utc(np.array(epochs) * 1000)
+    converted = rule.server_ms_to_utc(np.array(epochs, dtype="int64") * 1000)  # int64 : numpy 1.x sous Windows = int32
     assert pd.isna(converted[0]) and pd.isna(converted[1])
     assert converted[2] == pd.Timestamp("2026-01-06 11:00", tz="UTC")
     assert str(converted.dtype) == "datetime64[ms, UTC]"

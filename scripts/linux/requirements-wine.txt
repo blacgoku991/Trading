@@ -1,0 +1,14 @@
+# Dépendances du bot pour le Python Windows qui tourne sous Wine (VPS Ubuntu, docs/RUNBOOK.md).
+# Combinaison testée le 29/09/2026 : Wine 9.0 (Ubuntu 24.04), Python 3.12.10 (paquet NuGet officiel « python »),
+# 455 tests du dépôt OK. numpy 1.26 et Python 3.12 : les numpy 2.x appellent crealf, que Wine 9.0 ne fournit pas,
+# et Python 3.13 bute sur CopyFile2 (venv). Versions figées : les mêmes que celles testées.
+MetaTrader5==5.0.6231
+numpy==1.26.4
+pandas==3.0.6
+pyarrow==25.0.1
+pydantic==2.13.5
+PyYAML==6.0.3
+python-dotenv==1.2.3
+tzdata==2026.4
+matplotlib==3.11.2
+pytest==9.1.1

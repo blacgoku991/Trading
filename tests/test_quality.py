@@ -139,7 +139,7 @@ def test_one_early_close_does_not_condemn_the_rule(rule, gold_utc):
 
 def test_bar_spread_statistic_is_identified(rule, schedule):
     start = server_epoch_of("2026-01-06 10:00")
-    offsets = np.arange(0, 600, 5)  # un tick toutes les 5 s pendant 10 minutes
+    offsets = np.arange(0, 600, 5, dtype="int64")  # un tick toutes les 5 s pendant 10 minutes (int64 explicite)
     ticks = make_ticks((start + offsets) * 1000)
     widths = np.where(offsets % 15 == 0, 0.30, 0.15)  # spread variable dans chaque minute
     ticks["ask"] = np.round(ticks["bid"] + widths, 2)

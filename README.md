@@ -338,7 +338,13 @@ Rejeu et comparaison des deux stratégies sur les ticks exportés (Codespaces ou
 Analyse des erreurs (résultat par contexte, excursions) et apprentissage en avançant, testé jour après jour sans
 regarder le futur : `python scripts/analyse_scalp.py` (option `--glissement 10`). Résultats : `docs/STRATEGIES.md`.
 
-### 10. (Optionnel) Tests sous Windows
+### 10. Faire tourner le bot 24 h/24 sur un VPS
+
+Voir `docs/RUNBOOK.md` : VPS Ubuntu (MT5 et le Python du bot sous Wine, `scripts/linux/install_ubuntu.sh`, service
+`goldbot`) ou VPS Windows (tâche planifiée `scripts/windows/install_autostart.ps1`). Dans les deux cas, le gardien
+`scripts/run_forever.py` relance le bot après un plantage ou une coupure, jamais après un arrêt voulu ou un refus.
+
+### 11. (Optionnel) Tests sous Windows
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
