@@ -306,16 +306,18 @@ class PullbackDetector:
 
 
 class TwoCandleDetector:
-    """« Deux bougies » (idée de l'utilisateur) : bougie baissière puis haussière -> vente ; haussière puis baissière
-    -> achat. Décidé à la clôture de la 2e bougie (bougies de `minutes` minutes, heure serveur, construites à partir
-    des bougies de 5 s en prix médians), entrée tout de suite. Stop au-delà des deux bougies (au-dessus de leur plus
-    haut pour une vente). Les deux bougies doivent se suivre (pas de trou : fermeture, coupure du jour).
+    """« Deux bougies » (idée de l'utilisateur). Décidé à la clôture d'une bougie (bougies de `minutes` minutes,
+    heure serveur, construites à partir des bougies de 5 s en prix médians), entrée tout de suite ; stop au-delà des
+    deux dernières bougies (au-dessus de leur plus haut pour une vente), qui doivent se suivre (pas de trou).
+    - mode « reprise » (v1) : baissière puis haussière -> vente ; haussière puis baissière -> achat ;
+    - mode « suivre » (v2) : haussière -> achat, baissière -> vente (le sens change avec les bougies).
     """
 
     code = TWO_CANDLES
 
     def __init__(self, config: ScalpingConfig) -> None:
         self.bucket_ms = config.two_candles.minutes * 60_000
+        self.follow = config.two_candles.mode == "suivre"
         self.candle_ms = config.candle_seconds * 1000
         self._start: int | None = None  # bougie en cours de construction
         self._ohlc: list[float] = []
@@ -343,7 +345,16 @@ class TwoCandleDetector:
         (t1, o1, h1, l1, c1), (t2, o2, h2, l2, c2) = self._done
         if t2 - t1 != self.bucket_ms:
             return None  # bougies non consécutives
-        if c1 < o1 and c2 > o2:
+        if self.follow:
+            if c2 > o2:
+                side, structure = LONG, min(l1, l2)
+                text = "bougie haussière : achat dans le sens des bougies, stop sous les deux dernières"
+            elif c2 < o2:
+                side, structure = SHORT, max(h1, h2)
+                text = "bougie baissière : vente dans le sens des bougies, stop au-dessus des deux dernières"
+            else:
+                return None
+        elif c1 < o1 and c2 > o2:
             side, structure = SHORT, max(h1, h2)
             text = "bougie baissière puis haussière : vente, stop au-dessus des deux bougies"
         elif c1 > o1 and c2 < o2:

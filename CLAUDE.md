@@ -408,6 +408,9 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   4 semaines : PF 0,84, arrêt à −10 % au 5e jour, annoncé avant lancement. Puis « lot 0,3 ou 0,4, TP 30-40 pips, pas
   de % de perte » : une position de 0,4 lot (0,3 si 0,4 dépasse 1 % au stop, plafond dur ; refus au-delà), objectif
   40 pips ; limites −2 %/jour et −10 % gardées (non négociables). Rejeu : PF 0,74, arrêt au 4e jour, annoncé.
+  Puis « suivre les bougies » (acheter sur une série haussière, changer quand ça se retourne) : deux bougies v2,
+  mode « suivre » ; les 4 règles (reprise, retournement, série, suivre) se valent sur 7 ans de M1 (PF 0,88 la
+  dernière année, toutes perdantes).
 
 ---
 

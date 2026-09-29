@@ -257,6 +257,9 @@ class ScalpTwoCandleConfig(_Section):
 
     enabled: bool = False
     version: int = Field(default=1, ge=1)
+    # « reprise » (v1) : baissière puis haussière -> vente (la haussière n'est qu'un rebond) ;
+    # « suivre » (v2) : chaque bougie close donne le sens de la suivante (haussière -> achat, baissière -> vente).
+    mode: Literal["reprise", "suivre"] = "reprise"
     minutes: int = Field(default=1, ge=1, le=60)  # durée des bougies lues
     min_stop_pips: float = Field(default=10.0, gt=0)  # stop plus proche : élargi à ce minimum (pas de refus)
     target_pips: list[float] = Field(default_factory=lambda: [20.0, 25.0, 30.0], min_length=1, max_length=5)

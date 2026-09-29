@@ -171,8 +171,12 @@ scalping:
     # (demande de l'utilisateur : « lot 0,3 ou 0,4, TP à 30-40 pips » ; dernière année de M1 : 40 pips perd un peu
     # moins que 30, PF 0,88 contre 0,85). Plusieurs objectifs possibles (une position par objectif). Mise en démo à la demande de l'utilisateur ALORS QUE le test
     # sur 7 ans de M1 Axi la montre perdante (environ le spread par trade, PF 0,56-0,86, docs/STRATEGIES.md).
+    # v2 (demande de l'utilisateur : « sur une série d'achats il doit acheter, changer quand ça se retourne ») :
+    # mode « suivre » : bougie haussière -> achat, baissière -> vente, stop au-delà des deux dernières bougies.
+    # 7 ans de M1 Axi : « reprise » et « suivre » perdent autant l'une que l'autre (PF 0,88 sur la dernière année).
     enabled: true
-    version: 1
+    version: 2
+    mode: suivre
     minutes: 1
     min_stop_pips: 10
     target_pips: [40]

@@ -958,3 +958,17 @@ def test_lot_choices_take_the_biggest_lot_within_the_risk_cap_else_refuse():
     assert trade_volume(config, 5000.0, 150.0, volume_min=0.01, volume_step=0.01) == (0.3, None)
     volume, why = trade_volume(config, 5000.0, 200.0, volume_min=0.01, volume_step=0.01)  # 0,3 perdrait 60
     assert volume == 0.0 and why.startswith("lot 0.3 au-dessus du risque maximal")
+
+
+def test_two_candles_follow_mode_trades_in_the_direction_of_each_candle():
+    from goldbot.scalping.engine import TwoCandleDetector
+
+    detector = TwoCandleDetector(_two_config(mode="suivre"))
+    assert _minute(detector, 100, 4000.0, 4001.0)[-1] is None  # première bougie : pas encore deux bougies
+    buy = _minute(detector, 101, 4001.0, 4002.0, low=3999.5)[-1]  # haussière : achat
+    assert buy is not None and buy.side == LONG and buy.structure == pytest.approx(3999.5)
+    again = _minute(detector, 102, 4002.0, 4003.0)[-1]  # série haussière : encore un achat
+    assert again is not None and again.side == LONG
+    sell = _minute(detector, 103, 4003.0, 4002.2, high=4004.0)[-1]  # ça se retourne : vente
+    assert sell is not None and sell.side == SHORT and sell.structure == pytest.approx(4004.0)
+    assert "dans le sens des bougies" in sell.reason

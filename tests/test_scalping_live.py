@@ -558,7 +558,7 @@ _V1_EXITS = [
     ("  risk_per_trade_pct: 1.0\n", "  risk_per_trade_pct: 0.1\n"),
     ("  lot_choices: [0.4, 0.3]\n", ""),
     ("résultat (PF 0,90 contre 0,91).\n    enabled: false\n", "résultat (PF 0,90 contre 0,91).\n    enabled: true\n"),
-    ("PF 0,56-0,86, docs/STRATEGIES.md).\n    enabled: true\n", "PF 0,56-0,86, docs/STRATEGIES.md).\n    enabled: false\n"),
+    ("(PF 0,88 sur la dernière année).\n    enabled: true\n", "(PF 0,88 sur la dernière année).\n    enabled: false\n"),
     ("à la demande de l'utilisateur.\n    enabled: false\n", "à la demande de l'utilisateur.\n    enabled: true\n"),
 ]
 

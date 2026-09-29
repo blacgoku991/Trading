@@ -699,6 +699,23 @@ jour, arrêt à −10 %) restent : non négociables d'après les décisions de l
 Avec 0,4 lot, deux ou trois pertes suffisent à atteindre −2 % dans la journée : le bot trade alors peu (2 trades par
 jour en moyenne au rejeu) et s'arrête pour la journée.
 
+**Deux bougies v2 « suivre »** (demande de l'utilisateur, capture d'écran : « sur la série d'achats, quand ça se
+retourne, il continue à vendre au lieu de passer à l'achat ») : la règle v1 vend après « baissière puis
+haussière », donc elle vend la première bougie verte d'un retournement à la hausse. Quatre règles mesurées sur les
+barres M1 Axi (stop au-delà des deux dernières bougies, au moins 10 pips, objectif 40 pips, 10 minutes,
+`research/market_read/idea_follow.py`) :
+
+| Règle | 2019-2023 : PF | Dernière année : PF | Net par trade (dernière année) | Années positives |
+|---|---|---|---|---|
+| reprise (v1) : baissière puis haussière -> vente | 0,62 | 0,88 | −1,2 pips | 0/7 |
+| retournement : baissière puis haussière -> achat | 0,63 | 0,89 | −1,4 pips | 0/7 |
+| série : deux bougies de même couleur -> leur sens | 0,62 | 0,87 | −1,8 pips | 0/7 |
+| suivre : chaque bougie -> son sens (v2) | 0,62 | 0,88 | −1,5 pips | 0/7 |
+
+Toutes se valent : le sens d'une ou deux bougies M1 ne prévoit pas les minutes suivantes, chaque trade perd à peu
+près le spread. Mise en démo de « suivre » (v2), le comportement demandé. Rejeu 4 semaines (lot 0,4 / 0,3) : 20
+trades, PF 0,57, −295 €, arrêt à −10 % le 03/09 (4e jour, comme la v1).
+
 
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 
