@@ -8,6 +8,8 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+import pandas as pd
+
 from goldbot.backtest.metrics import summarize
 from goldbot.backtest.report import equity_png, render
 from goldbot.backtest.runner import costs_for, load_dataset, run
@@ -19,6 +21,8 @@ from goldbot.strategies.catalog import session_portfolio
 EXIT_OK = 0
 EXIT_NO_DATA = 2
 EXIT_CONFIG = 4
+# Historique chargé avant la première date pour calculer les indicateurs (ATR sur 14 jours de cotation).
+WARMUP = timedelta(days=40)
 
 
 def _asian_breakout(settings: Settings) -> tuple[Strategy, dict[str, object]]:
@@ -90,12 +94,14 @@ def main(
     else:
         start, end = args.debut, min(args.fin or oos, oos)
     folder = _resolve(root, args.dir or settings.export.directory)
+    trade_from = pd.Timestamp(start, tz="UTC") if start is not None else None
     try:
-        dataset = load_dataset(folder, start=start, end=end)
+        # Chauffe des indicateurs (ATR journalier…) avant la première date : aucun trade pendant ce temps.
+        dataset = load_dataset(folder, start=start - WARMUP if start is not None else None, end=end)
     except (FileNotFoundError, ValueError) as exc:
         echo(f"ERREUR : données introuvables ou inutilisables dans {folder} : {exc}")
         return EXIT_NO_DATA
-    if dataset.bars.empty:
+    if dataset.bars.empty or (trade_from is not None and dataset.bars["time"].iloc[-1] < trade_from):
         echo("ERREUR : aucune barre sur la période demandée")
         return EXIT_NO_DATA
 
@@ -103,7 +109,8 @@ def main(
     costs = costs_for(
         settings.backtest, dataset.symbol, spread_multiplier=args.spread_x, slippage_points=args.glissement
     )
-    first, last = dataset.bars["time"].iloc[0], dataset.bars["time"].iloc[-1]
+    traded = dataset.bars if trade_from is None else dataset.bars[dataset.bars["time"] >= trade_from]
+    first, last = traded["time"].iloc[0], traded["time"].iloc[-1]
     echo(f"{strategy.name} : {len(dataset.bars)} barres du {first:%Y-%m-%d} au {last:%Y-%m-%d}...")
     result = run(
         strategy,
@@ -112,6 +119,7 @@ def main(
         risk=settings.risk,
         initial_equity=settings.backtest.initial_equity,
         halt_on_drawdown=args.compte_reel,
+        trade_from=trade_from,
     )
     summary = summarize(result)
 

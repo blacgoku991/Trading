@@ -71,13 +71,22 @@ def run(
     risk: RiskConfig,
     initial_equity: float,
     halt_on_drawdown: bool = False,
+    trade_from: pd.Timestamp | None = None,
 ) -> BacktestResult:
+    """Backtest de la stratégie. Avec trade_from, les barres précédentes servent seulement de chauffe aux
+    indicateurs (ATR…) : aucun trade avant, et le compte démarre à cet instant.
+    """
+    intents = strategy.intents(dataset.bars)
+    bars = dataset.bars
+    if trade_from is not None:
+        intents = [intent for intent in intents if intent.time >= trade_from]
+        bars = bars[bars["time"] >= trade_from].reset_index(drop=True)
     backtest = Backtest(
-        dataset.bars,
+        bars,
         instrument=dataset.instrument,
         costs=costs,
         risk=risk,
         initial_equity=initial_equity,
         halt_on_drawdown=halt_on_drawdown,
     )
-    return backtest.run(strategy.intents(dataset.bars))
+    return backtest.run(intents)

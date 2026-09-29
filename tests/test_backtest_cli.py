@@ -72,3 +72,10 @@ def test_stress_options_are_recorded(project):
     with (project / "reports" / "essais.csv").open(encoding="utf-8") as handle:
         (row,) = list(csv.DictReader(handle, delimiter=";"))
     assert (row["spread_x"], row["glissement"]) == ("1.5", "10.0")
+
+
+def test_start_date_uses_earlier_bars_only_to_warm_up_indicators(project):
+    code, output = _run(project, "--strategie", "portefeuille", "--debut", "2025-02-10")
+    assert code == EXIT_OK, output
+    report = next((project / "reports").glob("backtest_portefeuille_*.md")).read_text(encoding="utf-8")
+    assert "du 2025-02-10" in report  # l'ATR des jours précédents est connu dès le premier jour tradé
