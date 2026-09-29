@@ -2,6 +2,8 @@
 # Outils du bot sur un VPS Ubuntu, où MT5 et le Python du bot tournent sous Wine (docs/RUNBOOK.md, partie Ubuntu).
 #
 #   bash scripts/linux/goldbot.sh mt5                  écran virtuel + terminal MT5, pour le régler (VNC par SSH)
+#   bash scripts/linux/goldbot.sh installer-mt5        installateur MT5 à l'écran, à suivre par VNC (si l'auto échoue)
+#   bash scripts/linux/goldbot.sh ecran                écran virtuel :99 + VNC seulement
 #   bash scripts/linux/goldbot.sh verifier             vérification de la connexion (check_connection.py)
 #   bash scripts/linux/goldbot.sh test                 tests du dépôt avec le Python Windows (sans MT5)
 #   bash scripts/linux/goldbot.sh bilan                bilans de l'expérience de scalping
@@ -56,7 +58,32 @@ python_win() {
     PYTHONPATH="$(win "$REPO/src");$(win "$REPO")" wine "$PYWIN" "$@"
 }
 
+use_vps_terminal() {
+    # Le terminal du VPS remplace le MT5_PATH du .env copié depuis le PC (les variables d'environnement passent
+    # avant le fichier .env) : pas besoin de modifier .env sur le VPS.
+    local exe
+    exe="$(terminal_exe)"
+    if [ -n "$exe" ]; then
+        MT5_PATH="$(win "$exe")"
+        export MT5_PATH
+    fi
+}
+
 case "${1:-}" in
+    ecran)
+        ecran
+        say "écran virtuel $DISPLAY prêt ; VNC sur localhost:5900 (depuis ton PC : ssh -L 5900:localhost:5900 $(id -un)@<IP du VPS>)."
+        ;;
+    installer-mt5)
+        ecran
+        setup="$GB_HOME/mt5setup.exe"
+        url="${MT5_INSTALLER_URL:-https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe}"
+        [ -f "$setup" ] || curl -fsSL --max-time 600 --retry 2 -o "$setup" "$url"
+        wineserver -k 2>/dev/null || true
+        (setsid nohup wine "$setup" >"$GB_HOME/mt5setup.log" 2>&1 &)
+        say "installateur MT5 lancé à l'écran : regarde-le par VNC (localhost:5900 par le tunnel SSH) et suis-le."
+        say "Ensuite : sudo bash $REPO/scripts/linux/install_ubuntu.sh (affiche MT5_PATH et finit l'installation)."
+        ;;
     mt5)
         ecran
         exe="$(terminal_exe)"
@@ -64,10 +91,11 @@ case "${1:-}" in
         pgrep -f "terminal64.exe" >/dev/null || (cd "$(dirname "$exe")" && setsid nohup wine "$exe" >"$GB_HOME/mt5.log" 2>&1 &)
         say "terminal MT5 lancé sur l'écran virtuel $DISPLAY."
         say "Pour le voir : sur ton PC, ssh -L 5900:localhost:5900 $(id -un)@<IP du VPS>, puis un visualiseur VNC sur localhost:5900."
-        say "Chemin à mettre dans .env : MT5_PATH=$(win "$exe")"
+        say "terminal utilisé par le bot : $(win "$exe") (le MT5_PATH du .env est remplacé sur le VPS)."
         ;;
     verifier)
         ecran
+        use_vps_terminal
         cd "$REPO"
         python_win "$(win "$REPO/scripts/check_connection.py")"
         ;;
@@ -77,6 +105,7 @@ case "${1:-}" in
         ;;
     bilan)
         ecran
+        use_vps_terminal
         cd "$REPO"
         python_win "$(win "$REPO/scripts/run_scalp.py")" --bilan
         ;;
@@ -89,6 +118,7 @@ case "${1:-}" in
     bot)
         need_python
         ecran
+        use_vps_terminal
         cd "$REPO"
         extra=()
         if [ -f "$FLAG" ]; then
@@ -101,7 +131,7 @@ case "${1:-}" in
         exec wine "$PYWIN" "$(win "$REPO/scripts/run_forever.py")" "${extra[@]}"
         ;;
     *)
-        sed -n '2,12p' "${BASH_SOURCE[0]}"
+        sed -n '2,14p' "${BASH_SOURCE[0]}"
         exit 1
         ;;
 esac

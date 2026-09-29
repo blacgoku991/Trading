@@ -61,7 +61,8 @@ Le script installe :
 - le terminal MetaTrader 5 (installation silencieuse) ;
 - le service `goldbot`.
 
-À la fin, il affiche la ligne `MT5_PATH=...` à mettre dans `.env`.
+À la fin, il affiche où se trouve le terminal MT5. `goldbot.sh` le donne lui-même au bot : le `MT5_PATH` du `.env`
+copié depuis ton PC est remplacé sur le VPS, tu n'as rien à modifier.
 
 ### 1.2 Secrets (`.env`)
 
@@ -71,8 +72,8 @@ Depuis ton PC (PowerShell, pas sur le VPS), copie ton `.env` :
 scp $HOME\Trading\.env root@<IP du VPS>:Trading/.env
 ```
 
-Puis, sur le VPS, remplace la ligne `MT5_PATH` par celle affichée à la fin de l'installation
-(`nano ~/Trading/.env`, Ctrl+O pour enregistrer, Ctrl+X pour quitter). Ne colle jamais ces valeurs dans un chat.
+Rien d'autre à modifier : sur le VPS, `goldbot.sh` remplace lui-même `MT5_PATH` par le terminal du VPS. Ne colle
+jamais ces valeurs dans un chat.
 
 ### 1.3 Régler le terminal MT5 (une fois, en voyant l'écran du VPS)
 
@@ -136,7 +137,8 @@ expérience commence (celle du PC reste sur le PC).
 
 | Symptôme | Que faire |
 |---|---|
-| `verifier` : connexion au terminal impossible | vérifie `MT5_PATH` dans `.env` ; relance `goldbot.sh mt5` et regarde l'écran par VNC |
+| `verifier` : connexion au terminal impossible | relance `goldbot.sh mt5` et regarde l'écran par VNC (MT5 ouvert et connecté au compte ?) |
+| `goldbot.sh mt5` : « terminal64.exe introuvable » | `bash scripts/linux/goldbot.sh installer-mt5`, suis l'installation par VNC, puis relance `sudo bash scripts/linux/install_ubuntu.sh` |
 | refus « Algo Trading désactivé » | VNC : clique sur Algo Trading (vert), puis `sudo systemctl restart goldbot` |
 | le service redémarre en boucle | `journalctl -u goldbot -n 100` ; systemd attend 60 s entre deux essais |
 | MT5 ne s'installe pas | relance `sudo bash scripts/linux/install_ubuntu.sh` ; avec l'installateur d'Axi : `sudo MT5_INSTALLER_URL=<lien> bash scripts/linux/install_ubuntu.sh` |
