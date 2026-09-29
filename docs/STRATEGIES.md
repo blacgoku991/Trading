@@ -491,7 +491,7 @@ seulement perdre plus vite ; il ne s'augmente (en % de risque, plafond dur 1 %) 
 
 **« Fermer dès que c'est en profit »** (question de l'utilisateur : des bots vus ailleurs gardent leurs positions
 quelques secondes et ferment dès le premier gain). Rejeu de la cassure seule, stop d'au moins 2 $, 0,1 % par trade
-(3 essais de plus, total 30) :
+(3 essais de plus) :
 
 | Sortie | Gagnants | Gain moyen / perte moyenne | Durée moyenne | PF | Résultat |
 |---|---|---|---|---|---|
@@ -504,6 +504,32 @@ faudrait plus de 90 % de gagnants juste pour être à zéro, et le spread (0,16 
 0,30 $. C'est la plus mauvaise sortie testée (t de −6,5 à −9 : perte nette, pas du hasard). Les bots qui semblent
 réussir ainsi montrent la série de petits gains ; la perte rare mais grosse (ou un stop absent, une martingale,
 une grille) n'apparaît pas sur les captures.
+
+**0,2 lot, sortie à +10 ou +30 pips** (idée de l'utilisateur ; or : 1 pip = 0,10 $). Rejeu de la cassure seule :
+
+| Réglage | Trades | Gagnants | Gain moyen / perte moyenne | PF | Résultat |
+|---|---|---|---|---|---|
+| 0,2 lot, +10 pips, limites démo | 123 | 65 % | +17,60 / −42,91 € | 0,76 | −437 €, arrêt à −10 % au 5e jour |
+| 0,2 lot, +30 pips, limites démo | 87 | 44 % | +51,50 / −42,90 € | 0,93 | arrêt à −10 % au 2e jour |
+| 0,2 lot, +10 pips, sans limite (recherche) | 1 496 | 69 % | +17,57 / −50,09 € | 0,79 | −4 974 € : compte vidé en 7 jours |
+| 0,2 lot, +30 pips, sans limite (recherche) | 1 177 | 45 % | +51,06 / −51,22 € | 0,83 | −5 669 € : compte vidé en 5 jours |
+
+**Protéger le gain au lieu de le plafonner** (« intelligent et calculé ») : stop remonté à l'entrée (+0,20 $ pour
+le spread) dès que le trade gagne 10 ou 30 pips, puis stop suiveur. 0,1 % par trade, stop modifié au tick suivant :
+
+| Sortie | Gagnants | Gain moyen / perte moyenne | PF | Résultat | +10 pts |
+|---|---|---|---|---|---|
+| objectif 3 x le stop, sans protection (référence) | 35 % | +6,18 / −3,57 € | 0,95 | −234 € | PF 0,79 |
+| break-even dès +10 pips | 62 % | +1,68 / −3,14 € | 0,88 | −432 € | PF 0,71 |
+| break-even dès +10 pips puis stop suiveur à 10 pips | 66 % | +1,62 / −3,50 € | 0,88 | −448 € | PF 0,69 |
+| idem, sans objectif | 66 % | +1,61 / −3,50 € | 0,88 | −446 € | PF 0,70 |
+| break-even dès +1 R puis suiveur à 1 R, sans objectif | 47 % | +3,93 / −3,64 € | 0,95 | −257 € | PF 0,83 |
+| break-even dès +30 pips puis suiveur à 10 pips | 46 % | +3,98 / −3,61 € | 0,93 | −380 € | PF 0,80 |
+
+Protéger tôt fait gagner plus souvent mais moins : le stop remonté à l'entrée est touché par le bruit avant que le
+mouvement se développe. Protéger à +1 R ne change rien. Aucune des 36 sorties ou tailles testées ne rend le
+scalper gagnant : les sorties ne font que redistribuer les résultats (beaucoup de petits gains ou peu de gros) ;
+ce qui manque, c'est une **entrée** qui prévoit les secondes suivantes mieux que le spread.
 
 **Lot fixe de 0,1** (décision de l'utilisateur, 29/09 au soir : « mettre les lots à 0,1 ou 0,2 »). Mis en démo
 dans les limites dures : un trade est refusé si 0,1 lot risquerait plus de 1 % de l'equity au stop (stop de plus de

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 from collections.abc import Callable, Mapping, Sequence
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
 from typing import Any
@@ -74,10 +75,18 @@ def find_entry_deals(broker: Broker, *, magic: int, comments: set[str], sent_s: 
     """Deals d'entrée des ordres dont la réponse s'est perdue, par commentaire : même magic, même commentaire (à
     confirmer sur le terminal par run_scalp.py --verification). Un seul appel pour tous les ordres en attente, depuis
     le plus ancien envoi (sent_s, epoch serveur). Un ordre absent du résultat n'a pas été exécuté."""
-    found: dict[str, Deal] = {}
+    parts: dict[str, list[Deal]] = {}
     for deal in broker.deals_between(sent_s - LOST_REPLY_MARGIN_S, now_s + LOST_REPLY_MARGIN_S):
         if deal.magic == magic and deal.comment in comments and deal.entry == C.DEAL_ENTRY_IN:
-            found.setdefault(deal.comment, deal)
+            parts.setdefault(deal.comment, []).append(deal)
+    found = {}
+    for comment, deals in parts.items():
+        # Ordre exécuté en plusieurs deals (remplissage partiel) : volume total et prix moyen de la même position.
+        same = [d for d in deals if d.position_id == deals[0].position_id]
+        volume = sum(d.volume for d in same)
+        price = sum(d.price * d.volume for d in same) / volume if volume else same[0].price
+        found[comment] = replace(same[0], volume=round(volume, 8), price=round(price, 8),
+                                 commission=sum(d.commission for d in same), fee=sum(d.fee for d in same))  # fmt: skip
     return found
 
 

@@ -97,3 +97,23 @@ def test_send_never_blindly_retries_uncertain_results(broker):
 def test_describe_retcode():
     assert "Algo Trading" in describe_retcode(C.TRADE_RETCODE_CLIENT_DISABLES_AT)
     assert "code inconnu" in describe_retcode(12345)
+
+
+def test_an_order_filled_in_several_deals_is_recovered_with_its_total_volume_and_average_price():
+    from goldbot.broker.base import Deal
+    from goldbot.execution.orders import find_entry_deals
+
+    def deal(ticket, volume, price, comment="SC-B-1-L#1", magic=20260929, entry=C.DEAL_ENTRY_IN):
+        return Deal(ticket=ticket, order=5, position_id=5, symbol="XAUUSD", type=C.DEAL_TYPE_BUY, entry=entry,
+                    reason=C.DEAL_REASON_EXPERT, volume=volume, price=price, commission=-0.1, swap=0.0, fee=0.0,
+                    profit=0.0, magic=magic, comment=comment, time_msc=1_000_000)  # fmt: skip
+
+    class History:
+        def deals_between(self, start, end):
+            return [deal(1, 0.06, 4000.00), deal(2, 0.04, 4000.50), deal(3, 0.1, 3990.0, entry=C.DEAL_ENTRY_OUT),
+                    deal(4, 0.1, 4000.0, magic=0), deal(5, 0.1, 4000.0, comment="autre#1")]  # fmt: skip
+
+    found = find_entry_deals(History(), magic=20260929, comments={"SC-B-1-L#1"}, sent_s=1_000, now_s=2_000)
+    (recovered,) = found.values()
+    assert recovered.volume == pytest.approx(0.10) and recovered.price == pytest.approx(4000.20)
+    assert recovered.commission == pytest.approx(-0.2) and recovered.position_id == 5
