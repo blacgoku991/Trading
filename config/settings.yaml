@@ -131,34 +131,52 @@ strategies:
 
 scalping:
   # EXPÉRIENCE de scalping sur compte DÉMO (scripts/run_scalp.py), séparée de la stratégie Londres / New York.
-  # Point de départ expérimental, PAS une stratégie annoncée comme rentable. Ne pas modifier pendant
+  # Points de départ expérimentaux, PAS des stratégies annoncées comme rentables. Ne pas modifier pendant
   # la période de collecte : le bot refuse de repartir si ces réglages changent en cours d'expérience.
   magic: 20260929               # différent du bot principal : les deux bots s'ignorent
   candle_seconds: 5             # bougies de 5 s construites à partir des ticks bid/ask (prix médian)
-  breakout_lookback_s: 60       # cassure du plus haut / plus bas des 60 s précédentes (bougie de signal exclue)
-  min_window_candles: 6         # au moins 6 bougies dans ces 60 s (sinon marché trop calme ou trou)
-  confirm_closes: 2             # clôtures de 5 s au-delà du niveau
-  ema_fast: 20                  # filtre de tendance sur les barres M1 clôturées : EMA20 > EMA50 pour acheter
-  ema_slow: 50
-  stop_lookback_s: 30           # stop derrière la structure des 30 dernières secondes
-  stop_buffer_points: 5         # marge au-delà de cette structure
+  # Sorties communes aux deux stratégies (comparaison à risque et à sorties égaux).
+  stop_buffer_points: 5         # marge au-delà de la structure qui porte le stop
   min_stop_points: 50           # stop d'au moins 0,50 $
-  max_stop_points: 600          # et d'au plus 6,00 $ (au-delà, le lot minimal dépasse le budget)
+  max_stop_points: 600          # et d'au plus 6,00 $
   target_ratio: 1.2             # objectif = 1,2 x la distance du stop
-  min_target_cost_ratio: 3.0    # objectif >= 3 x le coût estimé (spread + glissements), sinon refus
-  expected_slippage_points: 5   # glissement supposé par exécution (filtre de coût)
-  extra_slippage_points: 10     # simulation parallèle « avec glissement supplémentaire »
+  min_target_cost_ratio: 3.0    # objectif >= 3 x le coût estimé (spread + glissements + commission), sinon refus
+  expected_slippage_points: 5   # glissement supposé par exécution (filtre de coût et calcul du lot)
+  extra_slippage_points: 10     # bilan séparé « simulation avec glissement supplémentaire »
   max_hold_s: 120               # durée maximale : fermeture même en perte
-  min_seconds_between_entries: 10  # délai entre deux entrées (en plus du réarmement du signal)
+  # Compte (communs aux deux stratégies).
   risk_per_trade_pct: 0.1       # 5 € par trade sur 5 000 €
-  max_open_positions: 3
-  max_total_risk_pct: 0.3       # risque cumulé des positions ouvertes
-  daily_loss_pct: 1.0           # l'expérience s'arrête pour la journée au-delà de -1 %
-  # Cadence d'envoi au broker : NON vérifiée auprès d'Axi. Tant que false, au plus un ordre envoyé
-  # toutes les broker_min_seconds_between_orders secondes ; les autres signaux sont simulés localement.
-  cadence_verified: false
-  broker_min_seconds_between_orders: 60
+  max_open_positions: 5         # trades ouverts en même temps (démo et simulés)
+  max_total_risk_pct: 0.5       # risque cumulé des trades ouverts
+  max_entries_per_minute: 5     # nouvelles entrées sur 60 s glissantes (5 au plus, autorisation de l'utilisateur)
+  min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s
+  daily_loss_pct: 1.0           # plus d'entrée pour la journée au-delà de -1 % (démo, latent compris)
+  min_free_margin_pct: 50       # marge libre après l'ordre >= 50 % de l'equity, sinon refus
   experiment_days: 10           # durée annoncée de la collecte (jours de cotation)
+  breakout:
+    # « cassure » v1 : clôture au-delà du plus haut / plus bas des 60 s précédentes (bougie de signal exclue),
+    # confirmée par une 2e clôture, dans le sens de la tendance M1 (EMA20 / EMA50 sur barres clôturées).
+    enabled: true
+    version: 1
+    lookback_s: 60
+    min_window_candles: 6         # au moins 6 bougies dans ces 60 s (sinon marché trop calme ou trou)
+    confirm_closes: 2
+    ema_fast: 20
+    ema_slow: 50
+    stop_lookback_s: 30           # stop derrière la structure des 30 dernières secondes
+  pullback:
+    # « impulsion-repli » v1 (principe public « impulsion puis correction », règles écrites ici, pas le code
+    # d'un produit commercial) : impulsion >= 1 ATR M1 en 60 s au plus, repli de 30 à 70 % de l'impulsion,
+    # puis clôture au-dessus du plus haut de la bougie précédente (au-dessous du plus bas pour une vente)
+    # dans les 60 s qui suivent le sommet de l'impulsion. Stop derrière le point bas du repli.
+    enabled: true
+    version: 1
+    impulse_atr: 1.0
+    impulse_max_s: 60
+    retrace_min: 0.3
+    retrace_max: 0.7
+    pullback_max_s: 60
+    atr_period: 14
 
 logging:
   level: INFO

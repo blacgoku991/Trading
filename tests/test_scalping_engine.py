@@ -1,4 +1,4 @@
-"""Moteur de scalping : bougies de 5 s, cassure confirmée, plan de trade, simulation au tick."""
+"""Moteur de scalping : bougies de 5 s, détecteurs (cassure, impulsion-repli), règles d'entrée, plan, simulation."""
 
 import numpy as np
 import pandas as pd
@@ -8,19 +8,25 @@ from goldbot.config import load_settings
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.scalping.backtest import Instrument, run_backtest
 from goldbot.scalping.engine import (
+    BREAKOUT,
     LONG,
+    PULLBACK,
     SHORT,
     BreakoutDetector,
     Candle,
     CandleBuilder,
+    PullbackDetector,
     SimTrade,
     ema_trend,
+    make_detectors,
     plan_trade,
 )
+from goldbot.scalping.policy import EntryPolicy, Exposure, reason_key, split_volume
 from tests.conftest import CONFIG_PATH, server_epoch_of
 
 SETTINGS = load_settings(CONFIG_PATH)
 CONFIG = SETTINGS.scalping
+KWARGS = dict(point=0.01, stops_level_points=1, freeze_level_points=0)
 
 
 def candle(k, close, *, high=None, low=None, spread=0.16):
@@ -49,8 +55,11 @@ def test_a_candle_ends_with_the_clock_even_without_a_new_tick():
     assert done.start_ms == 0 and builder.pending_start is None
 
 
-def _feed(detector, closes, trend=LONG, start=0):
-    return [detector.on_candle(candle(start + k, c), trend) for k, c in enumerate(closes)]
+# --- cassure ---------------------------------------------------------------------------------------
+
+
+def _feed(detector, closes, trend=LONG, start=0, atr=0.0):
+    return [detector.on_candle(candle(start + k, c), trend, atr) for k, c in enumerate(closes)]
 
 
 def test_breakout_needs_two_closes_beyond_the_previous_60_seconds_high():
@@ -60,7 +69,9 @@ def test_breakout_needs_two_closes_beyond_the_previous_60_seconds_high():
     assert results[12] is None  # première clôture au-delà : en attente de confirmation
     setup = results[13]
     assert setup is not None and setup.side == LONG and setup.level == pytest.approx(4000.05)
-    assert setup.tag == f"SC-{13 * 5000}-L"
+    assert setup.strategy == BREAKOUT and setup.tag == f"SC-B-{13 * 5000}-L"
+    assert setup.key == "B+1@4000.05" and "cassure de 4000.05 confirmée" in setup.reason
+    assert setup.structure == pytest.approx(3999.95)  # plus bas des 30 dernières secondes
 
 
 def test_close_back_inside_cancels_the_breakout():
@@ -73,8 +84,8 @@ def test_the_signal_candle_is_excluded_from_the_level():
     detector = BreakoutDetector(CONFIG)
     # La bougie de signal a un plus haut énorme : s'il était compté, la cassure serait impossible.
     _feed(detector, [4000.0] * 12)
-    assert detector.on_candle(candle(12, 4000.30, high=4010.0), LONG) is None
-    setup = detector.on_candle(candle(13, 4000.40), LONG)
+    assert detector.on_candle(candle(12, 4000.30, high=4010.0), LONG, 0.0) is None
+    setup = detector.on_candle(candle(13, 4000.40), LONG, 0.0)
     assert setup is not None and setup.level == pytest.approx(4000.05)
 
 
@@ -97,15 +108,113 @@ def test_not_enough_history_means_no_signal():
     assert all(r is None for r in _feed(detector, [4000.0] * 3 + [4001.0, 4001.1]))
 
 
+# --- impulsion-repli -------------------------------------------------------------------------------
+
+FLAT = [candle(k, 4000.0) for k in range(6)]
+IMPULSE = [
+    candle(6, 4000.40, high=4000.45, low=4000.00),
+    candle(7, 4000.80, high=4000.85, low=4000.40),
+    candle(8, 4001.10, high=4001.15, low=4000.80),  # 3999.95 -> 4001.15 : 1,20 $ en 20 s
+]
+PULLBACK_CANDLES = [
+    candle(9, 4000.80, high=4001.00, low=4000.75),  # repli de 33 %
+    candle(10, 4000.70, high=4000.85, low=4000.60),  # repli de 46 %, pas de reprise
+]
+RESUMPTION = candle(11, 4000.95, high=4001.00, low=4000.70)  # clôture au-dessus du plus haut précédent (4000.85)
+
+
+def _run(detector, candles, atr=1.0):
+    return [detector.on_candle(c, 0, atr) for c in candles]
+
+
+def test_pullback_enters_on_the_resumption_after_an_impulse_and_a_partial_retracement():
+    detector = PullbackDetector(CONFIG)
+    results = _run(detector, [*FLAT, *IMPULSE, *PULLBACK_CANDLES, RESUMPTION])
+    assert all(r is None for r in results[:-1])
+    setup = results[-1]
+    assert setup.strategy == PULLBACK and setup.side == LONG and setup.tag == f"SC-P-{11 * 5000}-L"
+    assert setup.level == pytest.approx(4001.15)  # sommet de l'impulsion
+    assert setup.structure == pytest.approx(4000.60)  # creux du repli : le stop va dessous
+    assert setup.key == f"P+1@{5 * 5000}-{8 * 5000}"  # départ : le plus récent des plus bas égaux
+    assert "impulsion de 1.20 $ (1.2 ATR M1) en 20 s, repli de 46 %" in setup.reason
+
+
+def test_pullback_short_is_the_mirror_of_the_long():
+    detector = PullbackDetector(CONFIG)
+    candles = [
+        *FLAT,
+        candle(6, 3999.60, high=4000.00, low=3999.55),
+        candle(7, 3999.20, high=3999.60, low=3999.15),
+        candle(8, 3998.90, high=3999.20, low=3998.85),  # 4000.05 -> 3998.85
+        candle(9, 3999.20, high=3999.25, low=3999.00),
+        candle(10, 3999.30, high=3999.40, low=3999.15),
+        candle(11, 3999.05, high=3999.30, low=3999.00),  # clôture sous le plus bas précédent (3999.15)
+    ]
+    setup = _run(detector, candles)[-1]
+    assert setup.side == SHORT and setup.tag.endswith("-S")
+    assert setup.level == pytest.approx(3998.85) and setup.structure == pytest.approx(3999.40)
+
+
+def test_a_too_deep_pullback_cancels_the_impulse():
+    detector = PullbackDetector(CONFIG)
+    deep = candle(9, 4000.30, high=4000.90, low=4000.20)  # repli de 79 % > 70 %
+    after = [candle(10, 4000.60, high=4000.65, low=4000.40), candle(11, 4000.90, high=4000.95, low=4000.60)]
+    assert all(r is None for r in _run(detector, [*FLAT, *IMPULSE, deep, *after]))
+
+
+def test_no_entry_when_the_resumption_comes_too_late():
+    detector = PullbackDetector(CONFIG)
+    drift = [candle(9 + k, 4000.75, high=4000.80, low=4000.70) for k in range(13)]  # 65 s sans reprise
+    late = candle(22, 4001.00, high=4001.05, low=4000.80)
+    assert all(r is None for r in _run(detector, [*FLAT, *IMPULSE, *drift, late]))
+
+
+def test_a_shallow_pullback_is_not_enough():
+    detector = PullbackDetector(CONFIG)
+    shallow = [candle(9, 4001.05, high=4001.10, low=4001.00), candle(10, 4001.00, high=4001.05, low=4000.95)]
+    resumption = candle(11, 4001.12, high=4001.14, low=4001.00)  # repli de 17 % seulement
+    assert all(r is None for r in _run(detector, [*FLAT, *IMPULSE, *shallow, resumption]))
+
+
+def test_no_impulse_without_atr_or_below_its_threshold():
+    candles = [*FLAT, *IMPULSE, *PULLBACK_CANDLES, RESUMPTION]
+    assert all(r is None for r in _run(PullbackDetector(CONFIG), candles, atr=0.0))
+    assert all(r is None for r in _run(PullbackDetector(CONFIG), candles, atr=1.5))  # 1,20 $ < 1 x 1,50
+
+
+def test_one_entry_per_impulse_and_a_new_impulse_is_a_new_occasion():
+    detector = PullbackDetector(CONFIG)
+    first = _run(detector, [*FLAT, *IMPULSE, *PULLBACK_CANDLES, RESUMPTION])[-1]
+    # La hausse reprend depuis le creux du repli (4000.60) : nouvelle impulsion, nouveau repli, nouvelle reprise.
+    more = [
+        candle(12, 4001.30, high=4001.35, low=4000.95),
+        candle(13, 4001.70, high=4001.75, low=4001.30),
+        candle(14, 4001.40, high=4001.45, low=4001.20),
+        candle(15, 4001.25, high=4001.35, low=4001.15),
+        candle(16, 4001.50, high=4001.55, low=4001.25),
+    ]
+    results = _run(detector, more)
+    second = results[-1]
+    assert sum(r is not None for r in results) == 1 and second is not None
+    assert second.key != first.key and second.level == pytest.approx(4001.75)
+
+
+def test_make_detectors_follows_the_config_or_the_request():
+    assert [d.code for d in make_detectors(CONFIG)] == [BREAKOUT, PULLBACK]
+    assert [d.code for d in make_detectors(CONFIG, (PULLBACK,))] == [PULLBACK]
+    only_breakout = CONFIG.model_copy(update={"pullback": CONFIG.pullback.model_copy(update={"enabled": False})})
+    assert [d.code for d in make_detectors(only_breakout)] == [BREAKOUT]
+
+
+# --- plan ------------------------------------------------------------------------------------------
+
+
 def _setup(closes=(4000.0,) * 12 + (4000.30, 4000.40)):
-    detector = BreakoutDetector(CONFIG)
-    results = _feed(detector, list(closes))
-    return results[-1], list(detector.history)
+    return _feed(BreakoutDetector(CONFIG), list(closes))[-1]
 
 
-def test_plan_puts_the_stop_behind_recent_structure_and_targets_1_2_times_it():
-    setup, recent = _setup()
-    plan = plan_trade(setup, 4000.32, 4000.48, recent, CONFIG, point=0.01, stops_level_points=1, freeze_level_points=0)
+def test_plan_puts_the_stop_behind_the_signal_structure_and_targets_1_2_times_it():
+    plan = plan_trade(_setup(), 4000.32, 4000.48, CONFIG, **KWARGS)
     # Plus bas médian des 30 dernières secondes : 3999.95 ; stop = 3999.95 - 0.08 (demi-spread) - 0.05 = 3999.82.
     assert plan.sl == pytest.approx(3999.82)
     assert plan.entry == 4000.48 and plan.stop_distance == pytest.approx(0.66)
@@ -113,31 +222,96 @@ def test_plan_puts_the_stop_behind_recent_structure_and_targets_1_2_times_it():
     assert plan.target == pytest.approx(0.79)
 
 
+def _scaled(candles, factor):
+    """Même scénario, écarts de prix multipliés (impulsion de 2,40 $ au lieu de 1,20 $ pour factor = 2)."""
+
+    def price(value):
+        return round(4000.0 + (value - 4000.0) * factor, 2)
+
+    return [Candle(c.start_ms, price(c.open), price(c.high), price(c.low), price(c.close), c.bid, c.ask,
+                   c.max_spread, c.ticks) for c in candles]  # fmt: skip
+
+
+def test_plan_of_a_pullback_puts_the_stop_under_the_pullback_low():
+    candles = _scaled([*FLAT, *IMPULSE, *PULLBACK_CANDLES, RESUMPTION], 2)
+    setup = _run(PullbackDetector(CONFIG), candles, atr=2.0)[-1]
+    assert setup.structure == pytest.approx(4001.20)
+    plan = plan_trade(setup, 4001.82, 4001.98, CONFIG, **KWARGS)
+    assert plan.sl == pytest.approx(4001.20 - 0.08 - 0.05)
+    assert plan.stop_distance == pytest.approx(4001.98 - 4001.07)
+    # Même signal à moitié échelle : stop de 0,56 $, objectif de 0,67 $ < 3 x 0,26 $ de coût : refus.
+    small = _run(PullbackDetector(CONFIG), [*FLAT, *IMPULSE, *PULLBACK_CANDLES, RESUMPTION])[-1]
+    assert "trop faible" in plan_trade(small, 4000.87, 4001.03, CONFIG, **KWARGS)
+
+
 def test_plan_refuses_a_target_too_small_for_the_costs():
-    setup, recent = _setup()
     # Spread de 0,40 : coût estimé 0,40 + 0,10 = 0,50 ; objectif 1,2 x 0,93 = 1,12 < 3 x 0,50.
-    refusal = plan_trade(setup, 4000.20, 4000.60, recent, CONFIG, point=0.01, stops_level_points=1,
-                         freeze_level_points=0)  # fmt: skip
+    refusal = plan_trade(_setup(), 4000.20, 4000.60, CONFIG, **KWARGS)
     assert isinstance(refusal, str) and "trop faible" in refusal
 
 
 def test_plan_refuses_stops_too_far():
     # Creux à 3990 dans les 30 dernières secondes : le stop derrière la structure serait à plus de 10 $.
-    closes = (4000.0,) * 9 + (3990.0,) + (4000.0,) * 2 + (4000.30, 4000.40)
-    setup, recent = _setup(closes)
-    refusal = plan_trade(setup, 4000.32, 4000.48, recent, CONFIG, point=0.01, stops_level_points=1,
-                         freeze_level_points=0)  # fmt: skip
+    setup = _setup((4000.0,) * 9 + (3990.0,) + (4000.0,) * 2 + (4000.30, 4000.40))
+    refusal = plan_trade(setup, 4000.32, 4000.48, CONFIG, **KWARGS)
     assert isinstance(refusal, str) and "trop loin" in refusal
 
 
 def test_commission_counts_in_the_cost_filter():
-    setup, recent = _setup()
-    kwargs = dict(point=0.01, stops_level_points=1, freeze_level_points=0)
-    plan = plan_trade(setup, 4000.32, 4000.48, recent, CONFIG, **kwargs)
+    plan = plan_trade(_setup(), 4000.32, 4000.48, CONFIG, **KWARGS)
     assert plan.cost == pytest.approx(0.26)  # spread 0,16 + 2 x 0,05 de glissement
     # 0,07 $ par once aller-retour (7 $ par lot) : coût 0,33, objectif 0,79 < 3 x 0,33.
-    refusal = plan_trade(setup, 4000.32, 4000.48, recent, CONFIG, commission_per_oz=0.07, **kwargs)
+    refusal = plan_trade(_setup(), 4000.32, 4000.48, CONFIG, commission_per_oz=0.07, **KWARGS)
     assert isinstance(refusal, str) and "trop faible" in refusal
+
+
+# --- règles d'entrée et fractionnement -------------------------------------------------------------
+
+
+def _policy_check(policy, now_ms, *, key="k", open_trades=(), risk=5.0, day_result=0.0):
+    return policy.refusal(now_ms, key=key, risk=risk, equity=5000.0, day_result=day_result,
+                          day_start_equity=5000.0, open_trades=list(open_trades))  # fmt: skip
+
+
+def test_up_to_five_entries_per_rolling_minute_with_a_candle_between_them():
+    policy = EntryPolicy(CONFIG)
+    for k in range(5):
+        assert _policy_check(policy, k * 5_000, key=f"k{k}") is None
+        policy.accept(k * 5_000)
+    assert reason_key(_policy_check(policy, 25_000, key="k5")) == "entrées par minute au maximum"
+    assert _policy_check(policy, 60_001, key="k6") is None  # la première entrée est sortie de la fenêtre
+    policy = EntryPolicy(CONFIG)
+    policy.accept(0)
+    assert reason_key(_policy_check(policy, 3_000)) == "délai entre deux entrées"
+
+
+def test_the_same_occasion_is_never_taken_twice_while_its_trade_is_open():
+    policy = EntryPolicy(CONFIG)
+    open_trade = Exposure("SC-B-1-L", "B+1@4000.05", LONG, 5.0)
+    assert reason_key(_policy_check(policy, 0, key="B+1@4000.05", open_trades=[open_trade])) == (
+        "même occasion déjà en position"
+    )
+    assert _policy_check(policy, 0, key="P+1@0-40000", open_trades=[open_trade]) is None  # autre occasion
+
+
+def test_positions_cumulative_risk_and_daily_loss_limits():
+    policy = EntryPolicy(CONFIG)
+    five = [Exposure(f"t{k}", f"k{k}", LONG, 4.0) for k in range(5)]
+    assert reason_key(_policy_check(policy, 0, open_trades=five)) == "positions ouvertes au maximum"
+    heavy = [Exposure("t", "x", LONG, 22.0)]  # 0,5 % de 5 000 = 25
+    assert reason_key(_policy_check(policy, 0, open_trades=heavy, risk=5.0)) == "risque cumulé au maximum"
+    assert reason_key(_policy_check(policy, 0, day_result=-50.0)) == "perte du jour atteinte"
+
+
+def test_split_volume_in_equal_parts_under_the_maximum_per_order():
+    assert split_volume(0.11, 20.0, 0.01) == [0.11]
+    assert split_volume(45.0, 20.0, 0.01) == [15.0, 15.0, 15.0]
+    parts = split_volume(0.11, 0.05, 0.01)
+    assert parts == [0.04, 0.04, 0.03] and sum(parts) == pytest.approx(0.11)
+    assert split_volume(0.0, 20.0, 0.01) == []
+
+
+# --- simulation au tick ----------------------------------------------------------------------------
 
 
 def test_simulated_result_deducts_the_commission_once():
@@ -181,16 +355,12 @@ def test_ema_trend():
     assert ema_trend([1.0] * 10, 20, 50) == 0
 
 
-# --- test sur l'historique -------------------------------------------------------------------------
+# --- rejeu sur l'historique ------------------------------------------------------------------------
 
 INSTRUMENT = Instrument(0.01, 100.0, 0.01, 100.0, 0.01, 0, 0)
 
 
-def _history(base_ms):
-    """Range calme de 2 minutes puis cassure confirmée, tendance M1 haussière."""
-    points = [(base_ms + k * 1000, 4000.00 + 0.02 * (k % 2)) for k in range(-120, 0)]
-    points += [(base_ms + 5_000 + k * 1000, 4000.40) for k in range(5)]
-    points += [(base_ms + 10_000 + k * 1000, 4000.50) for k in range(200)]
+def _frames(points, base_ms):
     ticks = pd.DataFrame(
         {
             "time_msc_server": [t for t, _ in points],
@@ -199,25 +369,52 @@ def _history(base_ms):
         }
     )
     minutes = np.arange(base_ms // 1000 - 300 * 60, base_ms // 1000, 60)
-    bars = pd.DataFrame({"time_server": minutes, "close": np.linspace(3990.0, 4000.0, len(minutes))})
+    close = np.linspace(3990.0, 4000.0, len(minutes))  # tendance M1 haussière, ATR M1 d'environ 1 $
+    bars = pd.DataFrame({"time_server": minutes, "close": close, "high": close + 0.5, "low": close - 0.5})
     return ticks, bars
 
 
-def _replay(base_ms):
-    ticks, bars = _history(base_ms)
+def _breakout_history(base_ms):
+    """Range calme de 2 minutes puis cassure confirmée."""
+    points = [(base_ms + k * 1000, 4000.00 + 0.02 * (k % 2)) for k in range(-120, 0)]
+    points += [(base_ms + 5_000 + k * 1000, 4000.40) for k in range(5)]
+    points += [(base_ms + 10_000 + k * 1000, 4000.50) for k in range(200)]
+    return _frames(points, base_ms)
+
+
+def _pullback_history(base_ms):
+    """Range calme, impulsion de 2,40 $ en 15 s, repli de 46 %, puis reprise."""
+    points = [(base_ms + k * 1000, 4000.00 + 0.02 * (k % 2)) for k in range(-120, 0)]
+    path = np.concatenate(
+        [np.linspace(4000.20, 4002.40, 15), np.linspace(4002.20, 4001.30, 10), np.linspace(4001.80, 4002.20, 10)]
+    )
+    points += [(base_ms + k * 1000, round(float(mid), 2)) for k, mid in enumerate(path)]
+    points += [(base_ms + (35 + k) * 1000, 4002.20) for k in range(200)]
+    return _frames(points, base_ms)
+
+
+def _replay(history, base_ms, strategies=None):
+    ticks, bars = history(base_ms)
     schedule = MarketSchedule.from_config(SETTINGS.market_hours)
     return run_backtest(ticks, bars, CONFIG, instrument=INSTRUMENT, schedule=schedule, initial_equity=5700.0,
-                        slippage_points=0.0)  # fmt: skip
+                        slippage_points=0.0, strategies=strategies)  # fmt: skip
 
 
 def test_backtest_trades_the_confirmed_breakout_and_exits_at_max_duration():
-    result = _replay(server_epoch_of("2026-01-06 12:00") * 1000)
-    assert result.signals == 1 and len(result.trades) == 1
+    result = _replay(_breakout_history, server_epoch_of("2026-01-06 12:00") * 1000, (BREAKOUT,))
+    assert result.signals == {BREAKOUT: 1} and len(result.trades) == 1
     (trade,) = result.trades.to_dict("records")
+    assert trade["strategy"] == BREAKOUT and trade["parts"] == 1
     assert trade["reason"] == "durée max" and trade["exit_ms"] - trade["open_ms"] >= 120_000
 
 
+def test_backtest_trades_the_pullback_resumption():
+    result = _replay(_pullback_history, server_epoch_of("2026-01-06 12:00") * 1000, (PULLBACK,))
+    assert result.signals[PULLBACK] == 1 and len(result.trades) == 1
+    assert result.trades["strategy"].tolist() == [PULLBACK]
+
+
 def test_backtest_refuses_an_entry_when_the_market_closes_before_the_max_duration():
-    result = _replay(server_epoch_of("2026-01-06 23:57") * 1000 + 30_000)  # pause quotidienne à 23:59
-    assert result.signals == 1 and result.trades.empty
-    assert result.refusals == {"le marché ferme avant la durée max": 1}
+    result = _replay(_breakout_history, server_epoch_of("2026-01-06 23:57") * 1000 + 30_000, (BREAKOUT,))
+    assert result.signals == {BREAKOUT: 1} and result.trades.empty  # pause quotidienne à 23:59
+    assert result.refusals == {(BREAKOUT, "le marché ferme avant la durée max"): 1}

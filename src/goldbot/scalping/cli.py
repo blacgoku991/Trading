@@ -9,6 +9,7 @@ import argparse
 import json
 import logging
 import time
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,8 +29,9 @@ from goldbot.execution.orders import OrderRejected, filling_candidates, select_f
 from goldbot.live.lock import InstanceLock
 from goldbot.monitoring.logging_setup import setup_logging
 from goldbot.scalping.backtest import Instrument, run_backtest, summary
-from goldbot.scalping.live import ScalpRunner
-from goldbot.scalping.store import CLOSED, OPEN, VERIFY_PREFIX, ScalpStore, params_hash
+from goldbot.scalping.engine import BREAKOUT, PULLBACK, STRATEGY_NAMES
+from goldbot.scalping.live import ScalpRunner, strategy_versions
+from goldbot.scalping.store import CLOSED, FAILED, OPEN, SENT, VERIFY_PREFIX, ScalpStore, params_hash
 
 log = logging.getLogger("goldbot.scalp")
 
@@ -60,6 +62,8 @@ def _open_store(path: Path, settings: Settings, *, new_experiment: bool, say: Ca
     """Réglages figés pendant l'expérience : un changement exige --nouvelle-experience (l'ancienne est archivée)."""
     current = params_hash(settings.scalping.model_dump())
     store = ScalpStore(path)
+    if store.archived is not None:
+        say(f"Base d'une version précédente du bot archivée : {store.archived.name}")
     saved = store.meta("params_hash")
     if saved is not None and saved != current and store.has_activity():
         if not new_experiment:
@@ -92,36 +96,43 @@ def _verify(runner: ScalpRunner, store_path: Path, settings: Settings, say: Call
         return False
     tick = broker.tick(spec.name)
     tag = f"{VERIFY_PREFIX}{now_ms}"
+    comment = f"{tag}#1"
+    sl = round(tick.bid - VERIFY_STOP, spec.digits)
+    tp = round(tick.ask + cfg.target_ratio * VERIFY_STOP, spec.digits)
     request = {
         "action": C.TRADE_ACTION_DEAL,
         "symbol": spec.name,
         "volume": spec.volume_min,
         "type": C.ORDER_TYPE_BUY,
-        "sl": round(tick.bid - VERIFY_STOP, spec.digits),
-        "tp": round(tick.ask + cfg.target_ratio * VERIFY_STOP, spec.digits),
+        "sl": sl,
+        "tp": tp,
         "deviation": 20,
         "magic": cfg.magic,
-        "comment": tag,
+        "comment": comment,
         "type_time": C.ORDER_TIME_GTC,
     }
     say(f"Ouverture d'un achat de test ({spec.volume_min:g} lot, stop à {VERIFY_STOP:.2f} $)...")
+    # Enregistré avant l'envoi, comme un vrai signal : un arrêt pendant l'envoi reste rattrapable.
+    runner.store.record_signal(tag, strategy="VERIF", version=0, params_hash="-", key=tag, time_ms=now_ms, side=1,
+                               status=SENT, reason="vérification technique", volume=spec.volume_min, entry=tick.ask,
+                               sl=sl, tp=tp, risk=0.0, parts=1)  # fmt: skip
+    runner.store.record_order(tag, 1, comment=comment, side=1, volume=spec.volume_min, sl=sl, tp=tp, risk=0.0,
+                              spread=tick.ask - tick.bid, time_ms=now_ms)  # fmt: skip
     try:
         filling, _ = select_filling(broker, {**request, "price": tick.ask}, spec.filling_mode)
         candidates = filling_candidates(spec.filling_mode)
         send_market_order(broker, request, candidates[candidates.index(filling) :], sleep=runner.sleep)
     except (OrderRejected, BrokerError) as exc:
-        say(f"  ÉCHEC ouverture : {exc}")
+        runner.store.update_order(tag, 1, status=FAILED, detail=str(exc))
+        say(f"  ÉCHEC ouverture : {exc} (vérifie l'onglet Trade de MT5)")
         return False
-    position = runner._find(tag)
+    position = runner._find(comment)
     checks.append(("ouverture d'une position de test (achat, lot minimal)", position is not None, ""))
     if position is None:
         say("  ÉCHEC : position introuvable, vérifie l'onglet Trade de MT5 (et ferme-la à la main si besoin)")
         return False
     checks.append(("stop côté serveur présent dès l'entrée", position.sl > 0, f"stop {position.sl:.2f}"))
-    runner.store.record(tag, now_ms, 1, OPEN, volume=position.volume, sl=position.sl, tp=position.tp,
-                        entry=tick.ask, risk=0.0)  # fmt: skip
-    runner.store.update(tag, position=position.ticket, open_price=position.price_open,
-                        deadline_ms=int(position.time_msc) + VERIFY_HOLD_S * 1000)  # fmt: skip
+    runner._mark_open(tag, 1, position, hold_s=VERIFY_HOLD_S)
     # Stop resserré côté serveur (jamais éloigné) : c'est la requête utilisée pour reposer un stop manquant.
     tighter = round(position.sl + VERIFY_TIGHTEN, spec.digits)
     result = broker.order_send(
@@ -134,7 +145,7 @@ def _verify(runner: ScalpRunner, store_path: Path, settings: Settings, say: Call
             "magic": cfg.magic,
         }
     )
-    moved = runner._find(tag)
+    moved = runner._find(comment)
     stop_moved = result.retcode == C.TRADE_RETCODE_DONE and moved is not None and abs(moved.sl - tighter) < spec.point
     checks.append(
         (
@@ -144,7 +155,7 @@ def _verify(runner: ScalpRunner, store_path: Path, settings: Settings, say: Call
         )
     )
     if stop_moved:
-        runner.store.update(tag, sl=moved.sl)
+        runner.store.update_order(tag, 1, sl=moved.sl)
     runner.store.close()
     # Redémarrage simulé : un nouveau bot relit l'état et reprend la position.
     restarted = ScalpRunner(
@@ -158,19 +169,19 @@ def _verify(runner: ScalpRunner, store_path: Path, settings: Settings, say: Call
         say=say,
         sleep=runner.sleep,
     )
-    resumed = tag in [t.tag for t in restarted.store.demo_trades(OPEN)]
+    resumed = any(order.tag == tag for order in restarted.store.orders(OPEN))
     checks.append(("redémarrage : position reprise depuis l'état enregistré", resumed, ""))
     say(f"  Position {position.ticket} ouverte à {position.price_open:.2f} ; sortie forcée dans {VERIFY_HOLD_S} s...")
     for _ in range(int((VERIFY_HOLD_S + 30) / POLL_SECONDS)):
         restarted._manage_positions(restarted.server_now_ms())
-        if restarted.store.signal(tag).get("status") == CLOSED:
+        if restarted.store.order(tag, 1).get("status") == CLOSED:
             break
         runner.sleep(POLL_SECONDS)
-    result_row = restarted.store.signal(tag)
-    closed = result_row.get("status") == CLOSED
-    checks.append(("clôture à la durée maximale, même en perte", closed, str(result_row.get("exit_reason") or "")))
+    row = restarted.store.order(tag, 1)
+    closed = row.get("status") == CLOSED
+    checks.append(("clôture à la durée maximale, même en perte", closed, str(row.get("exit_reason") or "")))
     if closed:
-        estimate, real = result_row.get("est_pnl"), result_row.get("real_pnl")
+        estimate, real = row.get("est_pnl"), row.get("real_pnl")
         both = estimate is not None and real is not None
         checks.append(
             (
@@ -279,19 +290,21 @@ def live_main(
         if args.verification:
             return EXIT_OK if _verify(runner, store_path, settings, say) else EXIT_FAILED
         cfg = settings.scalping
+        now_ms = runner.server_now_ms()
+        for code, (version, digest, params) in strategy_versions(cfg).items():
+            store.register_version(code, version, digest, params, now_ms)
+        say("Stratégies (version · empreinte des réglages) : " + ", ".join(runner.labels[c] for c in runner.versions))
         day = store.trading_days()
         say(
             f"Compte DÉMO, equity {account.equity:.2f} {account.currency}. Risque {cfg.risk_per_trade_pct:g} % "
-            f"par trade, {cfg.max_open_positions} positions au plus, stop -{cfg.daily_loss_pct:g} % par jour."
+            f"par trade, {cfg.max_open_positions} positions et {cfg.max_total_risk_pct:g} % de risque cumulé au plus, "
+            f"{cfg.max_entries_per_minute} entrées par minute au plus, -{cfg.daily_loss_pct:g} % par jour au plus."
         )
         say(
             f"Jour de collecte {day + 1} sur {cfg.experiment_days} annoncés. Ne pas modifier les réglages avant la fin."
         )
-        if not cfg.cadence_verified and not args.simulation:
-            say(
-                f"Cadence d'envoi Axi non vérifiée : au plus un ordre toutes les "
-                f"{cfg.broker_min_seconds_between_orders:g} s, les autres signaux sont simulés localement."
-            )
+        if args.simulation:
+            say("Mode --simulation : aucun ordre n'est envoyé, tout est simulé.")
         say("Ctrl+C pour arrêter (les positions de l'expérience sont alors fermées). Bilans toutes les 15 minutes.")
         steps = 0
         last_report = last_status = pd.Timestamp(now_utc())
@@ -338,6 +351,35 @@ def live_main(
         lock.release()
 
 
+def _echo_replay(echo: Callable[[str], None], title: str, result, days: float, rate: float, code: str | None) -> None:
+    m = summary(result, days, code)
+    signals = result.signals[code] if code else sum(result.signals.values())
+    echo("")
+    echo(f"### {title}")
+    if not m["trades"]:
+        echo(f"signaux {signals}, aucun trade")
+    else:
+        echo(
+            f"signaux {signals} | trades {m['trades']} ({m['par_jour']:.1f} par jour) | gagnants "
+            f"{m['gagnants_pct']:.0f} % | gain moyen {m['gain_moyen'] * rate:+.2f} | perte moyenne "
+            f"{m['perte_moyenne'] * rate:+.2f} | profit factor {m['profit_factor']:.2f}"
+        )
+        echo(
+            f"gains {m['gains'] * rate:+.0f} | pertes {m['pertes'] * rate:+.0f} | net {m['net'] * rate:+.0f} (dont "
+            f"frais {0.0 - m['frais'] * rate:+.0f}) | espérance {m['esperance_r']:+.3f} R | t {m['t_stat']:+.1f} | "
+            f"pire baisse {m['drawdown_pct']:.1f} % | jours positifs {m['jours_positifs']} sur {m['jours']}"
+        )
+        echo(
+            f"sorties : objectif {m['objectif']}, stop {m['stop']}, durée max {m['duree_max']} | durée moyenne "
+            f"{m['duree_moyenne_s']:.0f} s | trades fractionnés {m['fractionnes']}"
+        )
+    refusals = Counter()
+    for (strategy, reason), count in result.refusals.items():
+        if code in (None, strategy):
+            refusals[reason] += count
+    echo("refus : " + (", ".join(f"{reason} {n}" for reason, n in refusals.most_common()) or "aucun"))
+
+
 def backtest_main(
     argv: list[str] | None = None, *, root: Path | None = None, echo: Callable[[str], None] = print
 ) -> int:
@@ -345,7 +387,13 @@ def backtest_main(
     parser = argparse.ArgumentParser(prog="backtest_scalp.py", description="Expérience de scalping sur les ticks.")
     parser.add_argument("--config", type=Path, default=root / "config" / "settings.yaml")
     parser.add_argument("--dir", type=Path, help="dossier des données (défaut : export.directory)")
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--strategie",
+        choices=["B", "P", "ensemble", "comparer"],
+        default="comparer",
+        help="B = cassure, P = impulsion-repli, ensemble = les deux à la fois, comparer = les trois",
+    )
+    args = parser.parse_args(argv)  # fmt: skip
     try:
         settings = load_settings(args.config)
     except ConfigError as exc:
@@ -370,30 +418,28 @@ def backtest_main(
     days = (ticks["time_msc_server"].iloc[-1] - ticks["time_msc_server"].iloc[0]) / 86_400_000 * 5 / 7
     cfg = settings.scalping
     start = 5000.0 / rate
+    versions = strategy_versions(cfg.model_copy(update={
+        "breakout": cfg.breakout.model_copy(update={"enabled": True}),
+        "pullback": cfg.pullback.model_copy(update={"enabled": True}),
+    }))  # fmt: skip
+    labels = {code: f"{STRATEGY_NAMES[code]} v{v} · {h}" for code, (v, h, _) in versions.items()}
+    runs = {"B": [(BREAKOUT,)], "P": [(PULLBACK,)], "ensemble": [(BREAKOUT, PULLBACK)]}.get(
+        args.strategie, [(BREAKOUT,), (PULLBACK,), (BREAKOUT, PULLBACK)]
+    )
     echo(f"Ticks du {pd.Timestamp(ticks['time'].iloc[0]):%Y-%m-%d} au {pd.Timestamp(ticks['time'].iloc[-1]):%Y-%m-%d}, "
-         f"départ 5 000 (devise du compte), réglages de config/settings.yaml (scalping).")  # fmt: skip
-    for label, slip in (
-        ("prix exécutables", 0.0),
-        (f"glissement +{cfg.extra_slippage_points:g} points", cfg.extra_slippage_points),
-    ):
-        schedule = MarketSchedule.from_config(settings.market_hours)
-        result = run_backtest(
-            ticks, bars, cfg, instrument=instrument, schedule=schedule, initial_equity=start, slippage_points=slip
-        )
-        m = summary(result, days)
-        echo("")
-        echo(f"### {label}")
-        echo(f"signaux {result.signals}, trades {m['trades']}")
-        if m["trades"]:
-            echo(
-                f"gagnants {m['gagnants_pct']:.0f} %, gain moyen {m['gain_moyen'] * rate:+.2f}, perte moyenne "
-                f"{m['perte_moyenne'] * rate:+.2f}, profit factor {m['profit_factor']:.2f}"
-            )
-            echo(
-                f"gains {m['gains'] * rate:+.0f}, pertes {m['pertes'] * rate:+.0f}, net {m['net'] * rate:+.0f} ; "
-                f"compte {start * rate:,.0f} -> {result.final_equity * rate:,.0f}, "
-                f"pire baisse {m['drawdown_pct']:.1f} %"
-            )
-            echo(f"sorties : objectif {m['objectif']}, stop {m['stop']}, durée max {m['duree_max']}")
-        echo("refus : " + ", ".join(f"{k} {v}" for k, v in result.refusals.most_common()))
+         f"compte de départ 5 000 (devise du compte), {cfg.risk_per_trade_pct:g} % de risque par trade, mêmes "
+         f"règles d'entrée, de sortie et de compte pour chaque stratégie (config/settings.yaml, scalping).")  # fmt: skip
+    schedule = MarketSchedule.from_config(settings.market_hours)
+    for slip in (0.0, cfg.extra_slippage_points):
+        cost = "prix exécutables" if slip == 0 else f"glissement +{slip:g} points"
+        for strategies in runs:
+            result = run_backtest(ticks, bars, cfg, instrument=instrument, schedule=schedule, initial_equity=start,
+                                  slippage_points=slip, strategies=strategies,
+                                  commission_per_lot_side=settings.backtest.commission_per_lot_side)  # fmt: skip
+            if len(strategies) == 1:
+                _echo_replay(echo, f"{labels[strategies[0]]} seule, {cost}", result, days, rate, strategies[0])
+            else:
+                _echo_replay(echo, f"les deux ensemble, {cost}", result, days, rate, None)
+                for code in strategies:
+                    _echo_replay(echo, f"  dont {labels[code]}", result, days, rate, code)
     return EXIT_OK

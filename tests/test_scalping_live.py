@@ -1,5 +1,6 @@
 """Expérience de scalping en direct, avec le broker factice."""
 
+import sqlite3
 from dataclasses import replace
 
 import numpy as np
@@ -8,12 +9,12 @@ import pytest
 
 from goldbot.broker import mt5_constants as C
 from goldbot.broker.base import TICKS_DTYPE
-from goldbot.broker.fake_broker import FakeBroker, make_account, make_bars, make_tick
+from goldbot.broker.fake_broker import FakeBroker, make_account, make_bars, make_symbol, make_tick
 from goldbot.broker.supervisor import ConnectionSupervisor
 from goldbot.scalping.cli import EXIT_OK, EXIT_REFUSED, live_main
-from goldbot.scalping.engine import LONG, Candle, Setup
-from goldbot.scalping.live import ScalpRunner
-from goldbot.scalping.store import CLOSED, NOT_SENT, OPEN, REFUSED, ScalpStore
+from goldbot.scalping.engine import BREAKOUT, LONG, PULLBACK, Candle, Setup
+from goldbot.scalping.live import ScalpRunner, strategy_versions
+from goldbot.scalping.store import CLOSED, FAILED, NOT_SENT, OPEN, REFUSED, SENT, ScalpStore
 from tests.conftest import CONFIG_PATH, server_epoch_of
 
 MAGIC = 20260929
@@ -49,15 +50,18 @@ def range_then_breakout(start_ms, *, breakout=True):
     return ticks(points)
 
 
-@pytest.fixture
-def world(tmp_path, settings):
+def make_world(tmp_path, settings, *, symbol=None, account=None):
     clock = Clock(BASE_MS + 1_500)
-    broker = FakeBroker(account=make_account(balance=10_000.0, equity=10_000.0, margin_free=10_000.0))
+    broker = FakeBroker(
+        account=account or make_account(balance=10_000.0, equity=10_000.0, margin_free=10_000.0),
+        symbols=[symbol or make_symbol()],
+    )
     broker.connect()
-    # Barres M1 en hausse régulière : EMA20 au-dessus de l'EMA50.
+    # Barres M1 en hausse régulière (EMA20 au-dessus de l'EMA50), d'environ 1 $ d'amplitude (ATR M1).
     minutes = np.arange(BASE_MS // 1000 - 300 * 60, BASE_MS // 1000, 60)
     bars = make_bars(minutes, start_price=3990.0)
     bars["close"] = np.linspace(3990.0, 4000.0, len(minutes))
+    bars["open"], bars["high"], bars["low"] = bars["close"], bars["close"] + 0.5, bars["close"] - 0.5
     broker.history_bars = bars
     broker.history_ticks = range_then_breakout(BASE_MS, breakout=False)
 
@@ -65,6 +69,7 @@ def world(tmp_path, settings):
         broker.ticks["XAUUSD"] = make_tick(round(mid - spread / 2, 2), round(mid + spread / 2, 2), clock.server_ms)
 
     quote(4000.0)
+    lines = []
 
     def runner(*, local_only=False, store=None):
         return ScalpRunner(
@@ -79,8 +84,12 @@ def world(tmp_path, settings):
             sleep=lambda s: None,
         )
 
-    lines = []
     return broker, clock, quote, runner, lines
+
+
+@pytest.fixture
+def world(tmp_path, settings):
+    return make_world(tmp_path, settings)
 
 
 def _breakout(broker, clock, quote, live):
@@ -92,8 +101,7 @@ def _breakout(broker, clock, quote, live):
 
 
 def _second_breakout(broker, clock, quote, live):
-    """Retour dans le range (réarmement) puis nouvelle cassure confirmée, 30 s après la première."""
-    live.last_entry_ms = -(2**62)  # délai entre deux entrées écoulé
+    """Retour dans le range (réarmement) puis nouvelle cassure confirmée, 37 s après la première."""
     later = [(BASE_MS + 30_000 + k * 1000, 4000.10) for k in range(12)]
     later += [(BASE_MS + 42_000 + k * 1000, 4000.95) for k in range(5)]
     later += [(BASE_MS + 47_000 + k * 1000, 4001.05) for k in range(6)]
@@ -103,51 +111,74 @@ def _second_breakout(broker, clock, quote, live):
     live.step()
 
 
+def _deals(broker):
+    return [r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL and "position" not in r]
+
+
 def test_breakout_opens_a_demo_trade_with_its_server_stop_then_closes_at_max_duration(world):
     broker, clock, quote, runner, lines = world
     live = runner()
     _breakout(broker, clock, quote, live)
     (position,) = broker.positions()
     assert position.magic == MAGIC and position.sl > 0 and position.tp > position.price_open
-    (sent,) = [r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL]
-    assert sent["sl"] == pytest.approx(3999.87) and sent["comment"].startswith("SC-")
-    assert any("signal ACHAT" in line for line in lines) and any("entrée démo" in line for line in lines)
+    (sent,) = _deals(broker)
+    assert sent["sl"] == pytest.approx(3999.87) and sent["comment"] == f"SC-B-{BASE_MS + 10_000}-L#1"
+    assert any("signal ACHAT [cassure v1 · " in line for line in lines)
+    assert any("entrée démo [cassure v1" in line for line in lines)
     # 121 s plus tard : sortie forcée à la durée maximale, même si la position perd.
     clock.advance(121)
     quote(4000.30)
     live.step()
     assert broker.positions() == []
     live.step()  # la sortie est relevée dans les deals au passage suivant
-    row = live.store.signal(sent["comment"])
-    assert row["status"] == CLOSED and row["exit_reason"] == "durée max" and row["real_pnl"] < 0
-    assert row["est_pnl"] == pytest.approx(row["real_pnl"])  # spread compté une seule fois
-    assert any("sortie" in line and "après 121 s" in line and "exécuté" in line for line in lines)
+    tag = sent["comment"].split("#")[0]
+    assert live.store.signal(tag)["status"] == SENT
+    order = live.store.order(tag, 1)
+    assert order["status"] == CLOSED and order["exit_reason"] == "durée max" and order["real_pnl"] < 0
+    assert order["est_pnl"] == pytest.approx(order["real_pnl"])  # spread compté une seule fois
+    assert order["exit_ms"] - order["open_ms"] == 121_000
+    assert any("sortie" in line and "après 121 s" in line and "frais" in line for line in lines)
+    assert any("essai démo : réalisé" in line and "total" in line for line in lines)
 
 
-def test_second_signal_within_the_unverified_cadence_is_only_simulated(world):
+def test_each_signal_keeps_its_strategy_version_and_parameters(world, settings):
     broker, clock, quote, runner, lines = world
     live = runner()
     _breakout(broker, clock, quote, live)
-    _second_breakout(broker, clock, quote, live)  # 37 s après le premier ordre : cadence de 60 s non écoulée
-    assert live.store.status_counts() == {OPEN: 1, NOT_SENT: 1}
-    assert len(broker.positions()) == 1  # un seul ordre envoyé au broker
-    assert any("cadence d'envoi Axi non vérifiée" in line for line in lines)
+    (sent,) = _deals(broker)
+    row = live.store.signal(sent["comment"].split("#")[0])
+    version, digest, params = strategy_versions(settings.scalping)[BREAKOUT]
+    assert (row["strategy"], row["version"], row["params_hash"]) == (BREAKOUT, version, digest)
+    assert row["key"] == "B+1@4000.02" and "cassure de 4000.02" in row["reason"]
+    assert params["rules"]["lookback_s"] == 60 and params["common"]["target_ratio"] == 1.2
+    # Une autre valeur d'un réglage donne une autre empreinte.
+    changed = settings.scalping.model_copy(update={"target_ratio": 1.5})
+    assert strategy_versions(changed)[BREAKOUT][1] != digest
+
+
+def test_two_distinct_signals_in_the_same_minute_are_both_sent(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    _second_breakout(broker, clock, quote, live)  # autre niveau cassé, 37 s plus tard
+    assert len(_deals(broker)) == 2 and len(broker.positions()) == 2
+    assert live.store.status_counts() == {SENT: 2}
 
 
 def test_position_limit_also_counts_the_simulated_trades(world):
     broker, clock, quote, runner, lines = world
     live = runner(local_only=True)
     live.cfg = live.cfg.model_copy(update={"max_open_positions": 1})
+    live.policy.cfg = live.cfg
     _breakout(broker, clock, quote, live)
     _second_breakout(broker, clock, quote, live)
     assert live.store.status_counts() == {NOT_SENT: 1, REFUSED: 1}
-    assert any("1 positions déjà ouvertes" in line for line in lines)
+    assert any("positions ouvertes au maximum : 1" in line for line in lines)
 
 
-def _signal_at(live, now_ms, *, candle_end_ms):
+def _setup_at(candle_end_ms, *, key="B+1@4000.20"):
     candle = Candle(candle_end_ms - 5_000, 4000.40, 4000.50, 4000.40, 4000.50, 4000.42, 4000.58, 0.16, 5)
-    live.recent.append(candle)
-    live._handle(Setup(LONG, 4000.20, candle, f"SC-{candle.start_ms}-L"), now_ms)
+    return Setup(BREAKOUT, LONG, 4000.20, 3999.40, candle, key=key, reason="cassure de 4000.20 confirmée (test)")
 
 
 def test_no_entry_when_the_market_closes_before_the_max_duration(world):
@@ -155,7 +186,7 @@ def test_no_entry_when_the_market_closes_before_the_max_duration(world):
     live = runner()
     live.step()
     near_break = server_epoch_of("2026-01-06 23:57") * 1000 + 30_000  # pause quotidienne à 23:59
-    _signal_at(live, near_break, candle_end_ms=near_break - 1_000)
+    live.consider(_setup_at(near_break - 1_000), near_break)
     assert broker.sent == [] and live.store.status_counts() == {REFUSED: 1}
     assert any("le marché ferme avant la durée max" in line for line in lines)
 
@@ -164,36 +195,115 @@ def test_a_stale_signal_is_refused(world):
     broker, clock, quote, runner, lines = world
     live = runner()
     live.step()
-    _signal_at(live, BASE_MS + 60_000, candle_end_ms=BASE_MS + 30_000)  # après un trou de connexion
+    live.consider(_setup_at(BASE_MS + 30_000), BASE_MS + 60_000)  # après un trou de connexion
     assert broker.sent == [] and live.store.status_counts() == {REFUSED: 1}
     assert any("signal périmé" in line for line in lines)
+
+
+def test_the_same_signal_seen_twice_is_a_counted_duplicate_never_resent(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    live.step()
+    clock.server_ms = BASE_MS + 6_000
+    setup = _setup_at(BASE_MS + 5_000)
+    live.consider(setup, clock.server_ms)
+    live.consider(setup, clock.server_ms)  # même signal revu (relecture, relance…)
+    assert len(_deals(broker)) == 1
+    assert live.store.meta("doublons_evites") == "1"
+
+
+def test_a_duplicate_position_on_the_broker_is_closed(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    (original,) = broker.positions()
+    broker._positions[99_999] = replace(original, ticket=99_999, identifier=99_999)  # exécution en double
+    live.step()
+    assert [p.ticket for p in broker.positions()] == [original.ticket]
+    assert any("doublon accidentel, fermeture" in line for line in lines)
+    assert live.store.meta("doublons_evites") == "1"
+
+
+def test_split_order_when_the_volume_exceeds_the_maximum_per_order(tmp_path, settings):
+    broker, clock, quote, runner, lines = make_world(tmp_path, settings, symbol=make_symbol(volume_max=0.05))
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    sent = _deals(broker)
+    tag = sent[0]["comment"].split("#")[0]
+    assert [r["comment"] for r in sent] == [f"{tag}#1", f"{tag}#2", f"{tag}#3"]
+    assert [r["volume"] for r in sent] == [0.05, 0.04, 0.04]  # 0,13 lot en trois ordres, un seul budget de risque
+    assert live.store.signal(tag)["parts"] == 3 and live.store.status_counts() == {SENT: 1}
+    assert any("en 3 ordres (fractionnement)" in line for line in lines)
+    clock.advance(121)
+    quote(4000.30)
+    live.step()
+    live.step()
+    assert broker.positions() == []
+    text = "\n".join(live.reports())
+    assert "trades fermés 1 " in text and "trades fractionnés : 1" in text
+
+
+def test_uncertain_reply_is_reconciled_with_the_positions_not_sent_twice(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    broker.lose_next_reply = True  # ordre exécuté, mais réponse perdue (TIMEOUT)
+    _breakout(broker, clock, quote, live)
+    assert any("réponse incertaine" in line for line in lines)
+    live.step()
+    (order,) = live.store.orders(OPEN)
+    assert order.position == broker.positions()[0].ticket
+    assert len(_deals(broker)) == 1  # ni renvoyé, ni fermé
+
+
+def test_too_many_requests_pauses_sending(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    broker.send_retcodes = [C.TRADE_RETCODE_TOO_MANY_REQUESTS]
+    _breakout(broker, clock, quote, live)
+    assert broker.positions() == [] and live.store.status_counts() == {FAILED: 1}
+    assert any("trop de requêtes" in line for line in lines)
+    _second_breakout(broker, clock, quote, live)  # 37 s plus tard : encore dans la pause de 60 s
+    assert any("broker saturé" in line for line in lines) and broker.positions() == []
+
+
+def test_low_free_margin_refuses_the_entry(tmp_path, settings):
+    account = make_account(balance=10_000.0, equity=10_000.0, margin_free=4_000.0)  # < 50 % de l'equity
+    broker, clock, quote, runner, lines = make_world(tmp_path, settings, account=account)
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    assert broker.positions() == [] and live.store.status_counts() == {REFUSED: 1}
+    assert any("marge libre insuffisante" in line for line in lines)
 
 
 def test_daily_loss_stops_new_demo_entries_for_the_day(world):
     broker, clock, quote, runner, lines = world
     live = runner()
     live.step()
-    live.store.record("SC-old-L", BASE_MS - 60_000, 1, CLOSED, real_pnl=-150.0, closed_ms=BASE_MS - 30_000)
+    store = live.store
+    store.record_signal("SC-B-1-L", strategy=BREAKOUT, time_ms=BASE_MS - 60_000, side=1, status=SENT)
+    store.record_order("SC-B-1-L", 1, comment="SC-B-1-L#1", side=1, volume=0.1, sl=1.0, tp=2.0, risk=10.0,
+                       spread=0.16, time_ms=BASE_MS - 60_000)  # fmt: skip
+    store.update_order("SC-B-1-L", 1, status=CLOSED, real_pnl=-150.0, closed_ms=BASE_MS - 30_000)  # -1,5 %
     broker.history_ticks = range_then_breakout(BASE_MS)
     clock.server_ms = BASE_MS + 16_500
     quote(4000.50)
     live.step()
-    assert broker.sent == [] and live.store.status_counts() == {CLOSED: 1, REFUSED: 1}  # -1,5 % sur 10 000
-    assert any("perte du jour atteinte (1 %) : démo" in line for line in lines)
+    assert _deals(broker) == [] and store.status_counts() == {SENT: 1, REFUSED: 1}
+    assert any("perte du jour atteinte" in line for line in lines)
 
 
 def test_in_simulation_mode_the_daily_loss_uses_the_simulated_results(world):
     broker, clock, quote, runner, lines = world
     live = runner(local_only=True)
     live.step()
-    live.store.record_sim("SC-old-L", BASE_MS - 60_000, 1, 4000.0, 3999.0, 4001.2, 1.0, False)
-    live.store.close_sim("SC-old-L", 3998.5, "stop", -150.0, BASE_MS - 30_000)
+    live.store.record_sim("SC-B-1-L", BREAKOUT, BASE_MS - 60_000, 1, 4000.0, 3999.0, 4001.2, 1.0, False)
+    live.store.close_sim("SC-B-1-L", 3998.5, "stop", -150.0, 0.0, BASE_MS - 30_000)
     broker.history_ticks = range_then_breakout(BASE_MS)
     clock.server_ms = BASE_MS + 16_500
     quote(4000.50)
     live.step()
     assert live.store.status_counts() == {REFUSED: 1}
-    assert any("perte du jour atteinte (1 %) : simulation" in line for line in lines)
+    assert any("perte du jour atteinte" in line for line in lines)
 
 
 def test_local_simulation_mode_sends_nothing(world):
@@ -218,6 +328,26 @@ def test_wide_spread_is_refused_with_its_reason(world):
     assert any("refus : objectif trop faible" in line for line in lines)
 
 
+def test_pullback_signal_is_traded_live(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    live.step()
+    path = np.concatenate(
+        [np.linspace(4000.20, 4002.40, 15), np.linspace(4002.20, 4001.30, 10), np.linspace(4001.80, 4002.20, 10)]
+    )
+    points = [(BASE_MS + k * 1000, round(float(mid), 2)) for k, mid in enumerate(path)] + [(BASE_MS + 35_000, 4002.2)]
+    broker.history_ticks = np.concatenate([broker.history_ticks, ticks(points)])
+    for second in range(1, 36):  # un passage par seconde, comme en direct
+        clock.server_ms = BASE_MS + second * 1000 + 500
+        quote(float(path[min(second, len(path) - 1)]))
+        live.step()
+    # La même hausse a aussi déclenché la cassure : deux occasions distinctes, deux trades.
+    (sent,) = [r for r in _deals(broker) if r["comment"].startswith("SC-P-")]
+    assert sent["sl"] == pytest.approx(4001.30 - 0.08 - 0.05)
+    assert any("signal ACHAT [impulsion-repli v1 · " in line and "repli de 46 %" in line for line in lines)
+    assert {live.store.signal(r["comment"].split("#")[0])["strategy"] for r in _deals(broker)} == {BREAKOUT, PULLBACK}
+
+
 def test_restart_resumes_the_position_without_sending_again(world, tmp_path):
     broker, clock, quote, runner, lines = world
     live = runner()
@@ -225,20 +355,8 @@ def test_restart_resumes_the_position_without_sending_again(world, tmp_path):
     live.store.close()
     restarted = runner(store=ScalpStore(tmp_path / "scalp.sqlite"))
     restarted.step()
-    assert len([r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL]) == 1
-    assert len(restarted.store.demo_trades(OPEN)) == 1
-
-
-def test_uncertain_reply_is_reconciled_with_the_positions_not_sent_twice(world):
-    broker, clock, quote, runner, lines = world
-    live = runner()
-    broker.lose_next_reply = True  # ordre exécuté, mais réponse perdue (TIMEOUT)
-    _breakout(broker, clock, quote, live)
-    assert any("réponse incertaine" in line for line in lines)
-    live.step()
-    (trade,) = live.store.demo_trades(OPEN)
-    assert trade.position == broker.positions()[0].ticket
-    assert len([r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL]) == 1  # ni renvoyé, ni fermé
+    assert len(_deals(broker)) == 1
+    assert len(restarted.store.orders(OPEN)) == 1
 
 
 def test_missing_stop_is_put_back(world):
@@ -257,8 +375,9 @@ def test_server_stop_hit_is_recorded_from_the_deals(world):
     _breakout(broker, clock, quote, live)
     broker.hit_stop(broker.positions()[0].ticket, 3999.87)
     live.step()
-    (row,) = [live.store.signal(t) for t in [r["comment"] for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL]]
-    assert row["status"] == CLOSED and row["exit_reason"] == "stop" and row["real_pnl"] < 0
+    (sent,) = _deals(broker)
+    order = live.store.order(sent["comment"].split("#")[0], 1)
+    assert order["status"] == CLOSED and order["exit_reason"] == "stop" and order["real_pnl"] < 0
 
 
 def test_two_separate_reports(world):
@@ -268,13 +387,27 @@ def test_two_separate_reports(world):
     demo, simulation = "\n".join(live.reports()).split("=== Bilan 2")
     assert "Bilan 1 : exécutions démo" in demo and "simulation avec glissement supplémentaire" in simulation
     for block in (demo, simulation):
-        assert "positions ouvertes : 1" in block and "gains fermés" in block and "pertes fermées" in block
-        assert "valeur du compte" in block
+        assert "[cassure v1 · " in block and "[impulsion-repli v1 · " in block and "[total]" in block
+        for text in ("gains réalisés", "pertes réalisées", "dont frais", "résultat total", "durée", "sorties"):
+            assert text in block
+    assert "positions ouvertes 1 (latent" in demo and "valeur du compte (equity" in demo
+    assert "doublons accidentels évités : 0" in demo
     # Trade simulé ouvert à l'ask + 0,10 $ de glissement, valorisé au bid - 0,10 $ : latent négatif.
-    assert "latent -" in simulation
+    assert "positions ouvertes 1 (latent -" in simulation and "valeur simulée du compte" in simulation
     status = live.status_line()
-    assert "en marche (marché ouvert)" in status and "tendance M1 haussière" in status
-    assert "1 envoyés" in status and "positions démo ouvertes : 1" in status
+    assert "en marche (marché ouvert)" in status and "tendance M1 haussière" in status and "ATR M1" in status
+    assert "1 envoyés" in status and "essai démo : réalisé" in status and "1 position(s) ouverte(s)" in status
+
+
+def test_a_state_database_of_the_previous_version_is_archived_not_rewritten(tmp_path):
+    path = tmp_path / "scalp.sqlite"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE signals (tag TEXT PRIMARY KEY, time_ms INTEGER, side INTEGER, status TEXT)")
+    old.execute("INSERT INTO signals VALUES ('SC-1-L', 1, 1, 'fermé')")
+    old.commit()
+    old.close()
+    store = ScalpStore(path)
+    assert store.archived is not None and store.archived.exists() and not store.has_activity()
 
 
 # --- lancement -----------------------------------------------------------------------------------
@@ -294,16 +427,16 @@ def env_file(tmp_path, monkeypatch):
     return path
 
 
-def _launch(tmp_path, env_file, broker, clock, *args, config=CONFIG_PATH):
+def _launch(tmp_path, env_file, broker, clock, *args, config=CONFIG_PATH, sleep=None, max_steps=2):
     lines = []
     code = live_main(
         ["--config", str(config), "--env", str(env_file), *args],
         root=tmp_path / "project",
         broker_factory=lambda settings, secrets: broker,
         now_utc=clock,
-        sleep=lambda s: clock.advance(s),
+        sleep=sleep or (lambda s: clock.advance(s)),
         echo=lines.append,
-        max_steps=2,
+        max_steps=max_steps,
     )
     return code, "\n".join(lines)
 
@@ -316,12 +449,30 @@ def test_a_real_account_is_always_refused(tmp_path, env_file, world):
     assert broker.sent == []
 
 
+def test_launch_registers_the_strategy_versions_and_shows_them(tmp_path, env_file, world, settings):
+    broker, clock, *_ = world
+    code, output = _launch(tmp_path, env_file, broker, clock)
+    assert code == EXIT_OK and "Stratégies (version · empreinte des réglages) : cassure v1 · " in output
+    assert "5 entrées par minute au plus" in output
+    for secret in SECRETS:
+        assert secret not in output
+    store = ScalpStore(tmp_path / "project" / "data" / "scalp.sqlite")
+    rows = store.versions()
+    expected = strategy_versions(settings.scalping)
+    assert {(r["strategy"], r["version"], r["params_hash"]) for r in rows} == {
+        (code, version, digest) for code, (version, digest, _) in expected.items()
+    }
+    assert {r["strategy"] for r in rows} == {BREAKOUT, PULLBACK} and '"impulse_atr": 1.0' in rows[1]["params"]
+
+
 def test_changed_settings_are_refused_during_an_experiment(tmp_path, env_file, world):
     broker, clock, quote, *_ = world
     code, _ = _launch(tmp_path, env_file, broker, clock)
     assert code == EXIT_OK
     store = ScalpStore(tmp_path / "project" / "data" / "scalp.sqlite")
-    store.record("SC-x", BASE_MS, 1, REFUSED, detail="test")  # l'expérience a commencé
+    store.record_signal(
+        "SC-B-1-L", strategy=BREAKOUT, time_ms=BASE_MS, side=1, status=REFUSED
+    )  # l'expérience a commencé
     store.close()
     changed = tmp_path / "changed.yaml"
     changed.write_text(CONFIG_PATH.read_text(encoding="utf-8").replace("target_ratio: 1.2", "target_ratio: 1.5"),
@@ -341,11 +492,12 @@ def test_verification_checks_open_stop_restart_and_max_duration(tmp_path, env_fi
     broker.connect()  # le lanceur ferme la connexion en sortant
     assert broker.positions() == []
     (modify,) = [r for r in broker.sent if r["action"] == C.TRADE_ACTION_SLTP]
-    opening = next(r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL)
+    opening = _deals(broker)[0]
+    assert opening["comment"].startswith("SC-VERIF-") and opening["comment"].endswith("#1")
     assert modify["sl"] > opening["sl"]  # stop resserré, jamais éloigné
     # Le trade de test n'entre pas dans les résultats de l'expérience.
     store = ScalpStore(tmp_path / "project" / "data" / "scalp.sqlite")
-    assert store.closed_demo_results() == [] and not store.has_activity()
+    assert store.closed_orders() == [] and not store.has_activity() and store.realized_since(0) == 0.0
 
 
 def test_verification_refuses_a_real_account(tmp_path, env_file, world):
@@ -370,21 +522,12 @@ def test_ctrl_c_closes_the_experiment_positions_then_prints_the_reports(tmp_path
         else:
             clock.advance(seconds)
 
-    lines = []
-    code = live_main(
-        ["--config", str(CONFIG_PATH), "--env", str(env_file)],
-        root=tmp_path / "project",
-        broker_factory=lambda settings, secrets: broker,
-        now_utc=clock,
-        sleep=sleep,
-        echo=lines.append,
-    )
-    output = "\n".join(lines)
+    code, output = _launch(tmp_path, env_file, broker, clock, sleep=sleep, max_steps=None)
     assert code == EXIT_OK, output
     assert "entrée démo" in output and "(arrêt du bot)" in output and "Bilan 1" in output
     broker.connect()
     assert broker.positions() == []
     store = ScalpStore(tmp_path / "project" / "data" / "scalp.sqlite")
-    (trade,) = [r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL and "position" not in r]
-    row = store.signal(trade["comment"])
-    assert row["status"] == CLOSED and row["exit_reason"] == "arrêt du bot"
+    (trade,) = _deals(broker)
+    tag, part = trade["comment"].split("#")
+    assert store.order(tag, int(part))["exit_reason"] == "arrêt du bot"

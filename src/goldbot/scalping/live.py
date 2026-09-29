@@ -1,18 +1,18 @@
 """Expérience de scalping en direct, compte DÉMO uniquement (séparée du bot principal).
 
-Toutes les ~0,5 s : nouveaux ticks -> bougies de 5 s -> signal (engine.py) -> plan -> contrôles du
-compte -> envoi au broker avec stop et objectif côté serveur, ou simulation locale si la cadence
-d'envoi n'est pas encore vérifiée auprès d'Axi. Puis gestion des positions : sortie forcée à la durée
-maximale (même en perte), stop manquant reposé, positions disparues relevées dans les deals.
-Une simulation parallèle rejoue chaque signal accepté avec un glissement supplémentaire ; les limites
-(positions, risque cumulé) portent sur l'ensemble des trades acceptés, envoyés ou simulés.
+Toutes les ~0,5 s : nouveaux ticks -> bougies de 5 s -> signaux des stratégies actives (engine.py) ->
+plan -> règles d'entrée communes avec le rejeu (policy.py) -> conditions du compte (marge, volume,
+saturation du broker) -> envoi au broker, stop et objectif côté serveur dans la requête. Puis gestion des
+positions : sortie forcée à la durée maximale (même en perte), stop manquant reposé, positions disparues
+relevées dans les deals, doublons et positions inconnues fermés.
+Une simulation parallèle rejoue chaque signal accepté avec un glissement supplémentaire (bilan séparé).
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from collections import deque
+from collections import Counter
 from collections.abc import Callable
 from datetime import datetime, timedelta
 
@@ -21,7 +21,7 @@ import pandas as pd
 from goldbot.broker import mt5_constants as C
 from goldbot.broker.base import Broker, BrokerError, Position, SymbolSpec
 from goldbot.broker.supervisor import ConnectionSupervisor
-from goldbot.config import Settings
+from goldbot.config import ScalpingConfig, Settings
 from goldbot.data.history import bars_frame
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.timezones import ServerTimeRule
@@ -32,25 +32,43 @@ from goldbot.execution.orders import (
     select_filling,
     send_market_order,
 )
+from goldbot.indicators.core import atr as atr_series
 from goldbot.risk.sizing import position_size
 from goldbot.scalping.engine import (
+    BREAKOUT,
     LONG,
-    BreakoutDetector,
+    PULLBACK,
+    STRATEGY_NAMES,
     Candle,
     CandleBuilder,
     Plan,
     Setup,
     SimTrade,
     ema_trend,
+    make_detectors,
     plan_trade,
 )
-from goldbot.scalping.store import CLOSED, FAILED, NOT_SENT, OPEN, REFUSED, SENDING, DemoTrade, ScalpStore
+from goldbot.scalping.policy import EntryPolicy, Exposure, split_volume
+from goldbot.scalping.store import (
+    CLOSED,
+    FAILED,
+    NOT_SENT,
+    OPEN,
+    REFUSED,
+    SENDING,
+    SENT,
+    Order,
+    ScalpStore,
+    params_hash,
+)
 
 log = logging.getLogger("goldbot.scalp")
 _EPOCH = datetime(1970, 1, 1)
-WARMUP_S = 120  # ticks relus au démarrage pour remplir la fenêtre des 60 s (sans trader dessus)
+WARMUP_S = 120  # ticks relus au démarrage pour remplir les fenêtres des détecteurs (sans trader dessus)
 CLOCK_GRACE_MS = 1000  # une bougie n'est close par l'horloge qu'une seconde après sa fin (ticks en retard)
 CLOSE_RETRY_MS = 5000  # délai entre deux tentatives de clôture d'une même position
+BROKER_PAUSE_MS = 60_000  # après « trop de requêtes » (10024), plus d'envoi pendant 60 s
+DUPLICATES = "doublons_evites"
 _DEAL_REASONS = {
     C.DEAL_REASON_SL: "stop",
     C.DEAL_REASON_TP: "objectif",
@@ -59,6 +77,17 @@ _DEAL_REASONS = {
     C.DEAL_REASON_MOBILE: "clôture manuelle",
     C.DEAL_REASON_WEB: "clôture manuelle",
 }
+
+
+def strategy_versions(config: ScalpingConfig) -> dict[str, tuple[int, str, dict[str, object]]]:
+    """Code -> (version, empreinte, réglages) des stratégies actives : leurs règles et les réglages communs."""
+    common = config.model_dump(exclude={"breakout", "pullback", "experiment_days"})
+    versions = {}
+    for code, section in ((BREAKOUT, config.breakout), (PULLBACK, config.pullback)):
+        if section.enabled:
+            params = {"strategy": STRATEGY_NAMES[code], "rules": section.model_dump(), "common": common}
+            versions[code] = (section.version, params_hash(params), params)
+    return versions
 
 
 class ScalpRunner:
@@ -89,16 +118,20 @@ class ScalpRunner:
         self.schedule = MarketSchedule.from_config(settings.market_hours)
         self.zone = settings.bot.display_timezone
         self.builder = CandleBuilder(self.cfg.candle_seconds)
-        self.detector = BreakoutDetector(self.cfg)
-        self.recent: deque = deque()
+        self.detectors = make_detectors(self.cfg)
+        self.versions = strategy_versions(self.cfg)
+        self.labels = {code: f"{STRATEGY_NAMES[code]} v{v} · {h}" for code, (v, h, _) in self.versions.items()}
+        self.labels["VERIF"] = "vérification"
+        self.policy = EntryPolicy(self.cfg)
         self.cursor_ms: int | None = None
         self._at_cursor: set[tuple[int, float, float]] = set()
         self.trading_from_ms: int | None = None  # pas de trade sur les ticks de préchauffage
         self.trend = 0
-        self._trend_minute: int | None = None
-        self.shadow: dict[str, tuple[SimTrade, float, bool]] = {}  # tag -> (trade simulé, risque, envoyé ?)
-        self.last_entry_ms = -(2**62)
-        self.last_broker_order_ms = -(2**62)
+        self.atr = 0.0
+        self._context_minute: int | None = None
+        # Trades simulés en cours : tag -> (trade, exposition, envoyé au broker ?, stratégie).
+        self.shadow: dict[str, tuple[SimTrade, Exposure, bool, str]] = {}
+        self.pause_until_ms = -(2**62)
         self.day: int | None = None
         self.day_start_ms = 0
         account = broker.account()
@@ -124,6 +157,9 @@ class ScalpRunner:
     def _money(self, value: float) -> str:
         return f"{value:+.2f} {self.currency}"
 
+    def _to_account(self, dollars_per_oz: float, volume: float) -> float:
+        return dollars_per_oz * volume * self.spec.trade_contract_size * self.value_per_dollar_oz
+
     # --- boucle -------------------------------------------------------------------------------
 
     def server_now_ms(self) -> int:
@@ -136,7 +172,7 @@ class ScalpRunner:
         self.supervisor.ensure_connected()
         now_ms = self.server_now_ms()
         self._new_day(now_ms)
-        self._refresh_trend(now_ms)
+        self._refresh_context(now_ms)
         if self.trading_from_ms is None:
             self.trading_from_ms = now_ms
         for time_ms, bid, ask in self._new_ticks(now_ms):
@@ -147,6 +183,9 @@ class ScalpRunner:
                 self._on_candle(candle, now_ms)
         for candle in self.builder.close_until(now_ms - CLOCK_GRACE_MS):
             self._on_candle(candle, now_ms)
+        if self.shadow:  # sans nouveau tick, la durée maximale des trades simulés passe quand même
+            tick = self.broker.tick(self.spec.name)
+            self._advance_shadow(now_ms, tick.bid, tick.ask)
         self._manage_positions(now_ms)
 
     def _new_day(self, now_ms: int) -> None:
@@ -155,15 +194,20 @@ class ScalpRunner:
             self.day, self.day_start_ms = day, day * 86_400_000
             self.day_start_equity = self.broker.account().equity
 
-    def _refresh_trend(self, now_ms: int) -> None:
+    def _refresh_context(self, now_ms: int) -> None:
+        """Tendance EMA et ATR sur les barres M1 clôturées, une fois par minute."""
         minute = now_ms // 60_000
-        if minute == self._trend_minute:
+        if minute == self._context_minute:
             return
-        raw = self.broker.latest_bars(self.spec.name, 300)
-        bars = bars_frame(raw, self.rule)
+        bars = bars_frame(self.broker.latest_bars(self.spec.name, 300), self.rule)
         closed = bars[(bars["time_server"] + 60) * 1000 <= now_ms]
-        self.trend = ema_trend(tuple(closed["close"].astype(float)), self.cfg.ema_fast, self.cfg.ema_slow)
-        self._trend_minute = minute
+        b, p = self.cfg.breakout, self.cfg.pullback
+        self.trend = ema_trend(tuple(closed["close"].astype(float)), b.ema_fast, b.ema_slow)
+        self.atr = 0.0
+        if len(closed) > p.atr_period:
+            value = atr_series(closed["high"], closed["low"], closed["close"], p.atr_period).iloc[-1]
+            self.atr = 0.0 if pd.isna(value) else float(value)
+        self._context_minute = minute
 
     def _new_ticks(self, now_ms: int) -> list[tuple[int, float, float]]:
         start_s = (self.cursor_ms // 1000) if self.cursor_ms is not None else now_ms // 1000 - WARMUP_S
@@ -186,42 +230,64 @@ class ScalpRunner:
     # --- signaux --------------------------------------------------------------------------------
 
     def _on_candle(self, candle: Candle, now_ms: int) -> None:
-        self.recent.append(candle)
-        while self.recent and self.recent[0].start_ms < candle.start_ms - self.cfg.breakout_lookback_s * 1000:
-            self.recent.popleft()
-        setup = self.detector.on_candle(candle, self.trend)
         end_ms = candle.start_ms + self.builder.size_ms
-        if setup is None or end_ms <= self.trading_from_ms or self.store.seen(setup.tag):
-            return  # pas de signal, ou bougie du préchauffage, ou déjà traité
+        for detector in self.detectors:
+            setup = detector.on_candle(candle, self.trend, self.atr)
+            if setup is not None and end_ms > self.trading_from_ms:  # pas de trade sur le préchauffage
+                self.consider(setup, now_ms)
+
+    def consider(self, setup: Setup, now_ms: int) -> None:
+        """Nouveau signal : décision unique. Le même signal revu (doublon accidentel) est compté, jamais rejoué."""
+        if self.store.seen(setup.tag):
+            self.store.bump(DUPLICATES)
+            return
         self._handle(setup, now_ms)
 
+    def _signal_fields(self, setup: Setup) -> dict[str, object]:
+        version, digest, _ = self.versions[setup.strategy]
+        return dict(strategy=setup.strategy, version=version, params_hash=digest, key=setup.key,
+                    time_ms=setup.candle.start_ms, side=setup.side, level=setup.level, structure=setup.structure,
+                    reason=setup.reason)  # fmt: skip
+
     def _refuse(self, setup: Setup, spread: float, reason: str) -> None:
-        self.store.record(setup.tag, setup.candle.start_ms, setup.side, REFUSED, detail=reason, spread=spread,
-                          level=setup.level)  # fmt: skip
+        self.store.record_signal(setup.tag, status=REFUSED, detail=reason, spread=spread, **self._signal_fields(setup))
         self.say(f"   refus : {reason}")
+
+    def _day_result(self) -> float:
+        """Résultat du jour : démo réalisé + latent ; en --simulation, résultat simulé réalisé (comme le rejeu)."""
+        if self.local_only:
+            return self.store.sim_realized_since(self.day_start_ms)
+        return self.store.realized_since(self.day_start_ms) + self._latent()
+
+    def _exposures(self) -> list[Exposure]:
+        """Trades ouverts de l'expérience : ordres démo (regroupés par signal) et trades simulés."""
+        exposures: dict[str, Exposure] = {}
+        for order in self.store.orders(OPEN, SENDING):
+            known = exposures.get(order.tag)
+            risk = (known.risk if known else 0.0) + (order.risk or 0.0)
+            exposures[order.tag] = Exposure(order.tag, order.key or order.tag, order.side, risk)
+        for tag, (_, exposure, _, _) in self.shadow.items():
+            exposures.setdefault(tag, exposure)
+        return list(exposures.values())
 
     def _handle(self, setup: Setup, now_ms: int) -> None:
         cfg, spec = self.cfg, self.spec
         tick = self.broker.tick(spec.name)
         spread = tick.ask - tick.bid
         side_text = "ACHAT" if setup.side == LONG else "VENTE"
-        trend_text = "haussière" if self.trend > 0 else "baissière"
-        self.say(
-            f"{self._clock(now_ms)} signal {side_text} : cassure de {setup.level:.2f} confirmée "
-            f"(tendance M1 {trend_text}), spread {spread:.2f} $"
-        )
+        self.say(f"{self._clock(now_ms)} signal {side_text} [{self.labels[setup.strategy]}] : {setup.reason}, "
+                 f"spread {spread:.2f} $")  # fmt: skip
         age_ms = now_ms - (setup.candle.start_ms + self.builder.size_ms)
         if age_ms > self.builder.size_ms:
-            self._refuse(setup, spread, f"signal périmé (bougie close depuis {age_ms / 1000:.0f} s)")
+            self._refuse(setup, spread, f"signal périmé : bougie close depuis {age_ms / 1000:.0f} s")
             return
         if not self._is_open(now_ms + cfg.max_hold_s * 1000):
-            self._refuse(setup, spread, f"le marché ferme avant la durée max ({cfg.max_hold_s} s)")
+            self._refuse(setup, spread, f"le marché ferme avant la durée max : {cfg.max_hold_s} s")
             return
         plan = plan_trade(
             setup,
             tick.bid,
             tick.ask,
-            list(self.recent),
             cfg,
             point=spec.point,
             stops_level_points=spec.trade_stops_level,
@@ -241,155 +307,204 @@ class ScalpRunner:
             account.equity * cfg.risk_per_trade_pct / 100,
             loss_per_lot,
             volume_min=spec.volume_min,
-            volume_max=spec.volume_max,
+            volume_max=float("inf"),  # au-delà du maximum par ordre : fractionnement en plusieurs ordres
             volume_step=spec.volume_step,
         )
         if volume == 0:
             self._refuse(setup, spread, "lot minimum au-dessus du budget de risque")
             return
         risk = volume * loss_per_lot
-        # Perte du jour : résultat démo réalisé + latent ; en --simulation, résultat simulé réalisé (comme le rejeu).
-        if self.local_only:
-            today, label = self.store.sim_realized_since(self.day_start_ms), "simulation"
-        else:
-            mine = [p for p in self.broker.positions(spec.name) if p.magic == cfg.magic]
-            today = self.store.realized_since(self.day_start_ms) + sum(p.profit + p.swap for p in mine)
-            label = "démo, latent compris"
-        if today <= -cfg.daily_loss_pct / 100 * self.day_start_equity:
-            self._refuse(setup, spread, f"perte du jour atteinte ({cfg.daily_loss_pct:g} %) : {label} "
-                                        f"{self._money(today)}")  # fmt: skip
+        reason = self.policy.refusal(
+            now_ms,
+            key=setup.key,
+            risk=risk,
+            equity=account.equity,
+            day_result=self._day_result(),
+            day_start_equity=self.day_start_equity,
+            open_trades=self._exposures(),
+        )
+        if reason is None and not self.local_only:
+            reason = self._account_refusal(order_type, volume, plan.entry, account.equity, account.margin_free, now_ms)
+        if reason is not None:
+            self._refuse(setup, spread, reason)
             return
-        # Positions de la stratégie : envoyées au broker (état) ou simulées localement (en mémoire).
-        active = {t.tag: t.risk or 0.0 for t in self.store.demo_trades(OPEN, SENDING)}
-        for tag, (_, shadow_risk, _) in self.shadow.items():
-            active.setdefault(tag, shadow_risk)
-        if len(active) >= cfg.max_open_positions:
-            self._refuse(setup, spread, f"{cfg.max_open_positions} positions déjà ouvertes")
-            return
-        if sum(active.values()) + risk > cfg.max_total_risk_pct / 100 * account.equity:
-            self._refuse(setup, spread, f"risque cumulé au maximum ({cfg.max_total_risk_pct:g} %)")
-            return
-        if now_ms - self.last_entry_ms < cfg.min_seconds_between_entries * 1000:
-            self._refuse(setup, spread, f"moins de {cfg.min_seconds_between_entries:g} s depuis la dernière entrée")
-            return
-        self.last_entry_ms = now_ms
+        self.policy.accept(now_ms)
+        parts = split_volume(volume, spec.volume_max, spec.volume_step)
+        split = f" en {len(parts)} ordres (fractionnement)" if len(parts) > 1 else ""
         details = (
-            f"{volume:g} lot à {plan.entry:.2f} | spread {plan.spread:.2f} | stop {plan.sl:.2f} "
+            f"{volume:g} lot{split} à {plan.entry:.2f} | spread {plan.spread:.2f} | stop {plan.sl:.2f} "
             f"(-{plan.stop_distance:.2f} $) | objectif {plan.tp:.2f} (+{plan.target:.2f} $) | "
             f"durée max {cfg.max_hold_s} s | risque {self._money(-risk)}"
         )
-        since_order = now_ms - self.last_broker_order_ms
-        cadence_ok = cfg.cadence_verified or since_order >= cfg.broker_min_seconds_between_orders * 1000
-        sent = not self.local_only and cadence_ok
-        self._start_shadow(setup, plan, tick.bid, tick.ask, now_ms, volume, risk, sent)
-        fields = dict(level=setup.level, spread=plan.spread, volume=volume, entry=plan.entry, sl=plan.sl, tp=plan.tp,
-                      risk=risk)  # fmt: skip
-        if not sent:
-            why = "mode --simulation" if self.local_only else "cadence d'envoi Axi non vérifiée"
-            self.store.record(setup.tag, setup.candle.start_ms, setup.side, NOT_SENT, detail=why, **fields)
-            self.say(f"   non envoyé au broker ({why}), simulé seulement : {details}")
+        self._start_shadow(setup, plan, tick.bid, tick.ask, now_ms, volume, risk, sent=not self.local_only)
+        fields = dict(spread=plan.spread, volume=volume, entry=plan.entry, sl=plan.sl, tp=plan.tp, risk=risk,
+                      parts=len(parts), **self._signal_fields(setup))  # fmt: skip
+        if self.local_only:
+            self.store.record_signal(setup.tag, status=NOT_SENT, detail="mode --simulation", **fields)
+            self.say(f"   non envoyé au broker (mode --simulation), simulé seulement : {details}")
             return
-        self._send(setup, plan, order_type, volume, now_ms, fields, details)
+        if not self.store.record_signal(setup.tag, status=SENT, **fields):
+            self.store.bump(DUPLICATES)
+            return
+        self._send(setup, plan, order_type, parts, volume, risk, now_ms, details)
+
+    def _account_refusal(self, order_type: int, volume: float, price: float, equity: float, margin_free: float,
+                         now_ms: int) -> str | None:  # fmt: skip
+        """Conditions du compte avant l'envoi : broker saturé, marge libre, volume maximal du symbole."""
+        if now_ms < self.pause_until_ms:
+            return f"broker saturé : pause jusqu'à {self._clock(self.pause_until_ms)}"
+        margin = self.broker.calc_margin(order_type, self.spec.name, volume, price)
+        left = margin_free - margin
+        if left < self.cfg.min_free_margin_pct / 100 * equity:
+            return f"marge libre insuffisante : {left:.2f} {self.currency} après l'ordre"
+        if self.spec.volume_limit > 0:
+            position_type = C.POSITION_TYPE_BUY if order_type == C.ORDER_TYPE_BUY else C.POSITION_TYPE_SELL
+            same_side = sum(p.volume for p in self.broker.positions(self.spec.name) if p.type == position_type)
+            if same_side + volume > self.spec.volume_limit:
+                return f"volume maximal du symbole atteint : {same_side + volume:g} > {self.spec.volume_limit:g} lots"
+        return None
 
     def _start_shadow(self, setup: Setup, plan: Plan, bid: float, ask: float, now_ms: int, volume: float,
                       risk: float, sent: bool) -> None:  # fmt: skip
         slip = self.cfg.extra_slippage_points * self.spec.point
         trade = SimTrade.open(setup.tag, plan, bid, ask, now_ms, self.cfg.max_hold_s, slip, volume, self.fee_per_oz)
-        self.shadow[setup.tag] = (trade, risk, sent)
-        self.store.record_sim(setup.tag, now_ms, setup.side, trade.entry, trade.sl, trade.tp, volume, sent)
+        exposure = Exposure(setup.tag, setup.key, setup.side, risk)
+        self.shadow[setup.tag] = (trade, exposure, sent, setup.strategy)
+        self.store.record_sim(setup.tag, setup.strategy, now_ms, setup.side, trade.entry, trade.sl, trade.tp, volume,
+                              sent)  # fmt: skip
 
     def _advance_shadow(self, time_ms: int, bid: float, ask: float) -> None:
-        for tag, (trade, _, sent) in list(self.shadow.items()):
+        for tag, (trade, _, sent, strategy) in list(self.shadow.items()):
             if trade.on_tick(time_ms, bid, ask):
-                pnl = trade.move * trade.volume * self.spec.trade_contract_size * self.value_per_dollar_oz
-                self.store.close_sim(tag, trade.exit_price, trade.reason, pnl, time_ms)
+                pnl = self._to_account(trade.move, trade.volume)
+                fees = -self._to_account(trade.fee, trade.volume)
+                self.store.close_sim(tag, trade.exit_price, trade.reason, pnl, fees, time_ms)
                 del self.shadow[tag]
                 if not sent:
-                    self.say(f"{self._clock(time_ms)} sortie simulée {tag} ({trade.reason}) : {self._money(pnl)}")
+                    self.say(f"{self._clock(time_ms)} sortie simulée {tag} [{self.labels.get(strategy, strategy)}] "
+                             f"({trade.reason}) : {self._money(pnl)}")  # fmt: skip
 
-    def _send(self, setup: Setup, plan: Plan, order_type: int, volume: float, now_ms: int,
-              fields: dict[str, object], details: str) -> None:  # fmt: skip
+    def _send(self, setup: Setup, plan: Plan, order_type: int, parts: list[float], volume: float, risk: float,
+              now_ms: int, details: str) -> None:  # fmt: skip
         spec = self.spec
-        request = {
-            "action": C.TRADE_ACTION_DEAL,
-            "symbol": spec.name,
-            "volume": volume,
-            "type": order_type,
-            "sl": plan.sl,
-            "tp": plan.tp,
-            "deviation": 20,
-            "magic": self.cfg.magic,
-            "comment": setup.tag,
-            "type_time": C.ORDER_TIME_GTC,
-        }
-        if not self.store.record(setup.tag, setup.candle.start_ms, setup.side, SENDING, **fields):
-            return
-        self.last_broker_order_ms = now_ms
-        try:
-            filling, _ = select_filling(self.broker, {**request, "price": plan.entry}, spec.filling_mode)
-            candidates = filling_candidates(spec.filling_mode)
-            send_market_order(self.broker, request, candidates[candidates.index(filling) :], sleep=self.sleep)
-        except OrderRejected as exc:
-            if exc.operation == "order_send" and exc.retcode in UNCERTAIN:
-                # Peut-être exécuté : reste « envoi », rapproché des positions au passage suivant (jamais renvoyé).
-                self.say(f"   réponse incertaine du broker ({exc}) : vérification au prochain passage")
-                return
-            self.store.update(setup.tag, status=FAILED, detail=str(exc))
-            self.say(f"   ordre refusé par le broker : {exc}")
-            return
-        except BrokerError as exc:
-            self.say(f"   liaison perdue pendant l'envoi ({exc}) : vérification au prochain passage")
-            return
-        position = self._find(setup.tag)
-        if position is None:
-            self.say("   ordre envoyé, position pas encore visible : vérification au prochain passage")
-            return
-        self._mark_open(setup.tag, position)
-        self.say(f"   entrée démo : {details.replace(f'{plan.entry:.2f}', f'{position.price_open:.2f}', 1)}")
+        fillings: list[int] | None = None
+        opened: list[Position] = []
+        for part, part_volume in enumerate(parts, 1):
+            comment = f"{setup.tag}#{part}"
+            if not self.store.record_order(setup.tag, part, comment=comment, side=setup.side, volume=part_volume,
+                                           sl=plan.sl, tp=plan.tp, risk=risk * part_volume / volume,
+                                           spread=plan.spread, time_ms=now_ms):  # fmt: skip
+                self.store.bump(DUPLICATES)
+                continue
+            request = {
+                "action": C.TRADE_ACTION_DEAL,
+                "symbol": spec.name,
+                "volume": part_volume,
+                "type": order_type,
+                "sl": plan.sl,
+                "tp": plan.tp,
+                "deviation": 20,
+                "magic": self.cfg.magic,
+                "comment": comment,
+                "type_time": C.ORDER_TIME_GTC,
+            }
+            try:
+                if fillings is None:
+                    filling, _ = select_filling(self.broker, {**request, "price": plan.entry}, spec.filling_mode)
+                    candidates = filling_candidates(spec.filling_mode)
+                    fillings = candidates[candidates.index(filling) :]
+                send_market_order(self.broker, request, fillings, sleep=self.sleep)
+            except OrderRejected as exc:
+                if exc.operation == "order_send" and exc.retcode in UNCERTAIN:
+                    # Peut-être exécuté : reste « envoi », rapproché des positions au passage suivant (jamais renvoyé).
+                    self.say(f"   réponse incertaine du broker ({exc}) : vérification au prochain passage")
+                    break
+                self.store.update_order(setup.tag, part, status=FAILED, detail=str(exc))
+                if exc.retcode == C.TRADE_RETCODE_TOO_MANY_REQUESTS:
+                    self.pause_until_ms = now_ms + BROKER_PAUSE_MS
+                    self.say(
+                        f"   le broker signale trop de requêtes : plus d'envoi pendant {BROKER_PAUSE_MS // 1000} s"
+                    )
+                else:
+                    self.say(f"   ordre refusé par le broker : {exc}")
+                break
+            except BrokerError as exc:
+                self.say(f"   liaison perdue pendant l'envoi ({exc}) : vérification au prochain passage")
+                break
+            position = self._find(comment)
+            if position is None:
+                self.say("   ordre envoyé, position pas encore visible : vérification au prochain passage")
+                continue
+            self._mark_open(setup.tag, part, position)
+            opened.append(position)
+        if opened:
+            price = sum(p.price_open * p.volume for p in opened) / sum(p.volume for p in opened)
+            self.say(f"   entrée démo [{self.labels[setup.strategy]}] : "
+                     f"{details.replace(f'{plan.entry:.2f}', f'{price:.2f}', 1)}")  # fmt: skip
+        statuses = {self.store.order(setup.tag, part).get("status") for part in range(1, len(parts) + 1)}
+        if statuses <= {FAILED, None}:
+            self.store.update_signal(setup.tag, status=FAILED)
 
-    def _find(self, tag: str) -> Position | None:
+    def _find(self, comment: str) -> Position | None:
         for _ in range(6):
             for position in self.broker.positions(self.spec.name):
-                if position.magic == self.cfg.magic and position.comment == tag:
+                if position.magic == self.cfg.magic and position.comment == comment:
                     return position
             self.sleep(0.25)
         return None
 
-    def _mark_open(self, tag: str, position: Position) -> None:
+    def _mark_open(self, tag: str, part: int, position: Position, hold_s: int | None = None) -> None:
         open_ms = int(position.time_msc)
-        self.store.update(tag, status=OPEN, position=position.ticket, open_price=position.price_open,
-                          deadline_ms=open_ms + self.cfg.max_hold_s * 1000)  # fmt: skip
+        try:  # commission déjà prélevée à l'entrée, pour le résultat latent (0 sur un compte Standard)
+            deals = self.broker.deals_for_position(position.ticket)
+            entry_fees = sum(d.commission + d.fee for d in deals if d.entry == C.DEAL_ENTRY_IN)
+        except BrokerError:
+            entry_fees = 0.0
+        hold_ms = (self.cfg.max_hold_s if hold_s is None else hold_s) * 1000
+        self.store.update_order(tag, part, status=OPEN, position=position.ticket, open_price=position.price_open,
+                                open_ms=open_ms, deadline_ms=open_ms + hold_ms, volume=position.volume,
+                                entry_fees=entry_fees)  # fmt: skip
 
     # --- positions --------------------------------------------------------------------------------
 
+    def _mine(self) -> dict[int, Position]:
+        return {p.ticket: p for p in self.broker.positions(self.spec.name) if p.magic == self.cfg.magic}
+
     def _manage_positions(self, now_ms: int) -> None:
-        mine = {p.ticket: p for p in self.broker.positions(self.spec.name) if p.magic == self.cfg.magic}
-        for trade in self.store.demo_trades(SENDING):
-            match = next((p for p in mine.values() if p.comment == trade.tag), None)
-            if match is not None:
-                self._mark_open(trade.tag, match)
-            elif now_ms - trade.time_ms > 120_000:
-                self.store.update(trade.tag, status=FAILED, detail="envoi incertain, aucune position trouvée")
-        for trade in self.store.demo_trades(OPEN):
-            position = mine.pop(trade.position, None)
-            if position is None:
-                self._record_exit(trade, now_ms)
-            elif position.sl == 0.0:
-                self._restore_stop(trade, position, now_ms)
-            elif now_ms >= trade.deadline_ms:
-                self._close(position, trade, now_ms, "durée max")
+        mine = self._mine()
+        by_comment: dict[str, list[Position]] = {}
         for position in mine.values():
-            self._close(position, None, now_ms, "position inconnue de l'état")
+            by_comment.setdefault(position.comment, []).append(position)
+        for order in self.store.orders(SENDING):
+            matches = by_comment.get(order.comment, [])
+            if matches:
+                self._mark_open(order.tag, order.part, matches[0])
+            elif now_ms - order.time_ms > 120_000:
+                self.store.update_order(order.tag, order.part, status=FAILED,
+                                        detail="envoi incertain, aucune position trouvée")  # fmt: skip
+        for order in self.store.orders(OPEN):
+            position = mine.pop(order.position, None)
+            if position is None:
+                self._record_exit(order, now_ms)
+            elif position.sl == 0.0:
+                self._restore_stop(order, position, now_ms)
+            elif now_ms >= order.deadline_ms:
+                self._close(position, order, now_ms, "durée max")
+        if mine:
+            known = self.store.known_comments()
+            for position in mine.values():
+                reason = "doublon accidentel" if position.comment in known else "position inconnue de l'état"
+                self._close(position, None, now_ms, reason)
 
     def _exit_price(self, position: Position) -> float:
         tick = self.broker.tick(self.spec.name)
         return tick.bid if position.type == C.POSITION_TYPE_BUY else tick.ask
 
-    def _fees(self, deals_in: float, volume: float) -> float:
+    def _fees(self, entry_fees: float, volume: float) -> float:
         """Commissions et frais de l'entrée (lus dans les deals) + commission de sortie attendue."""
-        return deals_in - self.exit_commission_per_lot * volume
+        return entry_fees - self.exit_commission_per_lot * volume
 
-    def _close(self, position: Position, trade: DemoTrade | None, now_ms: int, reason: str) -> None:
+    def _close(self, position: Position, order: Order | None, now_ms: int, reason: str) -> None:
         """Clôture au marché ; la sortie est enregistrée au passage suivant, une fois la position disparue."""
         if not self._is_open(now_ms):
             return  # marché fermé : le stop serveur reste en place, nouvel essai à la réouverture
@@ -398,8 +513,10 @@ class ScalpRunner:
             return
         first_try = last is None
         self._close_attempts[position.ticket] = now_ms
-        if trade is None and first_try:
-            self.say(f"{self._clock(now_ms)} position {position.ticket} de l'expérience inconnue de l'état : fermeture")
+        if order is None and first_try:
+            self.say(f"{self._clock(now_ms)} position {position.ticket} ({position.comment}) : {reason}, fermeture")
+            if reason == "doublon accidentel":
+                self.store.bump(DUPLICATES)
         order_type = C.ORDER_TYPE_BUY if position.type == C.POSITION_TYPE_BUY else C.ORDER_TYPE_SELL
         booked = sum(
             d.commission + d.fee for d in self.broker.deals_for_position(position.ticket) if d.entry == C.DEAL_ENTRY_IN
@@ -427,10 +544,10 @@ class ScalpRunner:
                          f"nouvel essai toutes les {CLOSE_RETRY_MS // 1000} s")  # fmt: skip
             log.info("clôture de %s impossible : %s", position.ticket, exc)
             return
-        if trade is not None:
-            self.store.update(trade.tag, est_pnl=estimate, exit_reason=reason)
+        if order is not None:
+            self.store.update_order(order.tag, order.part, est_pnl=estimate, exit_reason=reason)
 
-    def _restore_stop(self, trade: DemoTrade, position: Position, now_ms: int) -> None:
+    def _restore_stop(self, order: Order, position: Position, now_ms: int) -> None:
         last = self._stop_attempts.get(position.ticket)
         if not self._is_open(now_ms) or (last is not None and now_ms - last < CLOSE_RETRY_MS):
             return  # marché fermé ou essai récent
@@ -440,55 +557,68 @@ class ScalpRunner:
                 "action": C.TRADE_ACTION_SLTP,
                 "symbol": position.symbol,
                 "position": position.ticket,
-                "sl": trade.sl,
-                "tp": trade.tp,
+                "sl": order.sl,
+                "tp": order.tp,
                 "magic": self.cfg.magic,
             }
         )
         if result.retcode == C.TRADE_RETCODE_DONE:
-            self.say(f"{self._clock(now_ms)} stop manquant reposé sur {position.ticket} à {trade.sl:.2f}")
+            self.say(f"{self._clock(now_ms)} stop manquant reposé sur {position.ticket} à {order.sl:.2f}")
         else:
             self.say(f"{self._clock(now_ms)} stop impossible à reposer sur {position.ticket} : fermeture")
-            self._close(position, trade, now_ms, "stop manquant")
+            self._close(position, order, now_ms, "stop manquant")
 
-    def _record_exit(self, trade: DemoTrade, now_ms: int) -> None:
-        deals = self.broker.deals_for_position(trade.position)
+    def _record_exit(self, order: Order, now_ms: int) -> None:
+        deals = self.broker.deals_for_position(order.position)
         exits = [d for d in deals if d.entry in (C.DEAL_ENTRY_OUT, C.DEAL_ENTRY_OUT_BY)]
         if not exits:
             return  # historique pas encore à jour : relu au prochain passage
-        real = sum(d.profit + d.commission + d.swap + d.fee for d in deals)
+        profit = sum(d.profit for d in deals)
+        commission = sum(d.commission for d in deals)
+        swap = sum(d.swap for d in deals)
+        fee = sum(d.fee for d in deals)
+        real = profit + commission + swap + fee
         price = sum(d.price * d.volume for d in exits) / sum(d.volume for d in exits)
-        row = self.store.signal(trade.tag)
+        row = self.store.order(order.tag, order.part)
         # Clôture par le bot : motif et estimation notés juste avant l'envoi. Sinon : stop, objectif…
         reason = row.get("exit_reason") or _DEAL_REASONS.get(exits[-1].reason, "clôture externe")
         estimate = row.get("est_pnl")
         if estimate is None:
-            order_type = C.ORDER_TYPE_BUY if trade.side == LONG else C.ORDER_TYPE_SELL
-            level = trade.sl if reason == "stop" else trade.tp
+            order_type = C.ORDER_TYPE_BUY if order.side == LONG else C.ORDER_TYPE_SELL
+            level = order.sl if reason == "stop" else order.tp
             booked = sum(d.commission + d.fee for d in deals if d.entry == C.DEAL_ENTRY_IN)
-            estimate = self.broker.calc_profit(order_type, self.spec.name, trade.volume, trade.open_price, level)
-            estimate += self._fees(booked, trade.volume)
-        self.store.update(trade.tag, status=CLOSED, exit_price=price, exit_reason=reason, real_pnl=real,
-                          est_pnl=estimate, closed_ms=now_ms)  # fmt: skip
+            estimate = self.broker.calc_profit(order_type, self.spec.name, order.volume, order.open_price, level)
+            estimate += self._fees(booked, order.volume)
         entries = [d.time_msc for d in deals if d.entry == C.DEAL_ENTRY_IN]
-        held = f" après {(max(d.time_msc for d in exits) - min(entries)) / 1000:.0f} s" if entries else ""
+        open_ms = min(entries) if entries else order.open_ms
+        exit_ms = max(d.time_msc for d in exits)
+        self.store.update_order(order.tag, order.part, status=CLOSED, exit_price=price, exit_reason=reason,
+                                exit_ms=exit_ms, open_ms=open_ms, est_pnl=estimate, profit=profit,
+                                commission=commission, swap=swap, fee=fee, real_pnl=real, closed_ms=now_ms)  # fmt: skip
+        held = f" après {(exit_ms - open_ms) / 1000:.0f} s" if open_ms else ""
         self.say(
-            f"{self._clock(now_ms)} sortie {trade.tag} ({reason}){held} à {price:.2f} : estimé "
-            f"{self._money(estimate)}, exécuté {self._money(real)} (écart {self._money(real - estimate)})"
+            f"{self._clock(now_ms)} sortie {order.label} [{self.labels.get(order.strategy, order.strategy)}] "
+            f"({reason}){held} à {price:.2f} : estimé {self._money(estimate)}, exécuté {self._money(real)} "
+            f"(écart {self._money(real - estimate)}, frais {self._money(commission + swap + fee)})"
         )
+        self.say(f"   {self.running_total()}")
 
-    def close_all(self, reason: str) -> int:
-        """Ferme les positions de l'expérience (arrêt du bot) ; renvoie le nombre de positions encore ouvertes."""
-        now_ms = self.server_now_ms()
-        trades = {t.position: t for t in self.store.demo_trades(OPEN)}
-        for position in [p for p in self.broker.positions(self.spec.name) if p.magic == self.cfg.magic]:
-            self._close_attempts.pop(position.ticket, None)
-            self._close(position, trades.get(position.ticket), now_ms, reason)
-        self.sleep(1.0)
-        self._manage_positions(self.server_now_ms())  # sorties relevées dans les deals
-        return len([p for p in self.broker.positions(self.spec.name) if p.magic == self.cfg.magic])
+    # --- résultats ----------------------------------------------------------------------------------
 
-    # --- bilans -------------------------------------------------------------------------------------
+    def _latent(self, positions: dict[int, Position] | None = None) -> float:
+        """Résultat latent des positions ouvertes de l'expérience (commission d'entrée comprise)."""
+        positions = self._mine() if positions is None else positions
+        entry_fees = {o.position: o.entry_fees or 0.0 for o in self.store.orders(OPEN)}
+        return sum(p.profit + p.swap + entry_fees.get(p.ticket, 0.0) for p in positions.values())
+
+    def running_total(self) -> str:
+        positions = self._mine()
+        realized = self.store.realized_since(0)
+        latent = self._latent(positions)
+        return (
+            f"essai démo : réalisé {self._money(realized)} | latent {self._money(latent)} "
+            f"({len(positions)} position(s) ouverte(s)) | total {self._money(realized + latent)}"
+        )
 
     def status_line(self) -> str:
         now_ms = self.server_now_ms()
@@ -496,54 +626,95 @@ class ScalpRunner:
         counts = self.store.status_counts()
         trend = {1: "haussière", -1: "baissière"}.get(self.trend, "indécise")
         market = "marché ouvert" if self._is_open(now_ms) else "marché fermé"
-        sent = sum(counts.get(status, 0) for status in (OPEN, CLOSED, SENDING, FAILED))
         return (
-            f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | spread {tick.ask - tick.bid:.2f} $ | "
-            f"signaux : {sent} envoyés, {counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} refusés | "
-            f"positions démo ouvertes : {counts.get(OPEN, 0)}"
+            f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | ATR M1 {self.atr:.2f} $ | "
+            f"spread {tick.ask - tick.bid:.2f} $ | signaux : {counts.get(SENT, 0)} envoyés, "
+            f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} refusés | {self.running_total()}"
         )
 
-    def _sim_value(self, side: int, entry: float, volume: float, bid: float, ask: float) -> float:
-        """Résultat latent d'un trade simulé s'il était fermé maintenant (glissement et commission inclus)."""
-        slip = self.cfg.extra_slippage_points * self.spec.point
-        exit_price = bid - slip if side == LONG else ask + slip
-        move = (exit_price - entry) * side - self.fee_per_oz
-        return move * volume * self.spec.trade_contract_size * self.value_per_dollar_oz
+    def _block(self, label: str, trades: dict[str, dict[str, float]], durations: list[float], reasons: Counter,
+               open_count: int, latent: float, spread_cost: float | None = None) -> list[str]:  # fmt: skip
+        results = [t["pnl"] for t in trades.values()]
+        gains = sum(r for r in results if r > 0)
+        losses = sum(r for r in results if r <= 0)
+        fees = sum(t["fees"] for t in trades.values())
+        wins = sum(1 for r in results if r > 0)
+        rate = f"{wins / len(results) * 100:.0f} %" if results else "-"
+        spread = f" ; spread payé {spread_cost:.2f}, déjà dans les prix" if spread_cost is not None else ""
+        lasting = (
+            f"durée moyenne {sum(durations) / len(durations):.0f} s (de {min(durations):.0f} à {max(durations):.0f} s)"
+            if durations
+            else "durée -"
+        )
+        exits = ", ".join(f"{reason} {count}" for reason, count in reasons.most_common()) or "-"
+        return [
+            f"  [{label}] trades fermés {len(results)} (gagnants {rate}) | gains réalisés {gains:+.2f} | "
+            f"pertes réalisées {losses:+.2f} | net réalisé {gains + losses:+.2f} (dont frais {fees:+.2f}{spread})",
+            f"      positions ouvertes {open_count} (latent {latent:+.2f}) | résultat total {gains + losses + latent:+.2f}"
+            f" | {lasting} | sorties : {exits}",
+        ]
 
     def reports(self) -> list[str]:
         account = self.broker.account()
         tick = self.broker.tick(self.spec.name)
-        positions = [p for p in self.broker.positions(self.spec.name) if p.magic == self.cfg.magic]
-        demo = self.store.closed_demo_results()
-        sims = self.store.sim_results()
-        open_sims = self.store.open_sims()
-        sim_latent = sum(self._sim_value(side, entry, volume, tick.bid, tick.ask) for side, entry, volume in open_sims)
+        positions = self._mine()
+        open_orders = [o for o in self.store.orders(OPEN) if o.strategy != "VERIF"]
+        closed = self.store.closed_orders()
         start = float(self.store.meta("start_equity") or account.equity)
-        currency = self.currency
-
-        def block(title: str, results: list[float], open_count: int, open_value: float, value: float) -> list[str]:
-            gains = sum(r for r in results if r > 0)
-            losses = sum(r for r in results if r <= 0)
-            wins = sum(1 for r in results if r > 0)
-            rate = f"{wins / len(results):.0%}" if results else "-"
-            return [
-                title,
-                f"  trades fermés : {len(results)} (gagnants {rate})",
-                f"  gains fermés {gains:+.2f} {currency} | pertes fermées {losses:+.2f} {currency} | "
-                f"net {gains + losses:+.2f} {currency}",
-                f"  positions ouvertes : {open_count} (latent {open_value:+.2f} {currency})",
-                f"  valeur du compte : {value:.2f} {currency} (départ {start:.2f})",
-            ]
-
-        floating = sum(p.profit + p.swap for p in positions)
-        lines = block("=== Bilan 1 : exécutions démo (valeur = equity du compte entier) ===", demo, len(positions),
-                      floating, account.equity)  # fmt: skip
-        lines += block(
-            f"=== Bilan 2 : simulation avec glissement supplémentaire (+{self.cfg.extra_slippage_points:g} points), "
-            "tous les signaux acceptés ===",
-            sims,
-            len(open_sims),
-            sim_latent,
-            start + sum(sims) + sim_latent,
+        codes = sorted({*self.versions, *(r["strategy"] for r in closed), *(o.strategy for o in open_orders)})
+        lines = [f"=== Bilan 1 : exécutions démo (montants en {self.currency}) ==="]
+        for code in [*codes, None]:
+            rows = [r for r in closed if code is None or r["strategy"] == code]
+            trades: dict[str, dict[str, float]] = {}
+            for r in rows:
+                trade = trades.setdefault(r["tag"], {"pnl": 0.0, "fees": 0.0})
+                trade["pnl"] += r["real_pnl"]
+                trade["fees"] += (r["commission"] or 0.0) + (r["swap"] or 0.0) + (r["fee"] or 0.0)
+            durations = [(r["exit_ms"] - r["open_ms"]) / 1000 for r in rows if r["exit_ms"] and r["open_ms"]]
+            reasons = Counter(r["exit_reason"] for r in rows)
+            spread_cost = sum(self._to_account((r["spread"] or 0.0), r["volume"]) for r in rows)
+            orders = [o for o in open_orders if code is None or o.strategy == code]
+            latent = self._latent({o.position: positions[o.position] for o in orders if o.position in positions})
+            label = self.labels.get(code, code) if code is not None else "total"
+            lines += self._block(label, trades, durations, reasons, len(orders), latent, spread_cost)
+        split = len({r["tag"] for r in closed if r["part"] > 1})
+        lines.append(
+            f"  doublons accidentels évités : {self.store.meta(DUPLICATES) or 0} | trades fractionnés : {split}"
         )
+        lines.append(f"  valeur du compte (equity, compte entier) : {account.equity:.2f} {self.currency} "
+                     f"(départ {start:.2f})")  # fmt: skip
+        lines.append(
+            f"=== Bilan 2 : simulation avec glissement supplémentaire (+{self.cfg.extra_slippage_points:g} points), "
+            "tous les signaux acceptés ==="
+        )
+        sims, open_sims = self.store.closed_sims(), self.store.open_sims()
+        slip = self.cfg.extra_slippage_points * self.spec.point
+        sim_total = 0.0
+        for code in [*sorted({*codes, *(s["strategy"] for s in sims)}), None]:
+            rows = [s for s in sims if code is None or s["strategy"] == code]
+            trades = {s["tag"]: {"pnl": s["pnl"], "fees": s["fees"] or 0.0} for s in rows}
+            durations = [(s["closed_ms"] - s["time_ms"]) / 1000 for s in rows]
+            pending = [s for s in open_sims if code is None or s["strategy"] == code]
+            latent = 0.0
+            for s in pending:
+                exit_price = tick.bid - slip if s["side"] == LONG else tick.ask + slip
+                latent += self._to_account((exit_price - s["entry"]) * s["side"] - self.fee_per_oz, s["volume"])
+            label = self.labels.get(code, code) if code is not None else "total"
+            lines += self._block(
+                label, trades, durations, Counter(s["exit_reason"] for s in rows), len(pending), latent
+            )
+            if code is None:
+                sim_total = sum(t["pnl"] for t in trades.values()) + latent
+        lines.append(f"  valeur simulée du compte : {start + sim_total:.2f} {self.currency} (départ {start:.2f})")
         return lines
+
+    def close_all(self, reason: str) -> int:
+        """Ferme les positions de l'expérience (arrêt du bot) ; renvoie le nombre de positions encore ouvertes."""
+        now_ms = self.server_now_ms()
+        by_ticket = {o.position: o for o in self.store.orders(OPEN)}
+        for position in self._mine().values():
+            self._close_attempts.pop(position.ticket, None)
+            self._close(position, by_ticket.get(position.ticket), now_ms, reason)
+        self.sleep(1.0)
+        self._manage_positions(self.server_now_ms())  # sorties relevées dans les deals
+        return len(self._mine())

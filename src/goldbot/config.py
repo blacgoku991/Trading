@@ -215,17 +215,50 @@ class SessionMomentumConfig(_Section):
         return self
 
 
-class ScalpingConfig(_Section):
-    """Expérience de scalping (démo uniquement), séparée de la stratégie principale."""
+class ScalpBreakoutConfig(_Section):
+    """Stratégie « cassure » : cassure des 60 s précédentes confirmée, dans le sens de la tendance M1."""
 
-    magic: int = Field(gt=0, lt=2**63)
-    candle_seconds: int = Field(ge=1, le=60)
-    breakout_lookback_s: int = Field(ge=10)
+    enabled: bool
+    version: int = Field(ge=1)
+    lookback_s: int = Field(ge=10)
     min_window_candles: int = Field(ge=1)
     confirm_closes: int = Field(ge=1, le=10)
     ema_fast: int = Field(ge=2)
     ema_slow: int = Field(ge=3)
     stop_lookback_s: int = Field(ge=5)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ScalpBreakoutConfig:
+        if self.ema_fast >= self.ema_slow:
+            raise ValueError("ema_fast doit être inférieur à ema_slow")
+        return self
+
+
+class ScalpPullbackConfig(_Section):
+    """Stratégie « impulsion-repli » : impulsion, repli partiel, puis reprise dans le sens de l'impulsion."""
+
+    enabled: bool
+    version: int = Field(ge=1)
+    impulse_atr: float = Field(gt=0)
+    impulse_max_s: int = Field(ge=5)
+    retrace_min: float = Field(gt=0, lt=1)
+    retrace_max: float = Field(gt=0, le=1)
+    pullback_max_s: int = Field(ge=5)
+    atr_period: int = Field(ge=2)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ScalpPullbackConfig:
+        if self.retrace_min >= self.retrace_max:
+            raise ValueError("retrace_min doit être inférieur à retrace_max")
+        return self
+
+
+class ScalpingConfig(_Section):
+    """Expérience de scalping (démo uniquement), séparée de la stratégie principale."""
+
+    magic: int = Field(gt=0, lt=2**63)
+    candle_seconds: int = Field(ge=1, le=60)
+    # Sorties, communes aux stratégies (comparaison à risque et sorties égaux).
     stop_buffer_points: float = Field(ge=0)
     min_stop_points: float = Field(gt=0)
     max_stop_points: float = Field(gt=0)
@@ -234,23 +267,26 @@ class ScalpingConfig(_Section):
     expected_slippage_points: float = Field(ge=0)
     extra_slippage_points: float = Field(ge=0)
     max_hold_s: int = Field(ge=5)
-    min_seconds_between_entries: float = Field(ge=0)
+    # Compte.
     risk_per_trade_pct: float = Field(gt=0, le=RISK_PER_TRADE_HARD_CAP_PCT)
     max_open_positions: int = Field(ge=1)
     max_total_risk_pct: float = Field(gt=0)
+    max_entries_per_minute: int = Field(ge=1, le=5)  # autorisation de l'utilisateur : 5 au plus
+    min_seconds_between_entries: float = Field(ge=0)
     daily_loss_pct: float = Field(gt=0)
-    cadence_verified: bool = False
-    broker_min_seconds_between_orders: float = Field(ge=0)
+    min_free_margin_pct: float = Field(ge=0, lt=100)
     experiment_days: int = Field(ge=1)
+    breakout: ScalpBreakoutConfig
+    pullback: ScalpPullbackConfig
 
     @model_validator(mode="after")
     def _consistent(self) -> ScalpingConfig:
-        if self.ema_fast >= self.ema_slow:
-            raise ValueError("ema_fast doit être inférieur à ema_slow")
         if self.min_stop_points >= self.max_stop_points:
             raise ValueError("min_stop_points doit être inférieur à max_stop_points")
         if self.max_total_risk_pct < self.risk_per_trade_pct:
             raise ValueError("max_total_risk_pct doit couvrir au moins un trade")
+        if not (self.breakout.enabled or self.pullback.enabled):
+            raise ValueError("au moins une stratégie de scalping doit être active")
         return self
 
 
