@@ -4,8 +4,8 @@ Bot algorithmique sur l'or, connecté à MetaTrader 5 via le package officiel `M
 Le plan complet, les règles non négociables et le journal d'avancement sont dans [`CLAUDE.md`](CLAUDE.md).
 La recherche préalable est dans [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
-**État : Phase 1 (squelette + connexion MT5).** Le bot se connecte et vérifie tout ; il ne trade pas encore.
-Seul l'ordre de test (0,01 lot, compte démo uniquement) envoie un ordre.
+**État : Phase 2 (données).** Le bot se connecte, vérifie tout et exporte l'historique de l'or ; il ne trade pas
+encore. Seul l'ordre de test (0,01 lot, compte démo uniquement) envoie un ordre.
 
 ## Principes de sécurité
 
@@ -24,12 +24,17 @@ src/goldbot/
   config.py               chargement et validation (pydantic), secrets depuis .env
   broker/                 interface commune, MT5Broker (Windows), FakeBroker (tests),
                           constantes MT5, reconnexion, détection du symbole, vérifications
-  data/                   heure serveur <-> UTC, heures de cotation
+  data/                   heure serveur <-> UTC, heures de cotation, export et relecture de
+                          l'historique (history.py), contrôle qualité (quality.py)
   execution/              arrondi au tick, mode de remplissage, ordre de test
   risk/guards.py          garde-fous sur le type de compte
   monitoring/             journalisation (fichiers rotatifs UTC + console)
   diagnostics.py          logique de check_connection.py
+  export.py               logique de export_history.py
+  data_report.py          logique de data_report.py
 scripts/check_connection.py
+scripts/export_history.py  export de l'historique (Windows)
+scripts/data_report.py     contrôle qualité des données exportées (partout)
 tests/                    tests unitaires (sans MT5)
 docs/RESEARCH.md
 ```
@@ -43,6 +48,9 @@ docs/RESEARCH.md
 | `PyYAML` | Lecture de `config/settings.yaml` |
 | `python-dotenv` | Lecture des secrets depuis `.env` |
 | `tzdata` | Base des fuseaux horaires pour `zoneinfo` (absente sous Windows) |
+| `numpy` | Calcul vectorisé sur les barres et les ticks (tableaux renvoyés par MT5) |
+| `pandas` | Séries temporelles de l'historique, conversion heure serveur -> UTC |
+| `pyarrow` | Fichiers parquet compressés (historique) |
 | `pytest` (dev) | Tests |
 
 Python **3.13** recommandé des deux côtés (Windows et Codespaces) ; 3.12 à 3.14 acceptés.
@@ -55,6 +63,14 @@ pytest
 ```
 
 `import MetaTrader5` est impossible sous Linux : les tests utilisent `FakeBroker`.
+
+Contrôle qualité des données exportées depuis Windows (fichiers copiés dans `data/export/`) :
+
+```bash
+python scripts/data_report.py
+```
+
+Le rapport (trous, doublons, pics, spreads, validation de l'heure serveur) est écrit dans `reports/`.
 
 ## Windows : connexion au compte Axi
 
@@ -140,7 +156,23 @@ Déroulé :
 
 Refusé sur un compte réel, le week-end et pendant la pause quotidienne (de 23:59 à 01:01 heure serveur).
 
-### 7. (Optionnel) Tests sous Windows
+### 7. Exporter l'historique de l'or (terminal MT5 ouvert)
+
+```powershell
+cd $HOME\Trading
+git pull
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+.\.venv\Scripts\python.exe scripts\export_history.py
+```
+
+- Durée : quelques minutes. Le terminal télécharge l'historique chez Axi : barres d'une minute sur toutes les années
+  disponibles, et ticks des 30 derniers jours (réglable dans `config/settings.yaml`, section `export`).
+- Les fichiers arrivent dans `data\export` : `explorer data\export` ouvre le dossier.
+- `manifest.json` décrit l'export (symbole, fichiers, empreintes SHA-256) sans aucun secret.
+- Si l'historique est court : ouvre un graphique de l'or en M1, clique dedans, appuie sur la touche Début (Home),
+  attends une minute et relance l'export.
+
+### 8. (Optionnel) Tests sous Windows
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
@@ -148,7 +180,9 @@ Refusé sur un compte réel, le week-end et pendant la pause quotidienne (de 23:
 
 Sous Windows, un test supplémentaire compare les constantes du bot à celles du vrai package `MetaTrader5`.
 
-### Codes de sortie de `check_connection.py`
+### Codes de sortie
+
+`check_connection.py` :
 
 | Code | Signification |
 |---|---|
@@ -157,3 +191,6 @@ Sous Windows, un test supplémentaire compare les constantes du bot à celles du
 | 2 | Connexion au terminal impossible |
 | 3 | Ordre de test refusé (compte non démo, marché fermé, erreurs à corriger) |
 | 4 | Configuration ou `.env` invalide |
+
+`export_history.py` : 0 export complet, 1 export incomplet (tranches en échec ou aucune barre), 2 connexion
+impossible, 4 configuration invalide, 130 interrompu (Ctrl+C).

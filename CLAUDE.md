@@ -338,6 +338,16 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
 - Si une info manque ou est ambiguë : pose la question au lieu de supposer.
 - Mets à jour le journal ci-dessous à chaque fin de phase.
 
+### Décisions de l'utilisateur (prioritaires sur les sections ci-dessus)
+
+- **2026-09-29** : aller vite vers un bot qui trade seul sur le compte démo. Style voulu : plusieurs trades par jour sur des
+  bougies d'une minute (scalping / intraday), avec « la meilleure logique de trader » (sessions, niveaux de liquidité,
+  volatilité, news). Moins de paperasse et d'arrêts entre les phases. **Restent non négociables** : démo d'abord
+  (règles 1-2), SL serveur (3), interdits (4), limites de perte (5), magic (6), secrets (7). Une stratégie ne tourne en
+  démo qu'après un backtest sur les données Axi avec les coûts réels (spread mesuré : environ 0,14 € par 0,01 lot
+  aller-retour). Trader chaque minute sans avantage mesuré est exclu : le spread seul coûterait environ 3,6 % du
+  capital par jour.
+
 ---
 
 ## 17. Journal d'avancement
@@ -346,7 +356,7 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
 |---|---|---|---|
 | 0 Recherche | fait (avec réserves) | 2026-09-28 | `docs/RESEARCH.md`. Proxy : mql5.com, axi.com… illisibles → API MT5 vérifiée sur le wheel officiel 5.0.6231, le reste via extraits de recherche (à confirmer en Phase 1). 10 questions ouvertes (§6), dont une bloquante : MT5 disponible chez Axi pour le pays / l'entité de l'utilisateur. |
 | 1 Connexion MT5 | fait | 2026-09-29 | Squelette, config validée (plafond 1 %/trade), secrets masqués, logs rotatifs UTC. MT5Broker (s'attache au terminal puis `login()` seulement si besoin : `initialize` avec identifiants donnait -10005), FakeBroker, reconnexion avec backoff, flux figé, diagnostic de l'environnement Windows. Check sur le PC de l'utilisateur : 0 erreur, heure serveur GMT+3 confirmée (écart 0 s), compte démo EUR hedging 1:1000, XAUUSD détecté. `--test-order` démo OK : FOK, slippage 0, SL resserré, commission 0 (Standard), coût = spread ; le prix exécuté se lit dans les deals (réponse d'`order_send` à 0). Constats : `docs/RESEARCH.md` annexe D. 158 tests OK (Python 3.13). |
-| 2 Données | à faire | | |
+| 2 Données | en cours | 2026-09-29 | Export Windows `scripts/export_history.py` : barres M1 mois par mois (relecture jusqu'à stabilité, arrêt au début de l'historique Axi), ticks des 30 derniers jours, parquet zstd en UTC + heure serveur brute, `manifest.json` avec SHA-256 et sans secret. Contrôle qualité `scripts/data_report.py` : trous, doublons, hors cotation, pics, spread par heure, validation historique de la règle d'heure serveur (clôture quotidienne à heure fixe de New York, semaines US/UE décalées), spread des barres vs ticks. 209 tests OK. Transfert des fichiers : glisser-déposer dans la conversation (dépôt public, jamais de données dans git). Reportés : calendrier économique MQL5, source Dukascopy (réseau bloqué ici). |
 | 3 Backtest + risque + S1 | à faire | | |
 | 4 Stratégies + validation | à faire | | |
 | 5 Live démo | à faire | | |
