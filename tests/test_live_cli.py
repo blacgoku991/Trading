@@ -82,3 +82,22 @@ def test_only_one_bot_at_a_time(tmp_path, env_file, rule):
         assert code == EXIT_LOCKED and "un autre bot" in output
     finally:
         lock.release()
+
+
+def test_a_halted_bot_stays_halted_until_a_manual_restart(tmp_path, env_file, rule):
+    from goldbot.config import load_settings
+    from goldbot.risk.limits import RiskLimits
+    from goldbot.state.store import StateStore
+
+    store = StateStore(tmp_path / "project" / "data" / "live.sqlite")
+    limits = RiskLimits.start(load_settings(CONFIG_PATH).risk, 10_000.0)
+    limits.halted = True
+    store.save_risk(limits)
+    store.close()
+    _, output = _run(tmp_path, env_file, _fake(rule))
+    assert "arrêt total" in output.lower() and "--reprendre-apres-arret" in output
+    _, output = _run(tmp_path, env_file, _fake(rule), "--reprendre-apres-arret")
+    assert "Arrêt total levé" in output
+    reloaded = RiskLimits.start(load_settings(CONFIG_PATH).risk, 10_000.0)
+    StateStore(tmp_path / "project" / "data" / "live.sqlite").load_risk(reloaded)
+    assert reloaded.halted is False

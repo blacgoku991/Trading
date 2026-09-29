@@ -79,6 +79,11 @@ def main(
         action="store_true",
         help="exigé (avec LIVE_TRADING=true dans .env) pour trader sur un compte réel",
     )
+    parser.add_argument(
+        "--reprendre-apres-arret",
+        action="store_true",
+        help="relance manuelle après l'arrêt total au drawdown maximal (repart du niveau actuel du compte)",
+    )
     parser.add_argument("--config", type=Path, default=root / "config" / "settings.yaml")
     parser.add_argument("--env", type=Path, default=root / ".env")
     args = parser.parse_args(argv)
@@ -137,6 +142,17 @@ def main(
             now_utc=now_utc,
             sleep=sleep,
         )
+        if runner.limits.halted:
+            if args.reprendre_apres_arret:
+                runner.limits.halted = False
+                runner.limits.peak_equity = account.equity
+                store.save_risk(runner.limits)
+                echo("Arrêt total levé à ta demande : le drawdown repart du niveau actuel du compte.")
+            else:
+                echo(
+                    "ATTENTION : arrêt total (drawdown maximal atteint). Le bot ne prendra aucun trade. Pour repartir, "
+                    "après avoir compris pourquoi : --reprendre-apres-arret"
+                )
         echo(f"Compte {mode}, equity {account.equity:.2f} {account.currency}, symbole {spec.name}.")
         risk = settings.risk
         echo(
