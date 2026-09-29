@@ -872,3 +872,36 @@ def test_live_direction_filter_refuses_when_the_day_has_no_clear_move(world):
     assert broker.positions() == [] and live.direction == 0
     assert any("refus : sens : pas de mouvement net du jour" in line for line in lines)
     assert "sens du jour : aucun trade" in live.status_line()
+
+
+def test_live_market_read_decides_the_side_and_announces_its_changes(world, monkeypatch):
+    from goldbot.config import ScalpMarketReadConfig
+    from goldbot.scalping import market_read
+
+    broker, clock, quote, runner, lines = world
+    read = {"side": -1}
+    monkeypatch.setitem(market_read.MODELS, "test", lambda b, **p: np.full(len(b), read["side"]))
+    live = runner()
+    live.cfg = live.cfg.model_copy(update={"market_read": ScalpMarketReadConfig(enabled=True, model="test")})
+    live.policy.cfg = live.cfg
+    _breakout(broker, clock, quote, live)  # la cassure est un achat ; la lecture dit « vendeur »
+    assert broker.positions() == [] and live.direction == -1
+    assert any("refus : lecture du marché : marché vendeur en ce moment" in line for line in lines)
+    assert "lecture du marché : VENDEUR (ventes)" in live.status_line()
+    read["side"] = 1  # la minute suivante, les bougies réagissent à la hausse
+    clock.server_ms += 60_000
+    live._refresh_context(clock.server_ms)
+    assert live.direction == 1
+    assert any(line.endswith("lecture du marché : ACHETEUR (achats)") for line in lines)
+
+
+def test_strategy_label_names_the_market_read():
+    from goldbot.config import ScalpMarketReadConfig
+    from goldbot.scalping.live import strategy_label
+
+    from tests.conftest import v1_exit_settings
+
+    cfg = v1_exit_settings().scalping
+    cfg = cfg.model_copy(update={"market_read": ScalpMarketReadConfig(enabled=True, model="reaction", version=2)})
+    label = strategy_label("B", cfg, 1, "abcd1234")
+    assert label.startswith("cassure v1") and "+ lecture reaction v2 · abcd1234" in label

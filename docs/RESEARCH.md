@@ -1313,3 +1313,32 @@ annoncé par l'utilisateur n'est pas arrivé dans l'environnement.
   120 s, une requête de clôture par position : bien en deçà de ce qu'on appelle d'ordinaire HFT (centaines
   d'ordres par seconde, arbitrage de latence). Le code s'arrête d'envoyer pendant 60 s si le serveur répond
   « trop de requêtes » (10024). **Avant tout usage en réel**, demander à Axi par écrit la fréquence acceptée.
+
+## Annexe G — Robots or trouvés en ligne (recherche du 29/09/2026)
+
+Sept recherches parallèles (MQL5 Market et Signals, Myfxbook et comptes suivis, forums anglophones, sources russes,
+sources chinoises, statistiques des régulateurs, « bots IA » et canaux Telegram), puis synthèse et critique
+contradictoire. **Limite importante** : le proxy bloquait presque tous les sites (mql5.com, myfxbook.com, forums,
+sites chinois et russes) ; les chiffres viennent d'extraits de moteurs de recherche ou de copies sur GitHub, pas de
+pages ouvertes. « Vérifié » veut dire « compte relié au broker (signal MQL5, Myfxbook) vu dans un extrait ».
+
+Ce qu'on trouve derrière les robots or qui « ferment toujours en gain en quelques secondes » :
+
+| Famille | Comment ils gagnent | Comment ils perdent | Permis ici |
+|---|---|---|---|
+| Grille, moyenne à la baisse, martingale, « récupération » (environ un tiers des produits cités) | ajoutent des positions contre le marché et ferment le panier en léger gain : 75-99 % de trades fermés gagnants | la perte flottante grossit jusqu'à l'appel de marge ; l'equity plonge bien plus que la balance | non (règle 4) |
+| Arbitrage de latence, HFT, artefacts du testeur | prix du broker en retard, ou mode « Every tick » du testeur | profits annulés par les brokers, interdits par les prop firms ; Axi n'accepte pas le HFT | non |
+| Petit objectif, grand stop | 65-90 % de gagnants | une perte efface 2 à 9 gains ; chez nous, fermer à +0,30 $ : 82 % de gagnants, PF 0,52 | permis, mesuré perdant |
+| Cassure rare d'un range calme par ordre stop, stop serveur (Smart Gold Hunter, ThunderGold) | la vraie cassure atteint 2-3 $ en quelques secondes | fausses cassures ; 1 à 7 trades **par semaine**, comptes de 100 $, moins de 200 trades, moins de 30 semaines | permis, non testé |
+| Cassure ou momentum tenus des heures (Gold Reaper, Kenni Trades) | journées de tendance | PF live d'environ 1,08-1,23, baisses de 30 à 45 %, gains concentrés sur quelques jours | permis : c'est la famille de S7 |
+
+Conclusions :
+- Aucun robot or tenant ses positions quelques secondes n'a d'historique vérifié sur un vrai compte de plus d'un an.
+- Les rares robots « secondes » crédibles tradent 1 à 7 fois par semaine, pas des dizaines de fois par jour.
+- Les systèmes qui durent gardent leurs positions des heures et ont un avantage mince, comme notre S7.
+- Hypothèses testables retenues (règles fixées d'avance, 7 ans de M1 Axi) : audit de fragilité de S7 (achats et ventes
+  séparés, années de baisse, frais 0,30 / 0,50 / 0,80 $) ; trois variantes de S7 au plus (filtre de journées hachées,
+  entrée par ordre en attente, tendance de fond) ; cassure rare d'un range calme par ordres stop.
+- La critique relève des erreurs de la synthèse : Quantum Emperor et Waka Waka ne sont pas des robots or ; les
+  chiffres de Gold Reaper « live » viennent d'un revendeur de VPS ; le chiffre « 5 meilleurs trades = 25 % » cité pour
+  S7 est celui du portefeuille à trois stratégies (S7 seule : 32-34 %, au-dessus du critère de 30 %).

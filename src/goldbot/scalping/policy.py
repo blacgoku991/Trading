@@ -160,7 +160,12 @@ class EntryPolicy:
             return "même occasion déjà en position : doublon évité"
         if len(open_trades) >= limits.open_positions:
             return f"positions ouvertes au maximum : {limits.open_positions}"
-        if cfg.direction_filter and side is not None:
+        if cfg.market_read.enabled and side is not None:
+            if not direction:
+                return "lecture du marché : pas de sens clair en ce moment"
+            if side != direction:
+                return f"lecture du marché : marché {'acheteur' if direction > 0 else 'vendeur'} en ce moment"
+        elif cfg.direction_filter and side is not None:
             if not direction:
                 return "sens : pas de mouvement net du jour (moins de " \
                        f"{cfg.direction_min_move_atr:g} ATR depuis l'ouverture)"  # fmt: skip

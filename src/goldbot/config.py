@@ -290,6 +290,21 @@ class ScalpCadenceConfig(_Section):
         return self
 
 
+class ScalpMarketReadConfig(_Section):
+    """Lecture du marché : sens achat / vente relu à chaque barre M1 close (scalping/market_read.py)."""
+
+    enabled: bool = False
+    model: str = ""  # nom du modèle dans market_read.MODELS
+    version: int = Field(default=1, ge=1)
+    params: dict[str, float] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ScalpMarketReadConfig:
+        if self.enabled and not self.model:
+            raise ValueError("market_read : nom du modèle requis quand la lecture est active")
+        return self
+
+
 class ScalpingConfig(_Section):
     """Expérience de scalping (démo uniquement), séparée de la stratégie principale."""
 
@@ -340,9 +355,13 @@ class ScalpingConfig(_Section):
     pullback: ScalpPullbackConfig
     learning: ScalpLearningConfig
     cadence: ScalpCadenceConfig
+    # Sens relu à chaque minute d'après la réaction des bougies (remplace le sens du jour, direction_filter).
+    market_read: ScalpMarketReadConfig = Field(default_factory=ScalpMarketReadConfig)
 
     @model_validator(mode="after")
     def _consistent(self) -> ScalpingConfig:
+        if self.direction_filter and self.market_read.enabled:
+            raise ValueError("choisir un seul sens : direction_filter (sens du jour) ou market_read (lecture du marché)")
         if self.min_stop_points >= self.max_stop_points:
             raise ValueError("min_stop_points doit être inférieur à max_stop_points")
         if self.fixed_stop_pips is not None:

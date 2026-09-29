@@ -125,6 +125,7 @@ class BreakoutDetector:
         cfg = config.breakout
         self.lookback_ms = cfg.lookback_s * 1000
         self.stop_lookback_ms = cfg.stop_lookback_s * 1000
+        self.keep_ms = max(self.lookback_ms, self.stop_lookback_ms)  # historique gardé : range et structure du stop
         self.min_window = cfg.min_window_candles
         self.confirm = cfg.confirm_closes
         self.history: deque[Candle] = deque()
@@ -162,7 +163,7 @@ class BreakoutDetector:
                 else:
                     self._pending[side] = (level_now, 1)
         self.history.append(candle)
-        while self.history and self.history[0].start_ms < candle.start_ms - self.lookback_ms:
+        while self.history and self.history[0].start_ms < candle.start_ms - self.keep_ms:
             self.history.popleft()
         return setup
 

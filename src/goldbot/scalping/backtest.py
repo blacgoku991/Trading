@@ -21,8 +21,9 @@ from goldbot.config import ScalpingConfig
 from goldbot.data.market_hours import MarketSchedule
 from goldbot.data.quality import server_index
 from goldbot.indicators.core import atr as atr_series
-from goldbot.scalping.engine import LONG, CandleBuilder, SimTrade, day_direction, make_detectors, plan_trade
+from goldbot.scalping.engine import LONG, CandleBuilder, SimTrade, make_detectors, plan_trade
 from goldbot.scalping.learning import LearningBook
+from goldbot.scalping.market_read import read_direction
 from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, reason_key, split_volume, trade_volume
 
 _EPOCH = datetime(1970, 1, 1)
@@ -54,7 +55,7 @@ class ScalpResult:
 def context_by_minute(bars: pd.DataFrame, config: ScalpingConfig) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Heure d'ouverture (epoch serveur, s) de chaque barre M1, tendance EMA rapide / lente et ATR M1.
 
-    Le sens du mouvement du jour (filtre de sens) se lit avec engine.day_direction sur les mêmes barres.
+    Le sens permis (lecture du marché ou sens du jour) se lit avec market_read.read_direction sur les mêmes barres.
     """
     close = bars["close"].astype("float64")
     fast = close.ewm(span=config.breakout.ema_fast, adjust=False).mean().to_numpy()
@@ -88,7 +89,7 @@ def run_backtest(
     bids = ticks["bid"].to_numpy(dtype="float64")[open_mask]
     asks = ticks["ask"].to_numpy(dtype="float64")[open_mask]
     bar_times, trends, atrs = context_by_minute(bars, config)
-    directions = day_direction(bars, config) if config.direction_filter else np.zeros(len(bars), dtype=int)
+    directions = read_direction(bars, config)  # lecture du marché, sens du jour ou aucun filtre
 
     point = instrument.point
     slip = slippage_points * point

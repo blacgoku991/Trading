@@ -46,12 +46,12 @@ from goldbot.scalping.engine import (
     Setup,
     SimTrade,
     ema_trend,
-    day_direction,
     make_detectors,
     pips,
     plan_trade,
 )
 from goldbot.scalping.learning import LearningBook
+from goldbot.scalping.market_read import check_model, read_direction
 from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, split_volume, trade_volume
 from goldbot.scalping.store import (
     CLOSED,
@@ -70,7 +70,7 @@ log = logging.getLogger("goldbot.scalp")
 _EPOCH = datetime(1970, 1, 1)
 WARMUP_S = 120  # ticks relus au démarrage pour remplir les fenêtres des détecteurs (sans trader dessus)
 CLOCK_GRACE_MS = 1000  # une bougie n'est close par l'horloge qu'une seconde après sa fin (ticks en retard)
-DIRECTION_BARS = 30_000  # barres M1 lues pour le filtre de sens (environ 20 jours de cotation)
+DIRECTION_BARS = 30_000  # barres M1 lues pour le sens (lecture du marché, sens du jour) : environ 20 jours
 CLOSE_RETRY_MS = 5000  # délai entre deux tentatives de clôture d'une même position
 BROKER_PAUSE_MS = 60_000  # après « trop de requêtes » (10024), plus d'envoi pendant 60 s
 DUPLICATES = "doublons_evites"
@@ -91,7 +91,9 @@ def strategy_label(code: str, config: ScalpingConfig, version: int, digest: str)
     """« cassure v1 + apprentissage v1 · 1a2b3c4d » : nom, versions et empreinte des réglages."""
     learning = f" + apprentissage v{config.learning.version}" if config.learning.enabled else ""
     cadence = f" + cadence v{config.cadence.version}" if config.cadence.enabled else ""
-    return f"{STRATEGY_NAMES[code]} v{version}{learning}{cadence} · {digest}"
+    read = config.market_read
+    reading = f" + lecture {read.model} v{read.version}" if read.enabled else ""
+    return f"{STRATEGY_NAMES[code]} v{version}{learning}{cadence}{reading} · {digest}"
 
 
 def strategy_versions(config: ScalpingConfig) -> dict[str, tuple[int, str, dict[str, object]]]:
@@ -143,7 +145,8 @@ class ScalpRunner:
         self.trading_from_ms: int | None = None  # pas de trade sur les ticks de préchauffage
         self.trend = 0
         self.atr = 0.0
-        self.direction = 0  # sens du mouvement du jour (filtre de sens) : +1, -1 ou 0
+        check_model(self.cfg)
+        self.direction = 0  # sens permis (lecture du marché ou sens du jour) : +1, -1 ou 0
         self._context_minute: int | None = None
         # Trades simulés en cours : tag -> (trade, exposition, envoyé au broker ?, stratégie).
         self.shadow: dict[str, tuple[SimTrade, Exposure, bool, str]] = {}
@@ -326,17 +329,25 @@ class ScalpRunner:
             self.day, self.day_start_ms = day, day * 86_400_000
             self.day_start_equity = self.broker.account().equity
 
+    @staticmethod
+    def _read_text(direction: int) -> str:
+        return {1: "ACHETEUR (achats)", -1: "VENDEUR (ventes)"}.get(direction, "pas de sens clair (attente)")
+
     def _refresh_context(self, now_ms: int) -> None:
         """Tendance EMA et ATR sur les barres M1 clôturées, une fois par minute."""
         minute = now_ms // 60_000
         if minute == self._context_minute:
             return
-        # Filtre de sens : environ 20 jours de cotation en M1 pour l'ATR journalier (même calcul qu'au rejeu).
-        count = DIRECTION_BARS if self.cfg.direction_filter else 300
+        # Sens permis : environ 20 jours de cotation en M1 (ATR journalier, mêmes valeurs qu'au rejeu).
+        read = self.cfg.market_read.enabled
+        count = DIRECTION_BARS if (self.cfg.direction_filter or read) else 300
         bars = bars_frame(self.broker.latest_bars(self.spec.name, count), self.rule)
         closed = bars[(bars["time_server"] + 60) * 1000 <= now_ms].reset_index(drop=True)
-        if self.cfg.direction_filter:
-            self.direction = int(day_direction(closed, self.cfg)[-1]) if len(closed) else 0
+        if self.cfg.direction_filter or read:
+            direction = int(read_direction(closed, self.cfg)[-1]) if len(closed) else 0
+            if read and direction != self.direction and self._context_minute is not None:
+                self.say(f"{self._clock(now_ms)} lecture du marché : {self._read_text(direction)}")
+            self.direction = direction
         closed = closed.iloc[-300:]
         b, p = self.cfg.breakout, self.cfg.pullback
         self.trend = ema_trend(tuple(closed["close"].astype(float)), b.ema_fast, b.ema_slow)
@@ -823,7 +834,9 @@ class ScalpRunner:
         tick = self.broker.tick(self.spec.name)
         counts = self.store.status_counts()
         trend = {1: "haussière", -1: "baissière"}.get(self.trend, "indécise")
-        if self.cfg.direction_filter:
+        if self.cfg.market_read.enabled:
+            trend += " | lecture du marché : " + self._read_text(self.direction)
+        elif self.cfg.direction_filter:
             trend += " | sens du jour : " + {1: "achats seulement", -1: "ventes seulement"}.get(
                 self.direction, "aucun trade (mouvement trop faible)"
             )

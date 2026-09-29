@@ -762,3 +762,75 @@ def test_replay_applies_the_direction_filter():
     result = run_backtest(ticks, bars, config, instrument=INSTRUMENT, schedule=schedule, initial_equity=5700.0,
                           slippage_points=0.0, strategies=(BREAKOUT,))  # fmt: skip
     assert result.trades.empty and result.refusals == {(BREAKOUT, "sens"): 1}
+
+
+def test_the_stop_can_sit_behind_a_structure_older_than_the_breakout_window():
+    # Stop derrière les 5 dernières minutes : le creux d'il y a 3 minutes compte, même hors de la fenêtre de 60 s.
+    config = CONFIG.model_copy(update={"breakout": CONFIG.breakout.model_copy(update={"stop_lookback_s": 300})})
+    detector = BreakoutDetector(config)
+    closes = [3998.0] + [4000.0] * 40  # creux à 3998 il y a 200 s, puis 200 s de range plat
+    _feed(detector, closes)
+    start = len(closes)
+    assert detector.on_candle(candle(start, 4000.30), LONG, 0.0) is None
+    setup = detector.on_candle(candle(start + 1, 4000.40), LONG, 0.0)
+    assert setup is not None and setup.level == pytest.approx(4000.05)
+    assert setup.structure == pytest.approx(3997.95)  # plus bas des 300 dernières secondes
+
+
+# --- lecture du marché ----------------------------------------------------------------------------------------
+
+
+def _read_config(model="test", **update):
+    from goldbot.config import ScalpMarketReadConfig
+
+    return CONFIG.model_copy(update={"market_read": ScalpMarketReadConfig(enabled=True, model=model), **update})
+
+
+def test_market_read_config_needs_a_model_and_excludes_the_day_filter():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="nom du modèle"):
+        CONFIG.model_validate({**CONFIG.model_dump(), "market_read": {"enabled": True}})
+    with pytest.raises(ValidationError, match="choisir un seul sens"):
+        CONFIG.model_validate({**CONFIG.model_dump(), "direction_filter": True,
+                               "market_read": {"enabled": True, "model": "x"}})  # fmt: skip
+
+
+def test_read_direction_uses_the_model_the_day_move_or_nothing(monkeypatch):
+    from goldbot.scalping import market_read
+
+    bars = _days_of_bars(20, last_move=-6.0)
+    monkeypatch.setitem(market_read.MODELS, "test", lambda b, **p: np.where(np.arange(len(b)) % 2, 1, -1))
+    values = market_read.read_direction(bars, _read_config())
+    assert values.dtype.kind == "i" and values[0] == -1 and values[1] == 1
+    assert market_read.read_direction(bars, CONFIG.model_copy(update={"direction_filter": True}))[-1] == -1
+    assert (market_read.read_direction(bars, CONFIG) == 0).all()
+    with pytest.raises(ValueError, match="modèle inconnu"):
+        market_read.read_direction(bars, _read_config("inconnu"))
+
+
+def test_market_read_refuses_trades_against_or_without_a_clear_read():
+    policy = EntryPolicy(_read_config())
+    check = lambda side, direction: policy.refusal(0, key="k", risk=5.0, equity=5000.0, day_result=0.0,  # noqa: E731
+                                                   day_start_equity=5000.0, open_trades=[], side=side,
+                                                   direction=direction)  # fmt: skip
+    assert check(LONG, 1) is None and check(SHORT, -1) is None
+    assert check(LONG, -1) == "lecture du marché : marché vendeur en ce moment"
+    assert check(SHORT, 1) == "lecture du marché : marché acheteur en ce moment"
+    assert check(SHORT, 0) == "lecture du marché : pas de sens clair en ce moment"
+    assert reason_key(check(SHORT, 0)) == "lecture du marché"
+
+
+def test_replay_follows_the_market_read(monkeypatch):
+    from goldbot.scalping import market_read
+
+    base_ms = server_epoch_of("2026-01-06 12:00") * 1000
+    ticks, bars = _breakout_history(base_ms)
+    schedule = MarketSchedule.from_config(SETTINGS.market_hours)
+    for read, traded in ((1, True), (-1, False)):  # la cassure du test est un achat
+        monkeypatch.setitem(market_read.MODELS, "test", lambda b, **p: np.full(len(b), read))
+        result = run_backtest(ticks, bars, _read_config(), instrument=INSTRUMENT, schedule=schedule,
+                              initial_equity=5700.0, slippage_points=0.0, strategies=(BREAKOUT,))  # fmt: skip
+        assert (not result.trades.empty) == traded
+        if not traded:
+            assert result.refusals == {(BREAKOUT, "lecture du marché"): 1}
