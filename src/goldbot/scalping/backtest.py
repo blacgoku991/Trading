@@ -29,6 +29,7 @@ from goldbot.scalping.policy import (
     Exposure,
     drawdown_pct,
     ladder_volumes,
+    opposite_plan,
     reason_key,
     split_volume,
     trade_volume,
@@ -236,6 +237,13 @@ def run_backtest(
                     refusals[(code, reason_key(why))] += 1
                     continue
                 risk = lots * loss_per_lot
+                # Trades contraires ouverts : gardés, signal ignoré, ou fermés avant l'entrée (retournement).
+                opposite = [item for item in open_trades if item[0].side != plan.side]
+                reverse, why = opposite_plan(config.opposite_signals, [item[0].move_at(bid, ask) for item in opposite])
+                if why is not None:
+                    refusals[(code, reason_key(why))] += 1
+                    continue
+                kept = [item for item in open_trades if not (reverse and item[0].side != plan.side)]
                 reason = policy.refusal(
                     now,
                     key=setup.key,
@@ -244,13 +252,21 @@ def run_backtest(
                     day_result=day_pnl,  # réalisé seulement dans le rejeu
                     day_realized=day_pnl,
                     day_start_equity=day_start_equity,
-                    open_trades=[exposure for _, exposure, _, _, _ in open_trades],
+                    open_trades=[exposure for _, exposure, _, _, _ in kept],
                     side=plan.side,
                     direction=direction,
                 )
                 if reason is not None:
                     refusals[(code, reason_key(reason))] += 1
                     continue
+                if reverse:
+                    for item in opposite:  # fermés au marché, comme en démo
+                        item[0].close_now(now, bid, ask, "retournement")
+                        pnl = record(item, now)
+                        equity += pnl
+                        day_pnl += pnl
+                        low = min(low, equity)
+                    open_trades = kept
                 policy.accept(now)
                 legs: tuple[float, ...] = ()
                 if plan.tps:  # une position par objectif (deux bougies), comme les ordres envoyés en démo

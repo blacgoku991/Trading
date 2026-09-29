@@ -271,6 +271,20 @@ def split_volume(volume: float, volume_max: float, volume_step: float) -> list[f
     return [round((base + (1 if i < extra else 0)) * volume_step, 8) for i in range(count)]
 
 
+def opposite_plan(mode: str, latent: list[float]) -> tuple[bool, str | None]:
+    """Signal contraire à des trades ouverts : (fermer ces trades avant d'entrer ?, motif du refus ou None).
+
+    latent : résultat latent de chacun des trades contraires ouverts (glissement et frais compris).
+    """
+    if not latent or mode == "garder":
+        return False, None
+    if mode == "ignorer":
+        return False, "position contraire ouverte : signal ignoré (pas d'achat et de vente en même temps)"
+    if mode == "retourner_si_gain" and any(value <= 0 for value in latent):
+        return False, "position contraire en perte : gardée, signal ignoré"
+    return True, None
+
+
 def ladder_volumes(volume: float, count: int, volume_min: float, volume_step: float) -> list[float]:
     """Lot réparti en `count` positions (une par objectif), parts égales en pas de volume, chacune au moins au lot
     minimal : moins de positions si le lot ne suffit pas (les objectifs les plus proches sont gardés)."""

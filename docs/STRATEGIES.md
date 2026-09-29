@@ -735,6 +735,40 @@ bénéfice ») : reprise, objectif fixe de 40 pips, lot 0,4 / 0,3 — la moins p
 contre 0,88 pour « suivre » et 0,80 pour l'objectif au-delà des bougies). Mêmes règles que `d5d542ff` (rejeu
 identique : 43 trades, PF 0,74) ; l'empreinte devient `f8489472` car la configuration a gagné des champs depuis.
 
+### Signaux contraires : « retournement si gain » (29/09/2026, nuit)
+
+Demande de l'utilisateur (capture d'un achat et d'une vente de 0,4 lot ouverts en même temps) : « il lance des
+positions contraires, c'est pas bon, ou alors qu'il s'adapte : fermer celle qui est bien et en renvoyer une
+autre ». Nouveau réglage `opposite_signals`, même règle au rejeu et en démo (`policy.opposite_plan`) :
+
+- `garder` : comportement d'avant, achats et ventes peuvent coexister ;
+- `ignorer` : pas de signal contraire tant qu'un trade est ouvert ;
+- `retourner` : les trades dans l'autre sens sont fermés au marché, puis le nouveau part ;
+- `retourner_si_gain` (**mis en démo**, « + retournement si gain » dans le nom) : fermés et remplacés seulement
+  s'ils sont tous en gain (latent, frais compris) ; sinon gardés avec leur stop et leur objectif, signal ignoré.
+
+En démo, la fermeture passe avant l'envoi du nouvel ordre ; si elle échoue (refus du serveur, envoi incertain),
+pas de nouvelle entrée : jamais d'achat et de vente ouverts en même temps. Rejeu sur les 4 semaines de ticks Axi,
+deux bougies v1 (objectif 40 pips) :
+
+| Règle | Cadre | Trades | Gagnants | Gain moyen / perte moyenne | PF | Par trade | Résultat |
+|---|---|---|---|---|---|---|---|
+| garder (avant) | 0,1 %, sans limites | 12 668 | 24 % | +32,1 / −12,6 pips | 0,82 | −0,15 R | −3 804 € |
+| ignorer | 0,1 %, sans limites | 8 672 | 25 % | +32,9 / −13,3 pips | 0,80 | −0,15 R | −3 261 € |
+| retourner | 0,1 %, sans limites | 12 866 | 44 % | +10,5 / −11,0 pips | 0,72 | −0,14 R | −3 714 € |
+| retourner si gain | 0,1 %, sans limites | 11 934 | 46 % | +11,3 / −12,7 pips | 0,74 | −0,14 R | −3 600 € |
+| garder (avant) | démo : lot 0,4 / 0,3, limites | 43 | 26 % | +23,4 / −11,2 pips | 0,74 | −0,16 R | −313 €, arrêt le 03/09 |
+| retourner si gain | démo : lot 0,4 / 0,3, limites | 90 | 47 % | +11,8 / −11,6 pips | 0,92 | −0,04 R | −154 € (plus haut +372 €), arrêt le 04/09 |
+
+Avec 1 pip de glissement : en démo, garder PF 0,65 (−437 €, arrêt le 04/09), retourner si gain PF 0,25 (21 trades,
+−501 €, arrêt le 07/09) ; sans limites, les quatre règles perdent presque tout le capital du rejeu (PF 0,48 à 0,68).
+
+**Conclusion** : la règle change la forme des résultats (deux fois plus de trades gagnants, mais petits : un gain
+retourné vaut environ 11 pips au lieu de 32), pas la perte par trade (−0,14 R contre −0,15 R sur 12 000 trades) ;
+aucune règle ne rend la stratégie gagnante. Le cadre démo (90 trades en 4 jours) est trop court pour départager.
+Mise en démo parce que c'est le comportement demandé ; « ignorer » perd le moins en euros (moins de trades), pas par
+trade.
+
 
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 
@@ -790,3 +824,5 @@ PF 0,77, 25/35 0,80, 30/40 0,81, 30/50 0,80, 40/60 0,81 ; avec 1 pip de glisseme
 - 29/09/2026 nuit : v3 (sens du jour, lot calculé 0,25 %, 12 entrées par minute), puis **v4** (sens libre, sans
   apprentissage, 0,1 % par trade) : voir « v4 » ci-dessus ; puis **v5 « deux bougies »** (idée de l'utilisateur, en
   démo à sa demande malgré le test perdant).
+- 29/09/2026 nuit (suite) : deux bougies v1 « + retournement si gain » (jamais d'achat et de vente ouverts
+  ensemble), voir « Signaux contraires » ci-dessus.

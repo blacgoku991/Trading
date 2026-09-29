@@ -60,6 +60,7 @@ def v1_exit_settings():
         max_entries_per_minute=5,
         max_open_positions=5,
         direction_filter=False,
+        opposite_signals="garder",  # testés à part (tests « signaux contraires »)
     )
     data["cadence"].update(ceiling_total_risk_pct=1.0)
     data["learning"].update(enabled=True, version=1, target_ratios=[0.8, 1.2, 2.0])

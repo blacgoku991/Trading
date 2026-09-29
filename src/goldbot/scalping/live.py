@@ -21,7 +21,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 
 from goldbot.broker import mt5_constants as C
-from goldbot.broker.base import Broker, BrokerError, Deal, Position, SymbolSpec
+from goldbot.broker.base import Broker, BrokerError, Deal, Position, SymbolSpec, Tick
 from goldbot.broker.supervisor import ConnectionSupervisor
 from goldbot.config import ScalpingConfig, Settings
 from goldbot.data.history import bars_frame
@@ -59,6 +59,7 @@ from goldbot.scalping.policy import (
     Exposure,
     drawdown_pct,
     ladder_volumes,
+    opposite_plan,
     reason_key,
     split_volume,
     trade_volume,
@@ -92,6 +93,9 @@ DUPLICATES = "doublons_evites"
 LEARNER = "apprentissage"  # état de l'apprentissage dans la table meta (JSON)
 PEAK = "plus_haut_experience"  # plus haut de la valeur de l'expérience (drawdown maximal)
 HALT = "arret_total"  # motif de l'arrêt total au drawdown maximal : relance manuelle uniquement
+# Règle des signaux contraires dans le nom affiché (« garder », le comportement d'origine : rien).
+OPPOSITE_LABELS = {"ignorer": " + sans contraires", "retourner": " + retournement",
+                   "retourner_si_gain": " + retournement si gain"}  # fmt: skip
 _DEAL_REASONS = {
     C.DEAL_REASON_SL: "stop",
     C.DEAL_REASON_TP: "objectif",
@@ -108,7 +112,8 @@ def strategy_label(code: str, config: ScalpingConfig, version: int, digest: str)
     cadence = f" + cadence v{config.cadence.version}" if config.cadence.enabled else ""
     read = config.market_read
     reading = f" + lecture {read.model} v{read.version}" if read.enabled else ""
-    return f"{STRATEGY_NAMES[code]} v{version}{learning}{cadence}{reading} · {digest}"
+    opposite = OPPOSITE_LABELS.get(config.opposite_signals, "")
+    return f"{STRATEGY_NAMES[code]} v{version}{learning}{cadence}{reading}{opposite} · {digest}"
 
 
 def strategy_versions(config: ScalpingConfig) -> dict[str, tuple[int, str, dict[str, object]]]:
@@ -509,6 +514,14 @@ class ScalpRunner:
             self._refuse(setup, spread, why)
             return
         risk = volume * loss_per_lot
+        # Trades contraires ouverts : gardés, signal ignoré, ou fermés avant l'entrée (même règle qu'au rejeu).
+        exposures = self._exposures()
+        opposite = [e.tag for e in exposures if e.side != plan.side] if cfg.opposite_signals != "garder" else []
+        reverse, why = opposite_plan(cfg.opposite_signals, self._latents(opposite, tick))
+        if why is not None:
+            self._refuse(setup, spread, why)
+            return
+        kept = [exposure for exposure in exposures if not (reverse and exposure.side != plan.side)]
         reason = self.policy.refusal(
             now_ms,
             key=setup.key,
@@ -517,7 +530,7 @@ class ScalpRunner:
             day_result=self._day_result(),
             day_realized=self._day_realized(),
             day_start_equity=self.day_start_equity,
-            open_trades=self._exposures(),
+            open_trades=kept,
             side=plan.side,
             direction=self.direction,
         )
@@ -526,8 +539,11 @@ class ScalpRunner:
         if reason is not None:
             self._refuse(setup, spread, reason)
             return
-        self.policy.accept(now_ms)
         self._announce()
+        if reverse and not self._reverse(opposite, now_ms, tick.bid, tick.ask):
+            self._refuse(setup, spread, "retournement impossible : trade contraire pas fermé")
+            return
+        self.policy.accept(now_ms)
         if plan.tps:  # une position par objectif (deux bougies) ; moins de positions si le lot ne suffit pas
             parts = ladder_volumes(volume, len(plan.tps), spec.volume_min, spec.volume_step)
             tps = plan.tps[: len(parts)]
@@ -587,20 +603,72 @@ class ScalpRunner:
                               sent)  # fmt: skip
 
     def _advance_shadow(self, time_ms: int, bid: float, ask: float) -> None:
-        for tag, (trade, _, sent, strategy) in list(self.shadow.items()):
+        for tag, (trade, _, _, _) in list(self.shadow.items()):
             if trade.on_tick(time_ms, bid, ask):
-                pnl = self._to_account(trade.move, trade.volume)
-                fees = -self._to_account(trade.fee, trade.volume)
-                self.store.close_sim(tag, trade.exit_price, trade.reason, pnl, fees, time_ms)
-                del self.shadow[tag]
-                if not sent:  # --simulation : les trades simulés sont les trades de l'essai (comme au rejeu)
-                    pause = self.policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
-                    if pause:
-                        self.say(f"{self._clock(time_ms)} {pause}")
-                    self._update_cadence(time_ms)
-                if not sent:
-                    self.say(f"{self._clock(time_ms)} sortie simulée {tag} [{self.labels.get(strategy, strategy)}] "
-                             f"({trade.reason}) : {self._money(pnl)}")  # fmt: skip
+                self._settle_shadow(tag, time_ms)
+
+    def _settle_shadow(self, tag: str, time_ms: int) -> None:
+        """Trade simulé fermé : résultat enregistré ; en --simulation, c'est le trade de l'essai (comme au rejeu)."""
+        trade, _, sent, strategy = self.shadow.pop(tag)
+        pnl = self._to_account(trade.move, trade.volume)
+        fees = -self._to_account(trade.fee, trade.volume)
+        self.store.close_sim(tag, trade.exit_price, trade.reason, pnl, fees, time_ms)
+        if not sent:
+            pause = self.policy.on_exit(trade.side, trade.reason, trade.open_ms, trade.exit_ms, pnl)
+            if pause:
+                self.say(f"{self._clock(time_ms)} {pause}")
+            self._update_cadence(time_ms)
+            self.say(f"{self._clock(time_ms)} sortie simulée {tag} [{self.labels.get(strategy, strategy)}] "
+                     f"({trade.reason}) : {self._money(pnl)}")  # fmt: skip
+
+    def _latents(self, tags: list[str], tick: Tick) -> list[float]:
+        """Résultat latent de chaque trade (devise du compte, frais d'entrée compris) : ses positions démo, ou son
+        trade simulé (--simulation). Envoi incertain ou position déjà disparue : 0, jamais compté comme un gain."""
+        if not tags:
+            return []
+        sending = {order.tag for order in self.store.orders(SENDING)}
+        opened = self.store.orders(OPEN)
+        mine = self._mine() if opened else {}
+        values = []
+        for tag in tags:
+            orders = [order for order in opened if order.tag == tag]
+            if tag in sending or any(order.position not in mine for order in orders):
+                values.append(0.0)
+            elif orders:
+                values.append(sum(mine[order.position].profit + mine[order.position].swap + (order.entry_fees or 0.0)
+                                  for order in orders))  # fmt: skip
+            elif tag in self.shadow:
+                trade = self.shadow[tag][0]
+                values.append(self._to_account(trade.move_at(tick.bid, tick.ask), trade.volume))
+            else:
+                values.append(0.0)
+        return values
+
+    def _reverse(self, tags: list[str], now_ms: int, bid: float, ask: float) -> bool:
+        """Retournement : les trades contraires sont fermés au marché avant la nouvelle entrée.
+
+        False si l'un d'eux ne peut pas être fermé maintenant (envoi incertain, clôture refusée ou déjà tentée) :
+        pas de nouvelle entrée, jamais d'achat et de vente ouverts en même temps ; son stop serveur reste en place.
+        """
+        if any(order.tag in tags for order in self.store.orders(SENDING)):
+            self.say("   retournement impossible : un ordre dans l'autre sens est en cours d'envoi, signal ignoré")
+            return False
+        mine = self._mine()
+        failed = set()
+        for order in self.store.orders(OPEN):
+            if order.tag in tags and order.position in mine:
+                if not self._close(mine[order.position], order, now_ms, "retournement"):
+                    failed.add(order.tag)
+        for tag in tags:
+            if tag in self.shadow and tag not in failed:
+                self.shadow[tag][0].close_now(now_ms, bid, ask, "retournement")
+                self._settle_shadow(tag, now_ms)
+        if failed:
+            self.say(f"   retournement impossible : {len(failed)} trade(s) dans l'autre sens pas fermé(s), "
+                     "signal ignoré")  # fmt: skip
+            return False
+        self.say(f"   retournement : {len(tags)} trade(s) dans l'autre sens fermé(s) au marché")
+        return True
 
     def _send(self, setup: Setup, plan: Plan, order_type: int, parts: list[float], volume: float, risk: float,
               now_ms: int, details: str) -> None:  # fmt: skip
@@ -752,13 +820,16 @@ class ScalpRunner:
         """Commissions et frais de l'entrée (lus dans les deals) + commission de sortie attendue."""
         return entry_fees - self.exit_commission_per_lot * volume
 
-    def _close(self, position: Position, order: Order | None, now_ms: int, reason: str) -> None:
-        """Clôture au marché ; la sortie est enregistrée au passage suivant, une fois la position disparue."""
+    def _close(self, position: Position, order: Order | None, now_ms: int, reason: str) -> bool:
+        """Clôture au marché ; la sortie est enregistrée au passage suivant, une fois la position disparue.
+
+        True si l'ordre de clôture est passé ; False si le marché est fermé, un essai récent attend, ou refus.
+        """
         if not self._is_open(now_ms):
-            return  # marché fermé : le stop serveur reste en place, nouvel essai à la réouverture
+            return False  # marché fermé : le stop serveur reste en place, nouvel essai à la réouverture
         last = self._close_attempts.get(position.ticket)
         if last is not None and now_ms - last < CLOSE_RETRY_MS:
-            return
+            return False
         first_try = last is None
         self._close_attempts[position.ticket] = now_ms
         if order is None and first_try:
@@ -790,12 +861,13 @@ class ScalpRunner:
             send_market_order(self.broker, request, filling_candidates(self.spec.filling_mode), sleep=self.sleep)
         except (OrderRejected, BrokerError) as exc:
             if first_try:
-                self.say(f"   clôture de {position.ticket} impossible ({exc}) : le stop serveur reste en place, "
-                         f"nouvel essai toutes les {CLOSE_RETRY_MS // 1000} s")  # fmt: skip
+                again = "" if reason == "retournement" else f", nouvel essai toutes les {CLOSE_RETRY_MS // 1000} s"
+                self.say(f"   clôture de {position.ticket} impossible ({exc}) : le stop serveur reste en place{again}")
             log.info("clôture de %s impossible : %s", position.ticket, exc)
-            return
+            return False
         if order is not None:
             self.store.update_order(order.tag, order.part, est_pnl=estimate, exit_reason=reason)
+        return True
 
     def _restore_stop(self, order: Order, position: Position, now_ms: int) -> None:
         last = self._stop_attempts.get(position.ticket)

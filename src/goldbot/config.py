@@ -377,6 +377,11 @@ class ScalpingConfig(_Section):
     experiment_days: int = Field(ge=1)
     # Corrections tirées des trades démo (29/09/2026) ; défauts = sans effet.
     max_same_side_positions: int | None = Field(default=None, ge=1)  # trades ouverts dans le même sens, au plus
+    # Signal contraire à des trades ouverts (demande de l'utilisateur : pas d'achat et de vente en même temps) :
+    # « garder » (les deux positions coexistent), « ignorer » (signal refusé), « retourner » (trades contraires
+    # fermés au marché, puis entrée), « retourner_si_gain » (fermés seulement s'ils sont tous en gain, sinon signal
+    # refusé et trades gardés).
+    opposite_signals: Literal["garder", "ignorer", "retourner", "retourner_si_gain"] = "garder"
     quick_stop_s: float = Field(default=20.0, gt=0)  # stop touché plus vite que ça : entrée prise dans le bruit
     quick_stop_pause_s: float = Field(default=0.0, ge=0)  # pause des entrées dans ce sens après un tel stop
     loss_streak: int = Field(default=3, ge=1)  # pertes d'affilée dans un même sens...

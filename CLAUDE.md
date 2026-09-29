@@ -413,6 +413,10 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   dernière année, toutes perdantes). Puis « le TP au-dessus de la bougie précédente » : v3, objectif juste au-delà
   des deux dernières bougies, 15 à 40 pips (plus de gagnants, mais PF 0,80 contre 0,88 : annoncé). Puis « remets la
   version d'avant, elle fait plus de bénéfice » : retour à deux bougies v1 (reprise, 40 pips fixes, lot 0,4 / 0,3).
+  Puis « il lance des positions contraires, c'est pas bon ; fermer celle qui est bien et en renvoyer une autre » :
+  réglage `opposite_signals: retourner_si_gain` (trades dans l'autre sens fermés au marché puis remplacés s'ils
+  sont tous en gain, sinon gardés et signal ignoré ; jamais d'achat et de vente ouverts ensemble, même code au
+  rejeu et en démo). Rejeu : même perte par trade qu'avant (−0,14 R contre −0,15 R), toujours perdant, annoncé.
 
 ---
 

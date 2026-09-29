@@ -549,6 +549,11 @@ class SimTrade:
         self.exit_price, self.exit_ms, self.reason = self._average(price), time_ms, reason
         return True
 
+    def close_now(self, time_ms: int, bid: float, ask: float, reason: str) -> None:
+        """Fermeture au marché (retournement) : au bid pour un achat, à l'ask pour une vente, glissement compris."""
+        if self.exit_price is None:
+            self._close(time_ms, (bid if self.side == LONG else ask) - self.side * self.slip, reason)
+
     @property
     def move(self) -> float:
         """Résultat par once (USD), spread, glissement et commission inclus."""

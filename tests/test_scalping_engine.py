@@ -986,3 +986,58 @@ def test_two_candles_candle_target_sits_beyond_the_previous_candles_within_bound
     assert plan_trade(close, 3999.92, 4000.08, config, **KWARGS).tps == pytest.approx((3998.42,))
     far = Setup(TWO_CANDLES, LONG, 4010.0, 3999.0, c, key="R", reason="test")  # 10 $ plus haut : 40 pips au plus
     assert plan_trade(far, 3999.92, 4000.08, config, **KWARGS).tps == pytest.approx((4004.08,))
+
+
+# --- signaux contraires ---------------------------------------------------------------------------------------
+
+
+def test_opposite_plan_keeps_ignores_or_reverses():
+    from goldbot.scalping.policy import opposite_plan
+
+    assert opposite_plan("garder", [5.0]) == (False, None)
+    assert opposite_plan("retourner", []) == (False, None)  # pas de trade contraire : rien à faire
+    assert opposite_plan("ignorer", [5.0])[1].startswith("position contraire ouverte")
+    assert opposite_plan("retourner", [-3.0, 2.0]) == (True, None)  # fermés en gain comme en perte
+    assert opposite_plan("retourner_si_gain", [4.0]) == (True, None)
+    assert opposite_plan("retourner_si_gain", [4.0, -1.0])[1].startswith("position contraire en perte")
+
+
+def _buy_then_sell_history(base_ms, minute2_close):
+    """Minute 0 haussière, minute 1 baissière (achat « reprise »), minute 2 haussière (vente), puis calme 12 min."""
+    points = [(base_ms + k * 1000, 4000.0 + 0.5 * k / 59) for k in range(60)]
+    points += [(base_ms + 60_000 + k * 1000, 4000.5 - 0.3 * k / 59) for k in range(60)]
+    points += [(base_ms + 120_000 + k * 1000, 4000.0 + (minute2_close - 4000.0) * k / 59) for k in range(60)]
+    points += [(base_ms + 180_000 + k * 1000, minute2_close) for k in range(720)]
+    return _frames(points, base_ms)
+
+
+@pytest.mark.parametrize(
+    ("mode", "minute2_close", "reasons", "refused"),
+    [
+        ("garder", 4000.6, {"durée max"}, None),
+        ("ignorer", 4000.6, {"durée max"}, "position contraire ouverte"),
+        ("retourner", 4000.6, {"retournement", "durée max"}, None),
+        ("retourner", 4000.1, {"retournement", "durée max"}, None),  # fermé même en perte
+        ("retourner_si_gain", 4000.6, {"retournement", "durée max"}, None),  # l'achat est en gain
+        ("retourner_si_gain", 4000.1, {"durée max"}, "position contraire en perte"),  # l'achat est en perte
+    ],
+)
+def test_replay_handles_a_signal_opposite_to_an_open_trade(mode, minute2_close, reasons, refused):
+    from goldbot.scalping.engine import TWO_CANDLES
+
+    base_ms = server_epoch_of("2026-01-06 12:00") * 1000
+    ticks, bars = _buy_then_sell_history(base_ms, minute2_close)
+    schedule = MarketSchedule.from_config(SETTINGS.market_hours)
+    config = _two_config(min_stop_pips=10.0, target_pips=[40.0]).model_copy(update={"opposite_signals": mode})
+    result = run_backtest(ticks, bars, config, instrument=INSTRUMENT, schedule=schedule, initial_equity=5700.0,
+                          slippage_points=0.0, strategies=(TWO_CANDLES,))  # fmt: skip
+    trades = result.trades
+    assert set(trades["reason"]) == reasons
+    assert trades.iloc[0]["side"] == LONG
+    if refused is None:
+        assert len(trades) == 2 and trades.iloc[-1]["side"] == SHORT
+    else:
+        assert len(trades) == 1 and result.refusals == {(TWO_CANDLES, refused): 1}
+    if "retournement" in reasons:
+        buy = trades[trades["side"] == LONG].iloc[0]
+        assert buy["reason"] == "retournement" and buy["exit_ms"] <= trades.iloc[-1]["open_ms"]

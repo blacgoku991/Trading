@@ -13,7 +13,7 @@ from goldbot.broker.base import TICKS_DTYPE
 from goldbot.broker.fake_broker import FakeBroker, make_account, make_bars, make_symbol, make_tick
 from goldbot.broker.supervisor import ConnectionSupervisor
 from goldbot.scalping.cli import EXIT_OK, EXIT_REFUSED, live_main
-from goldbot.scalping.engine import BREAKOUT, LONG, PULLBACK, Candle, Setup
+from goldbot.scalping.engine import BREAKOUT, LONG, PULLBACK, SHORT, Candle, Setup
 from goldbot.scalping.live import ScalpRunner, strategy_versions
 from goldbot.scalping.store import CLOSED, FAILED, NOT_SENT, OPEN, REFUSED, SENDING, SENT, ScalpStore
 from tests.conftest import CONFIG_PATH, server_epoch_of
@@ -557,6 +557,7 @@ _V1_EXITS = [
     ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
     ("  risk_per_trade_pct: 1.0\n", "  risk_per_trade_pct: 0.1\n"),
     ("  lot_choices: [0.4, 0.3]\n", ""),
+    ("  opposite_signals: retourner_si_gain\n", "  opposite_signals: garder\n"),
     ("résultat (PF 0,90 contre 0,91).\n    enabled: false\n", "résultat (PF 0,90 contre 0,91).\n    enabled: true\n"),
     ("la moins perdante des trois sur 7 ans de M1 (PF 0,88).\n    enabled: true\n",
      "la moins perdante des trois sur 7 ans de M1 (PF 0,88).\n    enabled: false\n"),
@@ -957,3 +958,101 @@ def test_two_candles_send_one_position_per_target_with_the_same_server_stop(tmp_
     assert [r["comment"][-2:] for r in sent] == ["#1", "#2", "#3"] and len(broker.positions()) == 3
     assert any("en 3 positions" in line and "objectifs 3998.42 / 3997.92 / 3997.42" in line for line in lines)
     assert live.labels["R"].startswith("deux bougies v1")
+
+
+# --- signaux contraires (demande de l'utilisateur : jamais d'achat et de vente ouverts en même temps) ---------------
+
+
+def _opposite_world(tmp_path, settings, mode):
+    scalping = settings.scalping.model_copy(update={"opposite_signals": mode})
+    return make_world(tmp_path, settings.model_copy(update={"scalping": scalping}))
+
+
+def _short_setup(now_ms, mid):
+    """Vente sur la bougie de 5 s qui vient de se fermer, stop à environ 1 $ au-dessus du prix."""
+    start = now_ms // 5_000 * 5_000 - 5_000
+    candle = Candle(start, mid + 0.2, mid + 0.2, mid, mid, mid - 0.08, mid + 0.08, 0.16, 5)
+    return Setup(BREAKOUT, SHORT, mid, mid + 0.8, candle, key=f"B-1@{mid:.2f}", reason="cassure vers le bas (test)")
+
+
+def _with_profit(broker, position, profit):
+    broker._positions[position.ticket] = replace(position, profit=profit)  # le broker factice ne le calcule pas
+
+
+def test_an_opposite_signal_closes_the_winning_trade_then_enters(tmp_path, settings):
+    broker, clock, quote, runner, lines = _opposite_world(tmp_path, settings, "retourner_si_gain")
+    live = runner()
+    _breakout(broker, clock, quote, live)  # achat ouvert à 4000.58
+    (buy,) = broker.positions()
+    _with_profit(broker, buy, 12.0)
+    clock.advance(10)
+    quote(4000.90)
+    live.consider(_short_setup(clock.server_ms, 4000.90), clock.server_ms)
+    (sell,) = broker.positions()  # l'achat est fermé AVANT l'envoi de la vente : jamais les deux en même temps
+    assert sell.type == C.POSITION_TYPE_SELL and sell.sl > sell.price_open
+    deals = [r for r in broker.sent if r["action"] == C.TRADE_ACTION_DEAL]
+    assert [r.get("position") for r in deals] == [None, buy.ticket, None]
+    assert any("retournement : 1 trade(s) dans l'autre sens fermé(s) au marché" in line for line in lines)
+    live.step()  # la sortie de l'achat est relevée dans les deals
+    order = live.store.order(buy.comment.split("#")[0], 1)
+    assert order["status"] == CLOSED and order["exit_reason"] == "retournement" and order["real_pnl"] > 0
+    assert any("sortie" in line and "(retournement)" in line for line in lines)
+
+
+@pytest.mark.parametrize(
+    ("mode", "profit", "reason"),
+    [("retourner_si_gain", -5.0, "position contraire en perte"), ("ignorer", 12.0, "position contraire ouverte")],
+)
+def test_an_opposite_signal_is_ignored_and_the_open_trade_kept(tmp_path, settings, mode, profit, reason):
+    broker, clock, quote, runner, lines = _opposite_world(tmp_path, settings, mode)
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    (buy,) = broker.positions()
+    _with_profit(broker, buy, profit)
+    clock.advance(10)
+    quote(4000.40)
+    setup = _short_setup(clock.server_ms, 4000.40)
+    live.consider(setup, clock.server_ms)
+    assert [p.ticket for p in broker.positions()] == [buy.ticket] and len(broker.sent) == 1  # rien envoyé
+    assert live.set_aside == {reason: 1} and live.store.signal(setup.tag)["status"] == REFUSED
+
+
+def test_no_new_entry_when_the_opposite_trade_cannot_be_closed(tmp_path, settings):
+    broker, clock, quote, runner, lines = _opposite_world(tmp_path, settings, "retourner")
+    live = runner()
+    _breakout(broker, clock, quote, live)
+    (buy,) = broker.positions()
+    clock.advance(10)
+    quote(4000.90)
+    broker.send_retcodes = [C.TRADE_RETCODE_REJECT]  # clôture refusée par le serveur
+    setup = _short_setup(clock.server_ms, 4000.90)
+    live.consider(setup, clock.server_ms)
+    assert [p.ticket for p in broker.positions()] == [buy.ticket]  # l'achat garde son stop, aucune vente
+    assert [r.get("position") for r in broker.sent] == [None, buy.ticket]  # clôture tentée, puis plus rien
+    assert live.set_aside == {"retournement impossible": 1} and live.store.signal(setup.tag)["status"] == REFUSED
+    assert any("retournement impossible" in line for line in lines)
+    assert not any("nouvel essai" in line for line in lines)  # le retournement n'est pas réessayé
+
+
+def test_in_simulation_mode_the_reversal_closes_the_simulated_trade(tmp_path, settings):
+    broker, clock, quote, runner, lines = _opposite_world(tmp_path, settings, "retourner_si_gain")
+    live = runner(local_only=True)
+    _breakout(broker, clock, quote, live)
+    (buy_tag,) = list(live.shadow)
+    clock.advance(10)
+    quote(4001.20)  # l'achat simulé (4000.68 avec le glissement) est en gain
+    setup = _short_setup(clock.server_ms, 4001.20)
+    live.consider(setup, clock.server_ms)
+    assert list(live.shadow) == [setup.tag] and broker.sent == []
+    (closed,) = live.store.closed_sims()
+    assert closed["tag"] == buy_tag and closed["exit_reason"] == "retournement" and closed["pnl"] > 0
+    assert any("sortie simulée" in line and "(retournement)" in line for line in lines)
+
+
+def test_strategy_label_names_the_opposite_signal_rule(settings):
+    from goldbot.scalping.live import strategy_label
+
+    cfg = settings.scalping
+    assert "retournement" not in strategy_label("B", cfg, 1, "abcd1234")  # « garder » : comportement d'origine
+    cfg = cfg.model_copy(update={"opposite_signals": "retourner_si_gain"})
+    assert strategy_label("B", cfg, 1, "abcd1234").endswith(" + retournement si gain · abcd1234")
