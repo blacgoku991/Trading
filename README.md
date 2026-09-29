@@ -235,7 +235,10 @@ seule la cassure tourne en démo (l'impulsion-repli perd dans toutes ses version
   de la tendance M1 (EMA20 / EMA50). En v4 (29/09, nuit), le sens est libre : achats ou ventes selon cette
   tendance, qui change en quelques minutes (plus de filtre « sens du jour ») ;
 - **impulsion-repli** : impulsion d'au moins 1 ATR M1, repli de 30 à 70 %, puis reprise dans le sens de
-  l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code).
+  l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code) ;
+- **deux bougies** (idée de l'utilisateur, seule active depuis le 29/09 au soir) : bougie baissière puis haussière
+  → vente (haussière puis baissière → achat), stop au-delà des deux bougies (10 pips au moins), 3 positions avec
+  des objectifs à 20, 25 et 30 pips. Rejeu : perdante (PF 0,84, arrêt à −10 % au 5e jour de cotation).
 
 Pour les deux (sorties v2, d'après les trades démo du 29/09) : stop côté serveur derrière la structure du signal,
 d'au moins 2 $, objectif à 3 fois le stop (un gain couvre trois pertes), sortie forcée au bout de 10 minutes même

@@ -251,6 +251,23 @@ class ScalpPullbackConfig(_Section):
         return self
 
 
+class ScalpTwoCandleConfig(_Section):
+    """Stratégie « deux bougies » (idée de l'utilisateur, 29/09) : une bougie dans un sens, une bougie contraire, puis
+    entrée dans le sens de la première ; stop au-delà des deux bougies ; une position par objectif (en pips)."""
+
+    enabled: bool = False
+    version: int = Field(default=1, ge=1)
+    minutes: int = Field(default=1, ge=1, le=60)  # durée des bougies lues
+    min_stop_pips: float = Field(default=10.0, gt=0)  # stop plus proche : élargi à ce minimum (pas de refus)
+    target_pips: list[float] = Field(default_factory=lambda: [20.0, 25.0, 30.0], min_length=1, max_length=5)
+
+    @model_validator(mode="after")
+    def _consistent(self) -> ScalpTwoCandleConfig:
+        if any(t <= 0 for t in self.target_pips) or self.target_pips != sorted(self.target_pips):
+            raise ValueError("two_candles.target_pips : objectifs positifs, du plus proche au plus loin")
+        return self
+
+
 class ScalpLearningConfig(_Section):
     """Apprentissage à chaque trade : choix de la variante (sortie, sens) d'après les derniers résultats."""
 
@@ -357,6 +374,7 @@ class ScalpingConfig(_Section):
     cadence: ScalpCadenceConfig
     # Sens relu à chaque minute d'après la réaction des bougies (remplace le sens du jour, direction_filter).
     market_read: ScalpMarketReadConfig = Field(default_factory=ScalpMarketReadConfig)
+    two_candles: ScalpTwoCandleConfig = Field(default_factory=ScalpTwoCandleConfig)
 
     @model_validator(mode="after")
     def _consistent(self) -> ScalpingConfig:
@@ -375,8 +393,10 @@ class ScalpingConfig(_Section):
         ceiling = self.cadence.ceiling_total_risk_pct
         if not self.max_total_risk_pct <= ceiling <= self.daily_loss_pct:
             raise ValueError("cadence : plafond du risque ouvert entre max_total_risk_pct et la perte journalière")
-        if not (self.breakout.enabled or self.pullback.enabled):
+        if not (self.breakout.enabled or self.pullback.enabled or self.two_candles.enabled):
             raise ValueError("au moins une stratégie de scalping doit être active")
+        if self.two_candles.min_stop_pips * self.pip_size > self.max_stop_points * 0.01 + 1e-9:
+            raise ValueError("two_candles.min_stop_pips au-delà de max_stop_points")
         return self
 
 

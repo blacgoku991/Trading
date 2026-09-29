@@ -263,6 +263,17 @@ def split_volume(volume: float, volume_max: float, volume_step: float) -> list[f
     return [round((base + (1 if i < extra else 0)) * volume_step, 8) for i in range(count)]
 
 
+def ladder_volumes(volume: float, count: int, volume_min: float, volume_step: float) -> list[float]:
+    """Lot réparti en `count` positions (une par objectif), parts égales en pas de volume, chacune au moins au lot
+    minimal : moins de positions si le lot ne suffit pas (les objectifs les plus proches sont gardés)."""
+    steps = round(volume / volume_step)
+    count = min(count, int(volume / volume_min + 1e-9))
+    if steps <= 0 or count <= 0:
+        return []
+    base, extra = divmod(steps, count)
+    return [round((base + (1 if i < extra else 0)) * volume_step, 8) for i in range(count)]
+
+
 def reason_key(message: str) -> str:
     """« stop trop loin : 7.10 $ > 6.00 $ » -> « stop trop loin » (pour compter les refus par motif)."""
     return message.split(" :")[0]

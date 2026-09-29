@@ -557,6 +557,8 @@ _V1_EXITS = [
     ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
     ("  risk_per_trade_pct: 0.1\n", "  risk_per_trade_pct: 0.1\n"),
     ("résultat (PF 0,90 contre 0,91).\n    enabled: false\n", "résultat (PF 0,90 contre 0,91).\n    enabled: true\n"),
+    ("PF 0,56-0,86, docs/STRATEGIES.md).\n    enabled: true\n", "PF 0,56-0,86, docs/STRATEGIES.md).\n    enabled: false\n"),
+    ("à la demande de l'utilisateur.\n    enabled: false\n", "à la demande de l'utilisateur.\n    enabled: true\n"),
 ]
 
 
@@ -927,3 +929,29 @@ def test_account_limit_refusals_are_shown_once_per_15_minutes_and_rule_refusals_
     live._signal_line = "signal ACHAT 4"
     live._refuse(replace(setup, candle=replace(candle, start_ms=BASE_MS + 900_000)), 0.2, "perte du jour atteinte : x")
     assert len([line for line in lines if "refus" in line]) == 2  # 15 minutes plus tard : rappel
+
+
+def test_two_candles_send_one_position_per_target_with_the_same_server_stop(tmp_path, settings):
+    from goldbot.config import ScalpTwoCandleConfig
+
+    scalping = settings.scalping.model_copy(update={
+        "breakout": settings.scalping.breakout.model_copy(update={"enabled": False}),
+        "pullback": settings.scalping.pullback.model_copy(update={"enabled": False}),
+        "two_candles": ScalpTwoCandleConfig(enabled=True, min_stop_pips=10.0, target_pips=[20.0, 25.0, 30.0]),
+    })  # fmt: skip
+    broker, clock, quote, runner, lines = make_world(tmp_path, settings.model_copy(update={"scalping": scalping}))
+    live = runner()
+    live.step()  # préchauffage
+    points = [(BASE_MS + k * 1000, 4001.0 - k / 60) for k in range(60)]  # minute baissière : 4001 -> 4000
+    points += [(BASE_MS + 60_000 + k * 1000, 3999.9 + k / 100) for k in range(60)]  # haussière : 3999.9 -> 4000.49
+    broker.history_ticks = np.concatenate([broker.history_ticks, ticks(points)])
+    clock.server_ms = BASE_MS + 121_500
+    quote(4000.50)
+    live.step()
+    sent = _deals(broker)
+    assert len(sent) == 3 and {r["type"] for r in sent} == {C.ORDER_TYPE_SELL}
+    assert [r["sl"] for r in sent] == pytest.approx([4001.42] * 3)  # stop commun, élargi à 10 pips
+    assert [r["tp"] for r in sent] == pytest.approx([3998.42, 3997.92, 3997.42])  # 20 / 25 / 30 pips
+    assert [r["comment"][-2:] for r in sent] == ["#1", "#2", "#3"] and len(broker.positions()) == 3
+    assert any("en 3 positions" in line and "objectifs 3998.42 / 3997.92 / 3997.42" in line for line in lines)
+    assert live.labels["R"].startswith("deux bougies v1")

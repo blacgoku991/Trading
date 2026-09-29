@@ -63,6 +63,8 @@ def v1_exit_settings():
     data["cadence"].update(ceiling_total_risk_pct=1.0)
     data["learning"].update(enabled=True, version=1, target_ratios=[0.8, 1.2, 2.0])
     data["pullback"]["enabled"] = True  # les tests couvrent les deux stratégies
+    data["breakout"]["enabled"] = True
+    data["two_candles"]["enabled"] = False  # testée à part (tests « deux bougies »)
     return settings.model_copy(update={"scalping": type(settings.scalping).model_validate(data)})
 
 

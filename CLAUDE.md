@@ -399,7 +399,13 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   5e jour). Banc d'essai sur 5 ans de M1 : aucun sens simple ne bat les coûts à quelques minutes (sens du jour PF
   0,74, 0/5 années) ; le +175 € de la v3 était de la chance. Rejeu v4 : 78 trades par jour, PF 0,91, arrêt à −10 %
   en 1 à 2 semaines, annoncé avant lancement. « Lecture du marché » (`scalping/market_read.py`) branchée, désactivée :
-  5 familles de lecture des bougies en recherche, règles fixées d'avance.
+  5 familles de lecture des bougies en recherche, règles fixées d'avance. Affichage : les signaux écartés par les
+  règles ne s'affichent plus (comptés), les limites du compte au plus une fois par 15 min.
+  Puis idée de l'utilisateur « deux bougies » (baissière puis haussière → vente, stop au-dessus des deux bougies,
+  2-3 positions, objectif +2 à +3 $) : testée sur 7 ans de M1 Axi, elle perd environ le spread à chaque trade (PF
+  0,56-0,86, 0 année positive) ; résultat présenté, **l'utilisateur choisit de la mettre en démo quand même** : v5 =
+  deux bougies seule (3 positions, objectifs 20/25/30 pips, stop élargi à 10 pips au moins, 0,1 % par signal). Rejeu
+  4 semaines : PF 0,84, arrêt à −10 % au 5e jour, annoncé avant lancement.
 
 ---
 

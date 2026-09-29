@@ -24,7 +24,15 @@ from goldbot.indicators.core import atr as atr_series
 from goldbot.scalping.engine import LONG, CandleBuilder, SimTrade, make_detectors, plan_trade
 from goldbot.scalping.learning import LearningBook
 from goldbot.scalping.market_read import read_direction
-from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, reason_key, split_volume, trade_volume
+from goldbot.scalping.policy import (
+    EntryPolicy,
+    Exposure,
+    drawdown_pct,
+    ladder_volumes,
+    reason_key,
+    split_volume,
+    trade_volume,
+)
 
 _EPOCH = datetime(1970, 1, 1)
 
@@ -213,7 +221,7 @@ def run_backtest(
                     refusals[(code, reason_key(plan))] += 1
                     continue
                 variant = ""
-                if book is not None:
+                if book is not None and not plan.tps:  # objectifs fixés par l'utilisateur : gardés
                     chosen, variant, _ = book.decide(setup, plan, bid, ask, now)
                     if chosen is None:
                         refusals[(code, "apprentissage : aucune variante gagnante en ce moment")] += 1
@@ -244,8 +252,14 @@ def run_backtest(
                     refusals[(code, reason_key(reason))] += 1
                     continue
                 policy.accept(now)
-                parts = len(split_volume(lots, instrument.volume_max, instrument.volume_step))
-                trade = SimTrade.open(setup.tag, plan, bid, ask, now, config.max_hold_s, slip, volume=lots, fee=fee)
+                legs: tuple[float, ...] = ()
+                if plan.tps:  # une position par objectif (deux bougies), comme les ordres envoyés en démo
+                    legs = tuple(ladder_volumes(lots, len(plan.tps), instrument.volume_min, instrument.volume_step))
+                    parts = len(legs)
+                else:
+                    parts = len(split_volume(lots, instrument.volume_max, instrument.volume_step))
+                trade = SimTrade.open(setup.tag, plan, bid, ask, now, config.max_hold_s, slip, volume=lots, fee=fee,
+                                      weights=legs)  # fmt: skip
                 open_trades.append((trade, Exposure(setup.tag, setup.key, plan.side, risk), code, parts, variant))
                 per_minute[now // 60_000] += 1
 

@@ -834,3 +834,117 @@ def test_replay_follows_the_market_read(monkeypatch):
         assert (not result.trades.empty) == traded
         if not traded:
             assert result.refusals == {(BREAKOUT, "lecture du marché"): 1}
+
+
+# --- deux bougies (idée de l'utilisateur) ---------------------------------------------------------------------
+
+
+def _two_config(**update):
+    from goldbot.config import ScalpTwoCandleConfig
+
+    return CONFIG.model_copy(update={"two_candles": ScalpTwoCandleConfig(enabled=True, **update)})
+
+
+def _minute(detector, minute, first, last, *, high=None, low=None):
+    """12 bougies de 5 s pour la minute `minute` : de `first` à `last` (prix médians)."""
+    prices = np.linspace(first, last, 12)
+    out = []
+    for k, price in enumerate(prices):
+        top = high if (high is not None and k == 6) else price + 0.05
+        bottom = low if (low is not None and k == 6) else price - 0.05
+        c = Candle(minute * 60_000 + k * 5000, price, top, bottom, price, price - 0.08, price + 0.08, 0.16, 10)
+        out.append(detector.on_candle(c, 0, 0.0))
+    return out
+
+
+def test_two_candles_sell_after_a_bearish_then_bullish_minute_with_the_stop_above_both():
+    from goldbot.scalping.engine import TWO_CANDLES, TwoCandleDetector
+
+    detector = TwoCandleDetector(_two_config())
+    assert all(s is None for s in _minute(detector, 100, 4002.0, 4000.0, high=4003.0))  # baissière, plus haut 4003
+    *before, setup = _minute(detector, 101, 4000.2, 4001.0)  # haussière
+    assert all(s is None for s in before)  # décidé à la clôture de la minute seulement
+    assert setup is not None and setup.strategy == TWO_CANDLES and setup.side == SHORT
+    assert setup.structure == pytest.approx(4003.0) and setup.key == f"R-1@{101 * 60_000}"
+    assert "baissière puis haussière" in setup.reason
+    *_, buy = _minute(detector, 102, 4001.0, 4000.4, low=3999.0)  # haussière puis baissière : achat
+    assert buy is not None and buy.side == LONG and buy.structure == pytest.approx(3999.0)
+
+
+def test_two_candles_need_consecutive_minutes_and_a_colour_change():
+    from goldbot.scalping.engine import TwoCandleDetector
+
+    detector = TwoCandleDetector(_two_config())
+    _minute(detector, 100, 4002.0, 4000.0)
+    assert _minute(detector, 102, 4000.2, 4001.0)[-1] is None  # une minute manque (fermeture) : rien
+    assert _minute(detector, 103, 4001.0, 4002.0)[-1] is None  # deux haussières : rien
+
+
+def test_two_candles_minute_without_its_last_slot_is_closed_by_the_next_one():
+    from goldbot.scalping.engine import TwoCandleDetector
+
+    detector = TwoCandleDetector(_two_config())
+    _minute(detector, 100, 4002.0, 4000.0)
+    for k in range(6):  # minute 101 haussière, sans tick après 30 s
+        detector.on_candle(Candle(101 * 60_000 + k * 5000, 4000 + k * 0.2, 4000 + k * 0.2 + 0.05,
+                                  4000 + k * 0.2 - 0.05, 4000 + k * 0.2, 0, 0, 0.16, 5), 0, 0.0)  # fmt: skip
+    first = Candle(102 * 60_000, 4001.0, 4001.05, 4000.95, 4001.0, 4000.92, 4001.08, 0.16, 5)
+    setup = detector.on_candle(first, 0, 0.0)
+    assert setup is not None and setup.side == SHORT and setup.candle is first
+
+
+def test_two_candles_plan_widens_a_close_stop_and_sets_one_target_per_position():
+    from goldbot.scalping.engine import TWO_CANDLES
+
+    config = _two_config(min_stop_pips=10.0, target_pips=[20.0, 25.0, 30.0])
+    c = candle(0, 4000.0)
+    close = Setup(TWO_CANDLES, SHORT, 4000.0, 4000.30, c, key="R", reason="test")  # structure à 0,30 $
+    plan = plan_trade(close, 3999.92, 4000.08, config, **KWARGS)
+    assert plan.sl == pytest.approx(4000.92) and plan.stop_distance == pytest.approx(1.0)  # élargi à 10 pips
+    assert plan.tps == pytest.approx((3997.92, 3997.42, 3996.92)) and plan.tp == pytest.approx(3996.92)
+    wide = Setup(TWO_CANDLES, LONG, 4000.0, 3997.0, c, key="R", reason="test")
+    plan = plan_trade(wide, 3999.92, 4000.08, config, **KWARGS)
+    assert plan.sl == pytest.approx(3996.87) and plan.tps[0] == pytest.approx(4002.08)  # stop sous la structure
+
+
+def test_ladder_volumes_split_the_lot_into_one_position_per_target():
+    from goldbot.scalping.policy import ladder_volumes
+
+    assert ladder_volumes(0.04, 3, 0.01, 0.01) == [0.02, 0.01, 0.01]
+    assert ladder_volumes(0.02, 3, 0.01, 0.01) == [0.01, 0.01]  # pas assez pour trois positions
+    assert ladder_volumes(0.01, 3, 0.01, 0.01) == [0.01]
+    assert ladder_volumes(0.0, 3, 0.01, 0.01) == []
+
+
+def test_a_simulated_ladder_closes_positions_at_their_targets_then_the_rest_at_the_stop():
+    from goldbot.scalping.engine import Plan
+
+    plan = Plan(SHORT, 4000.0, 4001.0, 3997.0, 1.0, 3.0, 0.3, 0.16, tps=(3998.0, 3997.5, 3997.0))
+    trade = SimTrade.open("t", plan, 4000.0, 4000.16, 0, 600, 0.0, volume=0.04, weights=(0.02, 0.01, 0.01))
+    assert trade.tps == plan.tps
+    assert not trade.on_tick(1000, 3997.80, 3997.96)  # ask 3997.96 : première position à son objectif (3998)
+    assert trade.leg_exits == [3998.0]
+    assert trade.on_tick(2000, 4000.90, 4001.06)  # ask au-dessus du stop : les deux autres au stop
+    assert trade.reason == "stop"
+    assert trade.exit_price == pytest.approx((0.02 * 3998.0 + 0.02 * 4001.06) / 0.04)
+    assert trade.move == pytest.approx((4000.0 - trade.exit_price))
+
+
+def test_replay_trades_two_candles_with_three_positions():
+    from goldbot.scalping.engine import TWO_CANDLES
+
+    base_ms = server_epoch_of("2026-01-06 12:00") * 1000
+    points = [(base_ms + k * 1000, 4001.0 - 0.02 * k) for k in range(60)]  # minute baissière
+    points += [(base_ms + 60_000 + k * 1000, 3999.9 + 0.01 * k) for k in range(60)]  # minute haussière
+    points += [(base_ms + 120_000 + k * 1000, 4000.5 - 0.1 * k) for k in range(60)]  # baisse de 6 $ ensuite
+    ticks, bars = _frames(points, base_ms)
+    schedule = MarketSchedule.from_config(SETTINGS.market_hours)
+    config = _two_config(min_stop_pips=10.0, target_pips=[20.0, 25.0, 30.0])
+    config = config.model_copy(update={"risk_per_trade_pct": 0.1, "max_total_risk_pct": 0.5})
+    for learning in (False, True):  # l'apprentissage ne remplace pas les objectifs choisis par l'utilisateur
+        cfg = config.model_copy(update={"learning": config.learning.model_copy(update={"enabled": learning})})
+        result = run_backtest(ticks, bars, cfg, instrument=INSTRUMENT, schedule=schedule, initial_equity=5700.0,
+                              slippage_points=0.0, strategies=(TWO_CANDLES,))  # fmt: skip
+        trades = result.trades
+        assert len(trades) >= 1 and trades.iloc[0]["side"] == SHORT and trades.iloc[0]["parts"] == 3
+        assert trades.iloc[0]["reason"] == "objectif" and trades.iloc[0]["pnl"] > 0

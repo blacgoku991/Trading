@@ -164,10 +164,22 @@ scalping:
   direction_min_move_atr: 0.5
   min_free_margin_pct: 50       # marge libre après l'ordre >= 50 % de l'equity, sinon refus
   experiment_days: 10           # durée annoncée de la collecte (jours de cotation)
+  two_candles:
+    # « deux bougies » v1 (idée de l'utilisateur, 29/09, nuit) : bougie baissière puis haussière -> vente à la
+    # clôture de la 2e (haussière puis baissière -> achat) ; stop au-delà des deux bougies (au-dessus de leur plus
+    # haut pour une vente), élargi à 10 pips s'il est plus proche ; une position par objectif : 20, 25 et 30 pips
+    # (moins de positions si le lot ne suffit pas). Mise en démo à la demande de l'utilisateur ALORS QUE le test
+    # sur 7 ans de M1 Axi la montre perdante (environ le spread par trade, PF 0,56-0,86, docs/STRATEGIES.md).
+    enabled: true
+    version: 1
+    minutes: 1
+    min_stop_pips: 10
+    target_pips: [20, 25, 30]
   breakout:
     # « cassure » v1 : clôture au-delà du plus haut / plus bas des 60 s précédentes (bougie de signal exclue),
     # confirmée par une 2e clôture, dans le sens de la tendance M1 (EMA20 / EMA50 sur barres clôturées).
-    enabled: true
+    # Remplacée en démo par « deux bougies » le 29/09 (nuit), à la demande de l'utilisateur.
+    enabled: false
     version: 1
     lookback_s: 60
     min_window_candles: 6         # au moins 6 bougies dans ces 60 s (sinon marché trop calme ou trou)

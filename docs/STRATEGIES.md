@@ -670,8 +670,21 @@ donnent le même résultat en R qu'une seule ; avec des objectifs de 2 et 3 $, l
 Avec 1 pip de glissement, tout est deux fois pire (PF 0,36-0,53 sur 2019-2023). Le motif se présente à une minute sur
 deux ; chaque trade perd en moyenne à peu près le spread (1,3 à 2 pips) : le sens donné par les deux bougies ne
 prévoit rien. À 0,01 lot et 680 trades par jour, environ −80 € par jour ; avec 2 à 3 positions par signal, la limite de
-−2 % par jour serait atteinte presque chaque jour. Non mis en démo sans l'accord de l'utilisateur (CLAUDE.md :
-« trader chaque minute sans avantage mesuré est exclu »).
+−2 % par jour serait atteinte presque chaque jour. Résultat présenté à l'utilisateur, qui a choisi de la mettre en
+démo quand même (CLAUDE.md exclut de trader chaque minute sans avantage mesuré ; décision de l'utilisateur).
+
+**v5 en démo : « deux bougies v1 »** (seule, la cassure est désactivée). Bougies d'une minute construites à partir
+des bougies de 5 s (prix médians, heure serveur), décision à la clôture de la 2e bougie, deux minutes consécutives
+exigées ; stop au-delà des deux bougies, élargi à 10 pips s'il est plus proche ; **3 positions** avec le même stop
+et des objectifs à 20, 25 et 30 pips (moins de positions si le lot ne suffit pas : les objectifs proches sont
+gardés) ; 0,1 % de risque pour le signal entier, 10 minutes au plus, −2 % par jour, arrêt total à −10 %.
+L'apprentissage ne touche pas ces objectifs. Rejeu sur les 4 semaines de ticks Axi :
+
+| Prix | Trades par jour | Gagnants | Gain moyen / perte moyenne | Total | PF | Arrêt total |
+|---|---|---|---|---|---|---|
+| exécutables | 52 | 36 % | +20,2 / −14,1 pips | −1 739 pips, −468 € | 0,84 | au 5e jour de cotation |
+| +1 pip de glissement | 20 | 33 % | +19,1 / −15,3 pips | −1 684 pips, −499 € | 0,62 | au 6e jour |
+
 
 ### Historique des réglages
 
@@ -686,4 +699,5 @@ prévoit rien. À 0,01 lot et 680 trades par jour, environ −80 € par jour ; 
   du jour), puis sorties v2 d'après les trades démo : stop d'au moins 2 $, objectif 3 x le stop, 10 minutes au
   plus, « + apprentissage v2 » (objectifs 2 / 3 / 4 R) ; impulsion-repli désactivée. Voir la section suivante.
 - 29/09/2026 nuit : v3 (sens du jour, lot calculé 0,25 %, 12 entrées par minute), puis **v4** (sens libre, sans
-  apprentissage, 0,1 % par trade) : voir « v4 » ci-dessus.
+  apprentissage, 0,1 % par trade) : voir « v4 » ci-dessus ; puis **v5 « deux bougies »** (idée de l'utilisateur, en
+  démo à sa demande malgré le test perdant).

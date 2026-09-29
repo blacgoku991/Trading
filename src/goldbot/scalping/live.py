@@ -15,6 +15,7 @@ import logging
 import time
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -40,6 +41,7 @@ from goldbot.scalping.engine import (
     LONG,
     PULLBACK,
     STRATEGY_NAMES,
+    TWO_CANDLES,
     Candle,
     CandleBuilder,
     Plan,
@@ -52,7 +54,15 @@ from goldbot.scalping.engine import (
 )
 from goldbot.scalping.learning import LearningBook
 from goldbot.scalping.market_read import check_model, read_direction
-from goldbot.scalping.policy import EntryPolicy, Exposure, drawdown_pct, reason_key, split_volume, trade_volume
+from goldbot.scalping.policy import (
+    EntryPolicy,
+    Exposure,
+    drawdown_pct,
+    ladder_volumes,
+    reason_key,
+    split_volume,
+    trade_volume,
+)
 from goldbot.scalping.store import (
     CLOSED,
     FAILED,
@@ -103,9 +113,10 @@ def strategy_label(code: str, config: ScalpingConfig, version: int, digest: str)
 
 def strategy_versions(config: ScalpingConfig) -> dict[str, tuple[int, str, dict[str, object]]]:
     """Code -> (version, empreinte, réglages) des stratégies actives : leurs règles et les réglages communs."""
-    common = config.model_dump(exclude={"breakout", "pullback", "experiment_days"})
+    common = config.model_dump(exclude={"breakout", "pullback", "two_candles", "experiment_days"})
     versions = {}
-    for code, section in ((BREAKOUT, config.breakout), (PULLBACK, config.pullback)):
+    sections = ((BREAKOUT, config.breakout), (PULLBACK, config.pullback), (TWO_CANDLES, config.two_candles))
+    for code, section in sections:
         if section.enabled:
             params = {"strategy": STRATEGY_NAMES[code], "rules": section.model_dump(), "common": common}
             versions[code] = (section.version, params_hash(params), params)
@@ -477,7 +488,7 @@ class ScalpRunner:
             self._refuse(setup, spread, plan)
             return
         variant = ""
-        if self.book is not None:
+        if self.book is not None and not plan.tps:  # objectifs fixés par l'utilisateur : gardés
             chosen, variant, why = self.book.decide(setup, plan, tick.bid, tick.ask, now_ms)
             if chosen is None:
                 self._refuse(setup, spread, f"apprentissage : {why}")
@@ -517,16 +528,27 @@ class ScalpRunner:
             return
         self.policy.accept(now_ms)
         self._announce()
-        parts = split_volume(volume, spec.volume_max, spec.volume_step)
-        split = f" en {len(parts)} ordres (fractionnement)" if len(parts) > 1 else ""
+        if plan.tps:  # une position par objectif (deux bougies) ; moins de positions si le lot ne suffit pas
+            parts = ladder_volumes(volume, len(plan.tps), spec.volume_min, spec.volume_step)
+            tps = plan.tps[: len(parts)]
+            plan = replace(plan, tps=tps, tp=tps[-1], target=abs(tps[-1] - plan.entry))
+            split = f" en {len(parts)} positions ({' + '.join(f'{v:g}' for v in parts)})" if len(parts) > 1 else ""
+            target_text = (f"objectifs {' / '.join(f'{tp:.2f}' for tp in tps)} "
+                           f"(+{' / +'.join(pips(abs(tp - plan.entry), cfg) for tp in tps)})")  # fmt: skip
+        else:
+            parts = split_volume(volume, spec.volume_max, spec.volume_step)
+            split = f" en {len(parts)} ordres (fractionnement)" if len(parts) > 1 else ""
+            target_text = f"objectif {plan.tp:.2f} (+{pips(plan.target, cfg)})"
         direction = ("ACHAT" if plan.side == LONG else "VENTE") + (" (signal joué à l'envers)" if plan.side != setup.side
                                                                    else "")  # fmt: skip
         details = (
             f"{direction} {volume:g} lot{split} à {plan.entry:.2f} | spread {pips(plan.spread, cfg)} | stop "
-            f"{plan.sl:.2f} (-{pips(plan.stop_distance, cfg)}) | objectif {plan.tp:.2f} (+{pips(plan.target, cfg)}) | "
+            f"{plan.sl:.2f} (-{pips(plan.stop_distance, cfg)}) | {target_text} | "
             f"durée max {cfg.max_hold_s} s | risque {self._money(-risk)}"
         )
-        self._start_shadow(setup, plan, tick.bid, tick.ask, now_ms, volume, risk, sent=not self.local_only)
+        weights = tuple(parts) if plan.tps else ()
+        self._start_shadow(setup, plan, tick.bid, tick.ask, now_ms, volume, risk, sent=not self.local_only,
+                           weights=weights)  # fmt: skip
         fields = dict(spread=plan.spread, volume=volume, entry=plan.entry, sl=plan.sl, tp=plan.tp, risk=risk,
                       parts=len(parts), variante=variant or None, **self._signal_fields(setup))  # fmt: skip
         if self.local_only:
@@ -555,9 +577,10 @@ class ScalpRunner:
         return None
 
     def _start_shadow(self, setup: Setup, plan: Plan, bid: float, ask: float, now_ms: int, volume: float,
-                      risk: float, sent: bool) -> None:  # fmt: skip
+                      risk: float, sent: bool, weights: tuple[float, ...] = ()) -> None:  # fmt: skip
         slip = self.cfg.extra_slippage_points * self.spec.point
-        trade = SimTrade.open(setup.tag, plan, bid, ask, now_ms, self.cfg.max_hold_s, slip, volume, self.fee_per_oz)
+        trade = SimTrade.open(setup.tag, plan, bid, ask, now_ms, self.cfg.max_hold_s, slip, volume, self.fee_per_oz,
+                              weights=weights)  # fmt: skip
         exposure = Exposure(setup.tag, setup.key, plan.side, risk)
         self.shadow[setup.tag] = (trade, exposure, sent, setup.strategy)
         self.store.record_sim(setup.tag, setup.strategy, now_ms, plan.side, trade.entry, trade.sl, trade.tp, volume,
@@ -586,8 +609,9 @@ class ScalpRunner:
         opened: list[Position] = []
         for part, part_volume in enumerate(parts, 1):
             comment = f"{setup.tag}#{part}"
+            tp = plan.tps[part - 1] if plan.tps else plan.tp  # deux bougies : un objectif par position
             if not self.store.record_order(setup.tag, part, comment=comment, side=plan.side, volume=part_volume,
-                                           sl=plan.sl, tp=plan.tp, risk=risk * part_volume / volume,
+                                           sl=plan.sl, tp=tp, risk=risk * part_volume / volume,
                                            spread=plan.spread, time_ms=now_ms):  # fmt: skip
                 self.store.bump(DUPLICATES)
                 continue
@@ -597,7 +621,7 @@ class ScalpRunner:
                 "volume": part_volume,
                 "type": order_type,
                 "sl": plan.sl,
-                "tp": plan.tp,
+                "tp": tp,
                 "deviation": 20,
                 "magic": self.cfg.magic,
                 "comment": comment,

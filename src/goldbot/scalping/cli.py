@@ -35,7 +35,7 @@ from goldbot.execution.orders import (
 from goldbot.live.lock import InstanceLock
 from goldbot.monitoring.logging_setup import setup_logging
 from goldbot.scalping.backtest import Instrument, run_backtest, summary
-from goldbot.scalping.engine import BREAKOUT, PULLBACK
+from goldbot.scalping.engine import BREAKOUT, PULLBACK, TWO_CANDLES
 from goldbot.scalping.live import ScalpRunner, strategy_label, strategy_versions
 from goldbot.scalping.store import CLOSED, FAILED, OPEN, SENDING, SENT, VERIFY_PREFIX, ScalpStore, params_hash
 
@@ -492,9 +492,10 @@ def backtest_main(
     parser.add_argument("--dir", type=Path, help="dossier des données (défaut : export.directory)")
     parser.add_argument(
         "--strategie",
-        choices=["B", "P", "ensemble", "comparer"],
+        choices=["B", "P", "R", "ensemble", "actives", "comparer"],
         default="comparer",
-        help="B = cassure, P = impulsion-repli, ensemble = les deux à la fois, comparer = les trois",
+        help="B = cassure, P = impulsion-repli, R = deux bougies, ensemble = cassure et impulsion-repli à la fois, "
+        "actives = les stratégies actives de la config, comparer = cassure, impulsion-repli et les deux",
     )
     parser.add_argument("--sans-apprentissage", action="store_true", help="règles v1, sans apprentissage")
     args = parser.parse_args(argv)
@@ -528,11 +529,13 @@ def backtest_main(
     versions = strategy_versions(cfg.model_copy(update={
         "breakout": cfg.breakout.model_copy(update={"enabled": True}),
         "pullback": cfg.pullback.model_copy(update={"enabled": True}),
+        "two_candles": cfg.two_candles.model_copy(update={"enabled": True}),
     }))  # fmt: skip
     labels = {code: strategy_label(code, cfg, v, h) for code, (v, h, _) in versions.items()}
-    runs = {"B": [(BREAKOUT,)], "P": [(PULLBACK,)], "ensemble": [(BREAKOUT, PULLBACK)]}.get(
-        args.strategie, [(BREAKOUT,), (PULLBACK,), (BREAKOUT, PULLBACK)]
-    )
+    active = tuple(code for code in (BREAKOUT, PULLBACK, TWO_CANDLES)
+                   if getattr(cfg, {BREAKOUT: "breakout", PULLBACK: "pullback", TWO_CANDLES: "two_candles"}[code]).enabled)
+    runs = {"B": [(BREAKOUT,)], "P": [(PULLBACK,)], "R": [(TWO_CANDLES,)], "ensemble": [(BREAKOUT, PULLBACK)],
+            "actives": [active]}.get(args.strategie, [(BREAKOUT,), (PULLBACK,), (BREAKOUT, PULLBACK)])  # fmt: skip
     echo(f"Ticks du {pd.Timestamp(ticks['time'].iloc[0]):%Y-%m-%d} au {pd.Timestamp(ticks['time'].iloc[-1]):%Y-%m-%d}, "
          f"compte de départ 5 000 (devise du compte), {cfg.risk_per_trade_pct:g} % de risque par trade, mêmes "
          f"règles d'entrée, de sortie et de compte pour chaque stratégie (config/settings.yaml, scalping).")  # fmt: skip

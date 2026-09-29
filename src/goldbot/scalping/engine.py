@@ -33,8 +33,8 @@ from goldbot.config import ScalpingConfig
 from goldbot.indicators.core import trading_days, true_range
 
 LONG, SHORT = 1, -1
-BREAKOUT, PULLBACK = "B", "P"
-STRATEGY_NAMES = {BREAKOUT: "cassure", PULLBACK: "impulsion-repli"}
+BREAKOUT, PULLBACK, TWO_CANDLES = "B", "P", "R"
+STRATEGY_NAMES = {BREAKOUT: "cassure", PULLBACK: "impulsion-repli", TWO_CANDLES: "deux bougies"}
 
 
 @dataclass(frozen=True)
@@ -101,7 +101,7 @@ class CandleBuilder:
 
 @dataclass(frozen=True)
 class Setup:
-    strategy: str  # BREAKOUT ou PULLBACK
+    strategy: str  # BREAKOUT, PULLBACK ou TWO_CANDLES
     side: int
     level: float  # niveau clé : niveau cassé, ou sommet de l'impulsion
     structure: float  # prix médian derrière lequel va le stop (creux récent pour un achat)
@@ -305,11 +305,63 @@ class PullbackDetector:
         )
 
 
+class TwoCandleDetector:
+    """« Deux bougies » (idée de l'utilisateur) : bougie baissière puis haussière -> vente ; haussière puis baissière
+    -> achat. Décidé à la clôture de la 2e bougie (bougies de `minutes` minutes, heure serveur, construites à partir
+    des bougies de 5 s en prix médians), entrée tout de suite. Stop au-delà des deux bougies (au-dessus de leur plus
+    haut pour une vente). Les deux bougies doivent se suivre (pas de trou : fermeture, coupure du jour).
+    """
+
+    code = TWO_CANDLES
+
+    def __init__(self, config: ScalpingConfig) -> None:
+        self.bucket_ms = config.two_candles.minutes * 60_000
+        self.candle_ms = config.candle_seconds * 1000
+        self._start: int | None = None  # bougie en cours de construction
+        self._ohlc: list[float] = []
+        self._done: deque[tuple[int, float, float, float, float]] = deque(maxlen=2)  # (début, o, h, l, c)
+
+    def on_candle(self, candle: Candle, trend: int, atr: float) -> Setup | None:
+        start = candle.start_ms // self.bucket_ms * self.bucket_ms
+        setup = None
+        if self._start is not None and start != self._start:
+            setup = self._finish(candle)  # la bougie précédente n'a pas eu sa dernière tranche de 5 s
+        if self._start is None:
+            self._start, self._ohlc = start, [candle.open, candle.high, candle.low, candle.close]
+        else:
+            first, high, low, _ = self._ohlc
+            self._ohlc = [first, max(high, candle.high), min(low, candle.low), candle.close]
+        if candle.start_ms + self.candle_ms >= start + self.bucket_ms:  # dernière tranche : bougie close
+            setup = self._finish(candle) or setup
+        return setup
+
+    def _finish(self, trigger: Candle) -> Setup | None:
+        self._done.append((self._start, *self._ohlc))
+        self._start, self._ohlc = None, []
+        if len(self._done) < 2:
+            return None
+        (t1, o1, h1, l1, c1), (t2, o2, h2, l2, c2) = self._done
+        if t2 - t1 != self.bucket_ms:
+            return None  # bougies non consécutives
+        if c1 < o1 and c2 > o2:
+            side, structure = SHORT, max(h1, h2)
+            text = "bougie baissière puis haussière : vente, stop au-dessus des deux bougies"
+        elif c1 > o1 and c2 < o2:
+            side, structure = LONG, min(l1, l2)
+            text = "bougie haussière puis baissière : achat, stop sous les deux bougies"
+        else:
+            return None
+        return Setup(TWO_CANDLES, side, trigger.close, structure, trigger, key=f"R{side:+d}@{t2}", reason=text,
+                     features={"body1": abs(c1 - o1), "body2": abs(c2 - o2)})  # fmt: skip
+
+
 def make_detectors(config: ScalpingConfig, only: tuple[str, ...] | None = None) -> list:
     """Détecteurs des stratégies actives (ou de celles demandées, pour le rejeu)."""
-    active = {BREAKOUT: config.breakout.enabled, PULLBACK: config.pullback.enabled}
-    wanted = [code for code in (BREAKOUT, PULLBACK) if (active[code] if only is None else code in only)]
-    classes = {BREAKOUT: BreakoutDetector, PULLBACK: PullbackDetector}
+    active = {BREAKOUT: config.breakout.enabled, PULLBACK: config.pullback.enabled,
+              TWO_CANDLES: config.two_candles.enabled}  # fmt: skip
+    codes = (BREAKOUT, PULLBACK, TWO_CANDLES)
+    wanted = [code for code in codes if (active[code] if only is None else code in only)]
+    classes = {BREAKOUT: BreakoutDetector, PULLBACK: PullbackDetector, TWO_CANDLES: TwoCandleDetector}
     return [classes[code](config) for code in wanted]
 
 
@@ -323,6 +375,7 @@ class Plan:
     target: float  # gain par once si l'objectif est touché (spread déjà inclus)
     cost: float  # spread + glissements + commission aller-retour estimés, par once
     spread: float
+    tps: tuple[float, ...] = ()  # plusieurs positions : un objectif chacune, du plus proche au plus loin (tp = dernier)
 
 
 def day_direction(bars: pd.DataFrame, config: ScalpingConfig) -> np.ndarray:
@@ -370,6 +423,7 @@ def plan_trade(
     spread = ask - bid
     entry = ask if side == LONG else bid
     buffer = config.stop_buffer_points * point
+    two = setup.strategy == TWO_CANDLES
     if config.fixed_stop_pips is not None:
         # Stop fixe en pips depuis le prix d'entrée (vente à 4000, 30 pips : stop à 4003).
         sl = round(entry - side * config.fixed_stop_pips * config.pip_size, digits)
@@ -377,21 +431,31 @@ def plan_trade(
         # La structure est en prix médian : le stop d'un achat se déclenche au bid (médian - spread / 2).
         sl = round(setup.structure - side * (spread / 2 + buffer), digits)
     distance = round((entry - sl) * side, digits)
-    minimum = max(config.min_stop_points * point, (stops_level_points + freeze_level_points) * point + spread)
+    broker_minimum = (stops_level_points + freeze_level_points) * point + spread
+    if two and config.fixed_stop_pips is None:
+        # Deux bougies : stop trop proche élargi à min_stop_pips (pas de refus).
+        widest = max(config.two_candles.min_stop_pips * config.pip_size, broker_minimum)
+        if distance < widest:
+            distance = round(widest, digits)
+            sl = round(entry - side * distance, digits)
+    minimum = broker_minimum if two else max(config.min_stop_points * point, broker_minimum)
     if distance < minimum - 1e-9:
         return f"stop trop proche : {pips(distance, config)} < {pips(minimum, config)}"
     if distance > config.max_stop_points * point + 1e-9:
         return f"stop trop loin : {pips(distance, config)} > {pips(config.max_stop_points * point, config)}"
-    if config.fixed_target_pips is not None:
-        target = round(config.fixed_target_pips * config.pip_size, digits)
+    targets: tuple[float, ...]
+    if two:
+        targets = tuple(round(t * config.pip_size, digits) for t in config.two_candles.target_pips)
+    elif config.fixed_target_pips is not None:
+        targets = (round(config.fixed_target_pips * config.pip_size, digits),)
     else:
-        target = round(config.target_ratio * distance, digits)
+        targets = (round(config.target_ratio * distance, digits),)
     cost = spread + 2 * config.expected_slippage_points * point + commission_per_oz
-    if target < config.min_target_cost_ratio * cost:
-        return (f"objectif trop faible face au coût : {pips(target, config)} < {config.min_target_cost_ratio:g} x "
+    if targets[0] < config.min_target_cost_ratio * cost:
+        return (f"objectif trop faible face au coût : {pips(targets[0], config)} < {config.min_target_cost_ratio:g} x "
                 f"{pips(cost, config)}")  # fmt: skip
-    tp = round(entry + side * target, digits)
-    return Plan(side, entry, sl, tp, distance, target, cost, spread)
+    tps = tuple(round(entry + side * t, digits) for t in targets)
+    return Plan(side, entry, sl, tps[-1], distance, targets[-1], cost, spread, tps if two else ())
 
 
 @dataclass
@@ -413,15 +477,25 @@ class SimTrade:
     reason: str | None = None
     mfe: float = 0.0  # meilleure excursion (prix par once) au prix de sortie possible (bid à l'achat)
     mae: float = 0.0  # pire excursion (négative)
+    # Plusieurs positions (deux bougies) : un objectif par position, parts du lot ; le stop et la durée sont communs.
+    tps: tuple[float, ...] = ()
+    weights: tuple[float, ...] = ()
+    leg_exits: list[float] = field(default_factory=list)  # sorties des positions déjà fermées à leur objectif
 
     @classmethod
     def open(cls, tag: str, plan: Plan, bid: float, ask: float, time_ms: int, max_hold_s: int, slip: float,
-             volume: float = 0.0, fee: float = 0.0) -> SimTrade:  # fmt: skip
+             volume: float = 0.0, fee: float = 0.0, weights: tuple[float, ...] = ()) -> SimTrade:  # fmt: skip
         entry = ask + slip if plan.side == LONG else bid - slip
-        return cls(tag, plan.side, entry, plan.sl, plan.tp, time_ms, time_ms + max_hold_s * 1000, slip, volume, fee)
+        tps = plan.tps[: len(weights)] if plan.tps and weights else plan.tps
+        weights = tuple(weights) if tps else ()
+        if tps and not weights:
+            weights = (1.0,) * len(tps)
+        tp = tps[-1] if tps else plan.tp
+        return cls(tag, plan.side, entry, plan.sl, tp, time_ms, time_ms + max_hold_s * 1000, slip, volume, fee,
+                   tps=tps, weights=weights)  # fmt: skip
 
     def on_tick(self, time_ms: int, bid: float, ask: float) -> bool:
-        """Met à jour le trade ; True s'il vient d'être fermé."""
+        """Met à jour le trade ; True s'il vient d'être fermé (toutes ses positions)."""
         if self.exit_price is not None:
             return False
         excursion = (bid - self.entry) if self.side == LONG else (self.entry - ask)
@@ -429,24 +503,31 @@ class SimTrade:
             self.mfe = excursion
         elif excursion < self.mae:
             self.mae = excursion
-        if self.side == LONG:
-            if bid <= self.sl:
-                return self._close(time_ms, min(self.sl, bid) - self.slip, "stop")
-            if bid >= self.tp:
+        # Prix de sortie possible : bid pour un achat, ask pour une vente.
+        price = bid if self.side == LONG else ask
+        if (price - self.sl) * self.side <= 0:
+            worst = min(self.sl, bid) if self.side == LONG else max(self.sl, ask)
+            return self._close(time_ms, worst - self.side * self.slip, "stop")
+        if self.tps:
+            while len(self.leg_exits) < len(self.tps) and (price - self.tps[len(self.leg_exits)]) * self.side >= 0:
+                self.leg_exits.append(self.tps[len(self.leg_exits)])
+            if len(self.leg_exits) == len(self.tps):
                 return self._close(time_ms, self.tp, "objectif")
-            if time_ms >= self.deadline_ms:
-                return self._close(time_ms, bid - self.slip, "durée max")
-        else:
-            if ask >= self.sl:
-                return self._close(time_ms, max(self.sl, ask) + self.slip, "stop")
-            if ask <= self.tp:
-                return self._close(time_ms, self.tp, "objectif")
-            if time_ms >= self.deadline_ms:
-                return self._close(time_ms, ask + self.slip, "durée max")
+        elif (price - self.tp) * self.side >= 0:
+            return self._close(time_ms, self.tp, "objectif")
+        if time_ms >= self.deadline_ms:
+            return self._close(time_ms, price - self.side * self.slip, "durée max")
         return False
 
+    def _average(self, price: float) -> float:
+        """Prix de sortie moyen : positions fermées à leur objectif, les autres à `price` (pondéré par les parts)."""
+        if not self.tps:
+            return price
+        exits = self.leg_exits + [price] * (len(self.tps) - len(self.leg_exits))
+        return sum(w * x for w, x in zip(self.weights, exits)) / sum(self.weights)
+
     def _close(self, time_ms: int, price: float, reason: str) -> bool:
-        self.exit_price, self.exit_ms, self.reason = price, time_ms, reason
+        self.exit_price, self.exit_ms, self.reason = self._average(price), time_ms, reason
         return True
 
     @property
@@ -456,7 +537,7 @@ class SimTrade:
 
     def move_at(self, bid: float, ask: float) -> float:
         """Résultat latent par once si le trade était fermé à ces prix (avec glissement et commission)."""
-        exit_price = bid - self.slip if self.side == LONG else ask + self.slip
+        exit_price = self._average(bid - self.slip if self.side == LONG else ask + self.slip)
         return (exit_price - self.entry) * self.side - self.fee
 
 
