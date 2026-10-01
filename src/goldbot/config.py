@@ -15,6 +15,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 # Plafond dur du risque par trade (CLAUDE.md §3.5) : aucune configuration ne peut le dépasser.
 RISK_PER_TRADE_HARD_CAP_PCT = 1.0
+# Expérience de scalping, compte démo seulement : plafond relevé par l'utilisateur le 01/10/2026 (0,4 / 0,3 lot pour
+# chacune des 3 positions d'un signal). L'arrêt total à -10 % depuis le plus haut reste en place.
+SCALP_RISK_PER_TRADE_HARD_CAP_PCT = 15.0
 
 
 class ConfigError(Exception):
@@ -358,14 +361,17 @@ class ScalpingConfig(_Section):
     expected_slippage_points: float = Field(ge=0)
     extra_slippage_points: float = Field(ge=0)
     max_hold_s: int = Field(ge=5)
-    # Compte.
-    risk_per_trade_pct: float = Field(gt=0, le=RISK_PER_TRADE_HARD_CAP_PCT)
+    # Compte. Risque d'un trade (toutes ses positions) au stop, en % de l'equity.
+    risk_per_trade_pct: float = Field(gt=0, le=SCALP_RISK_PER_TRADE_HARD_CAP_PCT)
     # Lot fixe (choix de l'utilisateur) : risk_per_trade_pct devient le risque MAXIMAL d'un trade (trade refusé
     # au-delà, jamais de lot réduit en douce). None : lot calculé d'après risk_per_trade_pct (arrondi vers le bas).
     fixed_volume: float | None = Field(default=None, gt=0)
     # Lots au choix (demande de l'utilisateur : « 0,3 ou 0,4 ») : le plus gros dont la perte au stop reste dans
-    # risk_per_trade_pct (plafond dur 1 %) ; trade refusé si même le plus petit dépasse. Vide : lot calculé.
+    # risk_per_trade_pct ; trade refusé si même le plus petit dépasse. Vide : lot calculé.
     lot_choices: list[float] = Field(default_factory=list)
+    # Lot fixe ou choisi pour CHAQUE position d'un trade à plusieurs objectifs (une position par objectif), au lieu
+    # d'un lot réparti entre elles : le trade risque lot x nombre de positions (choix de l'utilisateur du 01/10).
+    lot_per_position: bool = False
     max_open_positions: int = Field(ge=1)
     max_total_risk_pct: float = Field(gt=0)
     # Une entrée par bougie de 5 s au plus, soit 12 par minute (l'utilisateur a levé sa limite de 5 le 29/09).
@@ -417,6 +423,8 @@ class ScalpingConfig(_Section):
             raise ValueError("choisir fixed_volume ou lot_choices, pas les deux")
         if any(lot <= 0 for lot in self.lot_choices):
             raise ValueError("lot_choices : lots positifs")
+        if self.lot_per_position and self.fixed_volume is None and not self.lot_choices:
+            raise ValueError("lot_per_position : lot fixe (fixed_volume) ou lots au choix (lot_choices) requis")
         if self.max_total_risk_pct < self.risk_per_trade_pct:
             raise ValueError("max_total_risk_pct doit couvrir au moins un trade")
         if self.max_entries_per_minute > self.cadence.ceiling_entries_per_minute:

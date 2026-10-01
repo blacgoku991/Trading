@@ -871,6 +871,42 @@ Rejeu des 4 semaines (sans limite du jour) : tous les réglages atteignent l'arr
 journée, soirée du 28/09 (21:55-23:00) : 10 trades, 70 % de gagnants, +39,63 €. Avec un stop plus large que l'objectif
 moyen, il faut gagner plus d'une fois sur deux ; le spread reste payé à chaque trade.
 
+### 0,4 / 0,3 lot par position, positions toujours dans le même sens (01/10/2026)
+
+Capture démo : deux achats et trois ventes ouverts ensemble, environ 0,13 lot chacun. Question de l'utilisateur :
+« pourquoi ils ne sont pas tous dans la même direction, et la taille de lot je t'ai dit 0,3, 0,4, pourquoi tu as
+changé ». Ses réponses aux deux questions posées : « 0,4 / 0,3 par position » et « fermer si en gain, puis changer ».
+
+- Lot : 0,4 pour CHACUNE des trois positions (1,2 lot par signal ; `lot_per_position: true`,
+  `lot_choices: [0.4, 0.3]`), 0,3 si le signal risquerait plus de 12,5 % du compte au stop (`risk_per_trade_pct`),
+  refusé au-delà. Sur 5 100 € : 0,4 jusqu'à un stop d'environ 6 $, 0,3 de 6 à 8 $. Le plafond dur du risque par
+  trade du scalper passe de 1 à 15 % (`SCALP_RISK_PER_TRADE_HARD_CAP_PCT`, compte démo seulement ; le bot principal
+  garde 1 %).
+- Sens : `opposite_signals: retourner_si_gain`. Un signal dans l'autre sens ferme les positions ouvertes si elles
+  sont toutes en gain, puis entre ; sinon elles sont gardées et le signal est ignoré. « En gain » se lit sur les
+  positions encore ouvertes, comme dans le terminal, sans celles déjà fermées à leur objectif. Le rejeu comptait
+  aussi les objectifs déjà atteints : corrigé, même règle au rejeu et en démo.
+- Restent : arrêt total à −10 % depuis le plus haut (relance par `--nouvelle-experience`), démo obligatoire, stop
+  serveur sur chaque position. Empreinte `a28bf8ab`.
+
+Rejeu sur les ticks Axi du 31/08 au 28/09, deux bougies, chaque jour repart de 5 000 € (comme une relance chaque jour) :
+
+| Version | Lancé à (Paris) | Jours positifs | Arrêt total | Arrêt après (médiane) | Moyenne par jour | Médiane |
+|---|---|---|---|---|---|---|
+| 0,4 / 0,3 par position (`a28bf8ab`) | 00:00 | 6 / 21 | 21 / 21 | 12 min | −107 € | −231 € |
+| 0,4 / 0,3 par position (`a28bf8ab`) | 09:00 | 7 / 21 | 21 / 21 | 10 min, 4 trades | −31 € | −210 € |
+| 0,4 / 0,3 par position (`a28bf8ab`) | 14:00 | 6 / 21 | 21 / 21 | 6 min, 3 trades | −167 € | −341 € |
+| lot calculé pour 1 % (`ec41cae7`) | 00:00 | 0 / 21 | 21 / 21 | 10,5 h | −403 € | −451 € |
+| lot calculé pour 1 % (`ec41cae7`) | 09:00 | 0 / 21 | 21 / 21 | 7,9 h, 103 trades | −440 € | −459 € |
+| lot calculé pour 1 % (`ec41cae7`) | 14:00 | 2 / 21 | 15 / 21 | 5,5 h, 74 trades | −315 € | −414 € |
+
+Lecture : avec 1,2 lot, un signal stoppé coûte 8 à 12,5 % du compte. L'arrêt total à −10 % arrive donc chaque jour,
+après 2 à 4 trades en général. La nouvelle version perd moins par jour seulement parce qu'elle s'arrête plus tôt :
+moins de trades, donc moins de spread payé. Par trade, elle perd toujours (sur les 4 semaines d'affilée : arrêt total
+6 minutes après la réouverture du 31/08, −198 €). Les jours positifs (+40 à +990 €) sont ceux où les premiers signaux
+gagnent ; rien ne permet de les prévoir. Sur le premier jour, « fermer si gain » avec le lot à 1 % a fait pire que
+« garder » (PF 0,21 contre 0,64 : 9 trades gagnants coupés tôt).
+
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 
 Demande : un sens achat / vente « en fonction du marché et de la réaction des bougies », qui change en quelques
@@ -929,3 +965,6 @@ PF 0,77, 25/35 0,80, 30/40 0,81, 30/50 0,80, 40/60 0,81 ; avec 1 pip de glisseme
   ensemble), voir « Signaux contraires » ci-dessus ; puis retour à la v1 telle quelle (`garder`, `f8489472`) après
   la séance démo de l'utilisateur ; puis deux positions au plus (`ef659bec`), décisions prises sur la journée du
   jour (voir « Améliorer deux bougies »).
+- 01/10/2026 : pas de limite de perte du jour, lot 0,4 / 0,3 (`d9adc38e`) ; puis stop de 4 à 8 $, trois objectifs à
+  2, 4 et 6 $, lot calculé pour 1 % (`ec41cae7`) ; puis 0,4 / 0,3 lot par position et « + retournement si gain »
+  (`a28bf8ab`), voir les sections du 01/10 ci-dessus.

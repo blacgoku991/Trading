@@ -237,13 +237,13 @@ seule la cassure tourne en démo (l'impulsion-repli perd dans toutes ses version
 - **impulsion-repli** : impulsion d'au moins 1 ATR M1, repli de 30 à 70 %, puis reprise dans le sens de
   l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code) ;
 - **deux bougies** (idée de l'utilisateur, seule active depuis le 29/09 au soir) : bougie baissière puis haussière
-  → vente (haussière puis baissière → achat), stop au-delà des deux bougies (10 pips au moins), une position de
-  stop entre 4 et 8 $ (élargi à 4 $, refusé au-delà de 8 $), trois positions avec des objectifs à 2, 4 et 6 $, lot
-  calculé pour risquer 1 % au stop (environ 0,14 lot au total pour 4 $), pas de limite de perte du jour (décision de
-  l'utilisateur du 01/10), arrêt total à −10 % depuis le plus haut ; deux signaux au plus, un achat et une
-  vente pouvant être ouverts en même temps (option `opposite_signals: retourner_si_gain` : fermer le trade
-  contraire s'il est en gain, sinon ignorer le signal). Rejeu 4 semaines : perdante (PF 0,74, arrêt à −10 % au
-  4e jour de cotation).
+  → vente (haussière puis baissière → achat), stop au-delà des deux bougies, entre 4 et 8 $ (élargi à 4 $, refusé
+  au-delà de 8 $), trois positions avec des objectifs à 2, 4 et 6 $, **0,4 lot par position** (1,2 lot par signal ;
+  0,3 si le signal risquerait plus de 12,5 % du compte au stop, refusé au-delà : choix de l'utilisateur du 01/10),
+  pas de limite de perte du jour, arrêt total à −10 % depuis le plus haut ; deux signaux au plus, toujours dans le
+  même sens (`opposite_signals: retourner_si_gain` : un signal contraire ferme les positions ouvertes si elles sont
+  en gain, sinon il est ignoré). Rejeu 4 semaines, chaque jour relancé à 5 000 € : perdante, arrêt total tous les
+  jours après 2 à 4 trades en général (`docs/STRATEGIES.md`).
 
 Pour les deux (sorties v2, d'après les trades démo du 29/09) : stop côté serveur derrière la structure du signal,
 d'au moins 2 $, objectif à 3 fois le stop (un gain couvre trois pertes), sortie forcée au bout de 10 minutes même
@@ -341,11 +341,12 @@ ligne « en marche » et les bilans. Le risque de chaque trade ne change jamais.
   position en double chez le broker est fermée ; ces cas sont comptés dans le bilan.
 
 Garde-fous : compte **démo obligatoire, sans exception** (aucune option ne permet le réel), compte en hedging,
-Algo Trading actif, un seul exemplaire à la fois ; **lot calculé** : 0,1 % de l'equity perdus au stop
-(`risk_per_trade_pct`, plafond dur 1 %), arrondi vers le bas ; option lot fixe (`fixed_volume`), refusé si ce lot
-risquerait plus de 1 % de l'equity au stop ; plus d'entrée pour la journée à −2 % (démo, latent compris) ; marge libre d'au moins 50 %
-de l'equity après l'ordre ; pas d'entrée si le marché ferme avant la durée maximale ; pas d'entrée si, tous les
-stops touchés, la journée dépasserait −2 % (budget du jour) ; **arrêt total à −10 % depuis le plus haut de
+Algo Trading actif, un seul exemplaire à la fois ; **lot** calculé pour perdre `risk_per_trade_pct` de l'equity au
+stop (arrondi vers le bas), ou lot fixe / lots au choix refusés s'ils risqueraient plus (réglage démo du 01/10, choix
+de l'utilisateur : 0,4 / 0,3 lot par position, 12,5 % au plus par signal ; plafond dur du scalper 15 %, du bot
+principal 1 %) ; limite de perte du jour réglable (`daily_loss_pct`, retirée en démo le 01/10 à la demande de
+l'utilisateur) ; marge libre d'au moins 50 % de l'equity après l'ordre ; pas d'entrée si le marché ferme avant la
+durée maximale ; **arrêt total à −10 % depuis le plus haut de
 l'expérience** : positions fermées, plus aucune entrée, relance manuelle uniquement ; réponse du serveur perdue : l'ordre est retrouvé
 dans l'historique des deals (magic et commentaire), jamais renvoyé ; stop manquant reposé, sinon
 position fermée ; si le serveur répond « trop de requêtes », plus d'envoi pendant 60 s. Magic `20260929` : le bot

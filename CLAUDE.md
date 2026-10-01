@@ -39,6 +39,8 @@ Construire un bot de trading algorithmique sur **XAUUSD (or)**, connecté à **M
 4. **Interdits** : martingale, grid sans stop, moyenne à la baisse, doublement après perte, logique de « récupération » des pertes, retrait ou éloignement du SL.
 5. **Limites de risque** (défauts dans la config, ajustables) :
    - risque par trade : 0,5 % de l'equity (plafond dur : 1 %)
+     (expérience de scalping en démo : 0,4 / 0,3 lot par position depuis le 01/10/2026, plafond relevé à 15 % par
+     trade, décision de l'utilisateur)
    - perte max journalière : 2 % (equity, flottant inclus) → tout fermer + pause jusqu'au lendemain
      (expérience de scalping en démo : pas de limite du jour depuis le 01/10/2026, décision de l'utilisateur)
    - drawdown max depuis le plus haut : 10 % → arrêt total, relance manuelle uniquement
@@ -444,6 +446,15 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   bougies, élargi à 4 $, refusé au-delà de 8 $ ; trois positions, objectifs 2, 4 et 6 $ ; lot calculé pour 1 % au
   stop (0,3-0,4 lot y risquerait 2 à 5 %) : environ 0,14 lot au total. Empreinte `ec41cae7`. Rejeu : arrêt total à
   −10 % le premier jour des 4 semaines (−412 €) ; soirée du 28/09 (rejeu d'une journée) : 10 trades, +39,63 €.
+  Puis (capture : deux achats et trois ventes ouverts, environ 0,13 lot) « pourquoi ils ne sont pas tous dans la même
+  direction, et la taille de lot je t'ai dit 0,3, 0,4 » ; réponses : « 0,4 / 0,3 par position » et « fermer si en
+  gain, puis changer ». Fait : 0,4 lot pour chacune des trois positions (1,2 lot par signal), 0,3 si le signal
+  risquerait plus de 12,5 % du compte au stop, refusé au-delà ; plafond dur du risque par trade du scalper relevé à
+  15 % (démo seulement, le bot principal garde 1 %) ; `opposite_signals: retourner_si_gain` (en gain = positions
+  encore ouvertes). Restent : arrêt total à −10 % depuis le plus haut, démo obligatoire. Empreinte `a28bf8ab`.
+  Rejeu jour par jour (21 jours, chacun relancé à 5 000 €) : arrêt total tous les jours, 6 à 12 min en médiane après
+  le premier trade, 6 ou 7 jours positifs sur 21, −31 à −167 €/jour en moyenne selon l'heure de lancement (lot à
+  1 % : 0 à 2 jours positifs, −315 à −440 €/jour ; moins de pertes seulement parce qu'il s'arrête plus tôt).
 
 ---
 

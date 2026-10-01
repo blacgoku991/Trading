@@ -96,7 +96,7 @@ PEAK = "plus_haut_experience"  # plus haut de la valeur de l'expérience (drawdo
 HALT = "arret_total"  # motif de l'arrêt total au drawdown maximal : relance manuelle uniquement
 # Réglages ajoutés après coup et leur valeur neutre (comportement d'avant) : hors de l'empreinte à cette valeur.
 NEUTRAL_SETTINGS = {"opposite_signals": "garder", "max_spread_pips": None, "no_entry_after_open_min": None,
-                    "lot_fits_day_budget": False}
+                    "lot_fits_day_budget": False, "lot_per_position": False}
 NEUTRAL_CADENCE = {"ceiling_open_positions": None}
 # Règle des signaux contraires dans le nom affiché (« garder », le comportement d'origine : rien).
 OPPOSITE_LABELS = {"ignorer": " + sans contraires", "retourner": " + retournement",
@@ -572,7 +572,7 @@ class ScalpRunner:
                                          day_realized=self._day_realized(), day_start_equity=self.day_start_equity,
                                          open_trades=self._exposures())  # fmt: skip
         volume, why = trade_volume(cfg, account.equity, loss_per_lot, room=room, volume_min=spec.volume_min,
-                                   volume_step=spec.volume_step)  # fmt: skip
+                                   volume_step=spec.volume_step, positions=len(plan.tps) or 1)  # fmt: skip
         if why is not None:
             self._refuse(setup, spread, why)
             return
@@ -700,9 +700,9 @@ class ScalpRunner:
             elif orders:
                 values.append(sum(mine[order.position].profit + mine[order.position].swap + (order.entry_fees or 0.0)
                                   for order in orders))  # fmt: skip
-            elif tag in self.shadow:
+            elif tag in self.shadow:  # positions encore ouvertes, comme dans le terminal
                 trade = self.shadow[tag][0]
-                values.append(self._to_account(trade.move_at(tick.bid, tick.ask), trade.volume))
+                values.append(self._to_account(trade.open_move_at(tick.bid, tick.ask), trade.open_volume))
             else:
                 values.append(0.0)
         return values

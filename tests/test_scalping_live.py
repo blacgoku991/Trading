@@ -550,13 +550,16 @@ _V1_EXITS = [
     ("version: 2                    # v1", "version: 1                    # v1"),
     ("target_ratios: [2.0, 3.0, 4.0]", "target_ratios: [0.8, 1.2, 2.0]"),
     ("    enabled: false\n    version: 1\n    impulse_atr", "    enabled: true\n    version: 1\n    impulse_atr"),
-    ("  max_total_risk_pct: 2.0 ", "  max_total_risk_pct: 0.5 "),
+    ("  max_total_risk_pct: 25.0 ", "  max_total_risk_pct: 0.5 "),
     ("  daily_loss_pct: null\n", "  daily_loss_pct: 1.0\n"),
-    ("    ceiling_total_risk_pct: 2.0 ", "    ceiling_total_risk_pct: 1.0 "),
+    ("    ceiling_total_risk_pct: 25.0 ", "    ceiling_total_risk_pct: 1.0 "),
     ("  max_open_positions: 2 ", "  max_open_positions: 5 "),
     ("    ceiling_open_positions: 2 ", "    # "),
     ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
-    ("  risk_per_trade_pct: 1.0\n", "  risk_per_trade_pct: 0.1\n"),
+    ("  risk_per_trade_pct: 12.5\n", "  risk_per_trade_pct: 0.1\n"),
+    ("  lot_choices: [0.4, 0.3]\n", "  lot_choices: []\n"),
+    ("  lot_per_position: true\n", "  lot_per_position: false\n"),
+    ("  opposite_signals: retourner_si_gain\n", "  opposite_signals: garder\n"),
     ("  max_stop_points: 800 ", "  max_stop_points: 600 "),
     ("résultat (PF 0,90 contre 0,91).\n    enabled: false\n", "résultat (PF 0,90 contre 0,91).\n    enabled: true\n"),
     ("49 % de gagnants, -412 €.\n    enabled: true\n", "49 % de gagnants, -412 €.\n    enabled: false\n"),
@@ -933,15 +936,19 @@ def test_account_limit_refusals_are_shown_once_per_15_minutes_and_rule_refusals_
     assert len([line for line in lines if "refus" in line]) == 2  # 15 minutes plus tard : rappel
 
 
-def test_two_candles_send_one_position_per_target_with_the_same_server_stop(tmp_path, settings):
+def _two_candle_sell(tmp_path, settings, **update):
+    """Deux bougies : minute baissière puis haussière, vente à la clôture ; objectifs 20 / 25 / 30 pips."""
     from goldbot.config import ScalpTwoCandleConfig
 
     scalping = settings.scalping.model_copy(update={
         "breakout": settings.scalping.breakout.model_copy(update={"enabled": False}),
         "pullback": settings.scalping.pullback.model_copy(update={"enabled": False}),
         "two_candles": ScalpTwoCandleConfig(enabled=True, min_stop_pips=10.0, target_pips=[20.0, 25.0, 30.0]),
+        **update,
     })  # fmt: skip
-    broker, clock, quote, runner, lines = make_world(tmp_path, settings.model_copy(update={"scalping": scalping}))
+    account = make_account(balance=10_000.0, equity=10_000.0, margin_free=10_000.0, leverage=1000)
+    world = make_world(tmp_path, settings.model_copy(update={"scalping": scalping}), account=account)
+    broker, clock, quote, runner, lines = world
     live = runner()
     live.step()  # préchauffage
     points = [(BASE_MS + k * 1000, 4001.0 - k / 60) for k in range(60)]  # minute baissière : 4001 -> 4000
@@ -950,6 +957,11 @@ def test_two_candles_send_one_position_per_target_with_the_same_server_stop(tmp_
     clock.server_ms = BASE_MS + 121_500
     quote(4000.50)
     live.step()
+    return broker, live, lines
+
+
+def test_two_candles_send_one_position_per_target_with_the_same_server_stop(tmp_path, settings):
+    broker, live, lines = _two_candle_sell(tmp_path, settings)
     sent = _deals(broker)
     assert len(sent) == 3 and {r["type"] for r in sent} == {C.ORDER_TYPE_SELL}
     assert [r["sl"] for r in sent] == pytest.approx([4001.42] * 3)  # stop commun, élargi à 10 pips
@@ -957,6 +969,19 @@ def test_two_candles_send_one_position_per_target_with_the_same_server_stop(tmp_
     assert [r["comment"][-2:] for r in sent] == ["#1", "#2", "#3"] and len(broker.positions()) == 3
     assert any("en 3 positions" in line and "objectifs 3998.42 / 3997.92 / 3997.42" in line for line in lines)
     assert live.labels["R"].startswith("deux bougies v1")
+
+
+@pytest.mark.parametrize(("risk_pct", "lot"), [(1.5, 0.4), (1.0, 0.3)])
+def test_two_candles_send_the_chosen_lot_for_each_position(tmp_path, settings, risk_pct, lot):
+    # Choix de l'utilisateur (01/10) : 0,4 lot pour chaque position, 0,3 si le trade (3 positions) risque trop au
+    # stop. Vente à 4000.42, stop à 4001.42 + 5 points de glissement : 105 $ par lot ; 3 x 0,4 = 1,2 lot perd 126 $.
+    cadence = settings.scalping.cadence.model_copy(update={"ceiling_total_risk_pct": 2.0})
+    broker, live, lines = _two_candle_sell(tmp_path, settings, lot_choices=[0.4, 0.3], lot_per_position=True,
+                                           risk_per_trade_pct=risk_pct, max_total_risk_pct=2.0, daily_loss_pct=None,
+                                           cadence=cadence)  # fmt: skip
+    sent = _deals(broker)
+    assert [r["volume"] for r in sent] == [lot] * 3 and len(broker.positions()) == 3
+    assert any(f"VENTE {3 * lot:g} lot en 3 positions ({lot:g} + {lot:g} + {lot:g})" in line for line in lines)
 
 
 # --- signaux contraires (demande de l'utilisateur : jamais d'achat et de vente ouverts en même temps) ---------------
@@ -1060,7 +1085,7 @@ def test_strategy_label_names_the_opposite_signal_rule(settings):
 @pytest.mark.parametrize(
     ("section", "key", "value"),
     [(None, "opposite_signals", "retourner_si_gain"), (None, "max_spread_pips", 2.5),
-     ("cadence", "ceiling_open_positions", 2)],
+     (None, "lot_per_position", True), ("cadence", "ceiling_open_positions", 2)],
 )
 def test_settings_added_later_leave_the_fingerprint_unchanged_at_their_neutral_value(settings, section, key, value):
     # Valeur neutre = le comportement d'avant ce réglage : même empreinte, l'expérience en cours continue.

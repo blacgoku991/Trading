@@ -53,6 +53,11 @@ def variants(cfg: ScalpingConfig) -> dict[str, ScalpingConfig]:
     def targets(factor: float) -> list[float]:
         return [round(target * factor, 1) for target in two.target_pips]
 
+    # Signaux contraires : l'autre règle que la démo (positions des deux sens gardées, ou fermées si en gain).
+    if cfg.opposite_signals == "retourner_si_gain":
+        opposite = {"achats et ventes gardés": cfg.model_copy(update={"opposite_signals": "garder"})}
+    else:
+        opposite = {"retournement si gain": cfg.model_copy(update={"opposite_signals": "retourner_si_gain"})}
     return {
         "version démo": cfg,
         "objectifs -25 %": with_two(target_pips=targets(0.75)),
@@ -63,7 +68,7 @@ def variants(cfg: ScalpingConfig) -> dict[str, ScalpingConfig]:
         "durée max 20 min": cfg.model_copy(update={"max_hold_s": 1200}),
         "spread max 2,5 pips": cfg.model_copy(update={"max_spread_pips": 2.5}),
         "pause 1 h à la réouverture": cfg.model_copy(update={"no_entry_after_open_min": 60.0}),
-        "retournement si gain": cfg.model_copy(update={"opposite_signals": "retourner_si_gain"}),
+        **opposite,
     }
 
 

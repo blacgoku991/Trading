@@ -380,13 +380,16 @@ def live_main(
             store.register_version(code, version, digest, params, now_ms)
         say("Stratégies (version · empreinte des réglages) : " + ", ".join(runner.labels[c] for c in runner.versions))
         day = store.trading_days()
+        each = " par position" if cfg.lot_per_position else ""
+        whole = ", toutes ses positions comprises" if cfg.lot_per_position else ""
         say(
             f"Compte DÉMO, equity {account.equity:.2f} {account.currency}. "
             + (
-                f"Lot fixe {cfg.fixed_volume:g} (trade refusé s'il risque plus de {cfg.risk_per_trade_pct:g} % au stop)"
+                f"Lot fixe {cfg.fixed_volume:g}{each} (trade refusé s'il risque plus de {cfg.risk_per_trade_pct:g} % "
+                f"au stop{whole})"
                 if cfg.fixed_volume is not None
-                else f"Lot {' ou '.join(f'{v:g}' for v in sorted(cfg.lot_choices, reverse=True))} (le plus gros qui "
-                f"risque au plus {cfg.risk_per_trade_pct:g} % au stop"
+                else f"Lot {' ou '.join(f'{v:g}' for v in sorted(cfg.lot_choices, reverse=True))}{each} (le plus gros "
+                f"dont le trade risque au plus {cfg.risk_per_trade_pct:g} % au stop{whole}"
                 + (", et plus petit quand la perte du jour approche de la limite" if cfg.lot_fits_day_budget else "")
                 + ")"
                 if cfg.lot_choices

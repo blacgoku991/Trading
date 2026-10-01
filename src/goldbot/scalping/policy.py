@@ -243,38 +243,46 @@ def day_budget(config: ScalpingConfig, day_start_equity: float, realized: float)
 
 
 def trade_volume(config: ScalpingConfig, equity: float, loss_per_lot: float, *, volume_min: float,
-                 volume_step: float, room: float | None = None) -> tuple[float, str | None]:  # fmt: skip
-    """(lot, motif du refus) ; même calcul au rejeu et en démo.
+                 volume_step: float, room: float | None = None, positions: int = 1) -> tuple[float, str | None]:  # fmt: skip
+    """(lot du trade, motif du refus) ; même calcul au rejeu et en démo.
 
-    Lot fixe : refusé si sa perte au stop dépasse risk_per_trade_pct de l'equity (plafond dur 1 %). Sinon : lot
-    calculé d'après le risque, arrondi vers le bas, refusé sous le lot minimal (jamais arrondi vers le haut).
+    Lot fixe : refusé si sa perte au stop dépasse risk_per_trade_pct de l'equity. Sinon : lot calculé d'après le
+    risque, arrondi vers le bas, refusé sous le lot minimal (jamais arrondi vers le haut).
     room (lot_fits_day_budget) : perte encore permise aujourd'hui ; le lot choisi y tient aussi (lot plus petit).
+    positions (lot_per_position) : nombre de positions du trade, chacune du lot fixe ou choisi ; le trade risque
+    lot x positions au stop et son lot total est renvoyé.
     """
+    count = positions if config.lot_per_position else 1
+
+    def lots(lot: float) -> str:
+        return f"{count} positions de {lot:g} lot perdent" if count > 1 else f"{lot:g} lot perd"
+
     budget = equity * config.risk_per_trade_pct / 100
     if config.lot_choices and room is not None and room < budget:
         for lot in sorted(config.lot_choices, reverse=True):
             volume = round(int(lot / volume_step + 1e-9) * volume_step, 8)
-            if volume >= volume_min and volume * loss_per_lot <= room:
-                return volume, None
+            if volume >= volume_min and count * volume * loss_per_lot <= room:
+                return round(count * volume, 8), None
         smallest = min(config.lot_choices)
-        return 0.0, (f"budget de perte du jour : {max(room, 0.0):.2f} restants, même {smallest:g} lot perd "
-                     f"{smallest * loss_per_lot:.2f} au stop")  # fmt: skip
+        return 0.0, (f"budget de perte du jour : {max(room, 0.0):.2f} restants, même {lots(smallest)} "
+                     f"{count * smallest * loss_per_lot:.2f} au stop")  # fmt: skip
     if config.lot_choices:
         for lot in sorted(config.lot_choices, reverse=True):
             volume = round(int(lot / volume_step + 1e-9) * volume_step, 8)
-            if volume >= volume_min and volume * loss_per_lot <= budget:
-                return volume, None
+            if volume >= volume_min and count * volume * loss_per_lot <= budget:
+                return round(count * volume, 8), None
         smallest = min(config.lot_choices)
-        return 0.0, (f"lot {smallest:g} au-dessus du risque maximal : perd {smallest * loss_per_lot:.2f} au stop, plus "
-                     f"que {config.risk_per_trade_pct:g} % ({budget:.2f})")  # fmt: skip
+        return 0.0, (f"lot {smallest:g} au-dessus du risque maximal : {lots(smallest)} "
+                     f"{count * smallest * loss_per_lot:.2f} au stop, plus que {config.risk_per_trade_pct:g} % "
+                     f"({budget:.2f})")  # fmt: skip
     if config.fixed_volume is not None:
         volume = round(int(config.fixed_volume / volume_step + 1e-9) * volume_step, 8)
         if volume < volume_min:
             return 0.0, f"lot fixe sous le minimum du broker : {config.fixed_volume:g} < {volume_min:g}"
-        if volume * loss_per_lot > budget:
-            return 0.0, (f"lot fixe au-dessus du risque maximal : {volume:g} lot perd {volume * loss_per_lot:.2f} au "
-                         f"stop, plus que {config.risk_per_trade_pct:g} % ({budget:.2f})")  # fmt: skip
-        return volume, None
+        if count * volume * loss_per_lot > budget:
+            return 0.0, (f"lot fixe au-dessus du risque maximal : {lots(volume)} {count * volume * loss_per_lot:.2f} "
+                         f"au stop, plus que {config.risk_per_trade_pct:g} % ({budget:.2f})")  # fmt: skip
+        return round(count * volume, 8), None
     volume = position_size(budget, loss_per_lot, volume_min=volume_min, volume_max=float("inf"),
                            volume_step=volume_step)  # fmt: skip
     return volume, None if volume > 0 else "lot minimum au-dessus du budget de risque"

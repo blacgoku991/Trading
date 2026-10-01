@@ -566,6 +566,19 @@ class SimTrade:
         exit_price = self._average(bid - self.slip if self.side == LONG else ask + self.slip)
         return (exit_price - self.entry) * self.side - self.fee
 
+    def open_move_at(self, bid: float, ask: float) -> float:
+        """Résultat latent par once de ses positions encore ouvertes, sans celles déjà fermées à leur objectif :
+        ce que montre le terminal (signal contraire, « fermer si en gain »)."""
+        exit_price = bid - self.slip if self.side == LONG else ask + self.slip
+        return (exit_price - self.entry) * self.side - self.fee
+
+    @property
+    def open_volume(self) -> float:
+        """Lot de ses positions encore ouvertes."""
+        if not self.weights:
+            return self.volume
+        return self.volume * sum(self.weights[len(self.leg_exits) :]) / sum(self.weights)
+
 
 def ema_trend(closes: list[float] | tuple[float, ...], fast: int, slow: int) -> int:
     """+1 si EMA rapide > EMA lente, -1 si inférieure, 0 si pas assez de barres."""

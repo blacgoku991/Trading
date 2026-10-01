@@ -1078,6 +1078,79 @@ def test_the_lot_shrinks_to_what_is_left_of_the_day_budget():
     assert trade_volume(cfg, 5000.0, 100.0, **common) == (0.4, None)  # sans le réglage : comme avant
 
 
+# --- 0,4 / 0,3 lot par position (choix de l'utilisateur du 01/10) --------------------------------------------------
+
+
+def test_lot_per_position_gives_each_position_the_chosen_lot():
+    from goldbot.scalping.policy import ladder_volumes
+
+    cfg = CONFIG.model_copy(update={"lot_choices": [0.4, 0.3], "lot_per_position": True, "risk_per_trade_pct": 12.5})
+    common = dict(volume_min=0.01, volume_step=0.01)
+    # equity 5000 : 625 au plus ; perte par lot au stop 400 (4 $ x 100 onces) : 3 x 0,4 = 1,2 lot perd 480, pris.
+    assert trade_volume(cfg, 5000.0, 400.0, positions=3, **common) == (1.2, None)
+    assert ladder_volumes(1.2, 3, 0.01, 0.01) == [0.4, 0.4, 0.4]
+    # perte par lot 600 (6 $) : 1,2 lot perdrait 720 > 625 ; 3 x 0,3 = 0,9 lot perd 540, pris.
+    assert trade_volume(cfg, 5000.0, 600.0, positions=3, **common) == (0.9, None)
+    assert ladder_volumes(0.9, 3, 0.01, 0.01) == [0.3, 0.3, 0.3]
+    volume, why = trade_volume(cfg, 5000.0, 800.0, positions=3, **common)  # 0,9 lot perdrait 720
+    assert volume == 0.0
+    assert why == "lot 0.3 au-dessus du risque maximal : 3 positions de 0.3 lot perdent 720.00 au stop, plus que " \
+                  "12.5 % (625.00)"  # fmt: skip
+    assert trade_volume(cfg, 5000.0, 400.0, positions=1, **common) == (0.4, None)  # une seule position
+    shared = cfg.model_copy(update={"lot_per_position": False})
+    assert trade_volume(shared, 5000.0, 400.0, positions=3, **common) == (0.4, None)  # lot réparti : comme avant
+    fixed = cfg.model_copy(update={"lot_choices": [], "fixed_volume": 0.2})
+    assert trade_volume(fixed, 5000.0, 400.0, positions=3, **common) == (0.6, None)
+
+
+def test_the_scalper_risk_cap_and_the_lot_per_position_are_checked():
+    from pydantic import ValidationError
+
+    from goldbot.config import ScalpingConfig
+
+    data = CONFIG.model_dump()
+    with pytest.raises(ValidationError, match="less than or equal to 15"):
+        ScalpingConfig.model_validate({**data, "risk_per_trade_pct": 16.0})
+    with pytest.raises(ValidationError, match="lot_per_position"):
+        ScalpingConfig.model_validate({**data, "lot_per_position": True, "lot_choices": [], "fixed_volume": None})
+    ok = ScalpingConfig.model_validate({**data, "lot_per_position": True, "lot_choices": [0.4, 0.3]})
+    assert ok.lot_per_position
+
+
+def test_the_open_positions_of_a_ladder_say_whether_it_is_in_gain():
+    plan = Plan(SHORT, 4000.0, 4001.0, 3997.0, 1.0, 3.0, 0.3, 0.16, tps=(3998.0, 3997.5, 3997.0))
+    trade = SimTrade.open("t", plan, 4000.0, 4000.16, 0, 600, 0.0, volume=1.2, weights=(0.4, 0.4, 0.4))
+    assert trade.open_volume == pytest.approx(1.2)
+    assert not trade.on_tick(1000, 3997.80, 3997.96)  # première position à son objectif (+2 $)
+    assert trade.open_volume == pytest.approx(0.8)
+    # Retour à 4000.20 / 4000.36 : en tout encore en gain (+2 $ déjà pris), mais les positions ouvertes perdent.
+    assert trade.move_at(4000.20, 4000.36) > 0
+    assert trade.open_move_at(4000.20, 4000.36) == pytest.approx(-0.36)
+
+
+def test_replay_keeps_a_trade_whose_open_positions_lose_even_after_a_first_target():
+    from goldbot.scalping.engine import TWO_CANDLES
+
+    base_ms = server_epoch_of("2026-01-06 12:00") * 1000
+    # Minute 0 haussière, minute 1 baissière : achat à 4000.28. Minute 2 : montée à 4001.50 (premier objectif, à
+    # +1 $, touché), puis retour à 4000.25, au-dessus de son ouverture (haussière : signal de vente).
+    points = [(base_ms + k * 1000, 4000.0 + 0.5 * k / 59) for k in range(60)]
+    points += [(base_ms + 60_000 + k * 1000, 4000.5 - 0.3 * k / 59) for k in range(60)]
+    points += [(base_ms + 120_000 + k * 1000, 4000.2 + 1.3 * k / 29) for k in range(30)]
+    points += [(base_ms + 150_000 + k * 1000, 4001.5 - 1.25 * k / 29) for k in range(30)]
+    points += [(base_ms + 180_000 + k * 1000, 4000.25) for k in range(720)]
+    ticks, bars = _frames(points, base_ms)
+    schedule = MarketSchedule.from_config(SETTINGS.market_hours)
+    config = _two_config(min_stop_pips=10.0, target_pips=[10.0, 40.0])
+    config = config.model_copy(update={"opposite_signals": "retourner_si_gain"})
+    result = run_backtest(ticks, bars, config, instrument=INSTRUMENT, schedule=schedule, initial_equity=5700.0,
+                          slippage_points=0.0, strategies=(TWO_CANDLES,))  # fmt: skip
+    (buy,) = result.trades.itertuples()  # la vente est ignorée : l'achat reste seul ouvert
+    assert buy.side == LONG and buy.reason == "durée max" and buy.parts == 2
+    assert buy.exit > buy.entry  # première position à +1 $, la seconde fermée à la durée maximale
+    assert result.refusals == {(TWO_CANDLES, "position contraire en perte"): 1}
+
+
 def test_risk_room_is_what_the_entry_checks_would_still_allow():
     policy = EntryPolicy(CONFIG)  # risque cumulé 0,5 %, perte du jour 1 %
     open_trades = [Exposure("t1", "k1", LONG, 10.0)]

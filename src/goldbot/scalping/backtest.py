@@ -242,14 +242,17 @@ def run_backtest(
                                             day_start_equity=day_start_equity,
                                             open_trades=[exposure for _, exposure, _, _, _ in open_trades])
                 lots, why = trade_volume(config, equity, loss_per_lot, volume_min=instrument.volume_min,
-                                         volume_step=instrument.volume_step, room=room)  # fmt: skip
+                                         volume_step=instrument.volume_step, room=room,
+                                         positions=len(plan.tps) or 1)  # fmt: skip
                 if why is not None:  # au-delà du maximum par ordre : fractionnement (split_volume)
                     refusals[(code, reason_key(why))] += 1
                     continue
                 risk = lots * loss_per_lot
-                # Trades contraires ouverts : gardés, signal ignoré, ou fermés avant l'entrée (retournement).
+                # Trades contraires ouverts : gardés, signal ignoré, ou fermés avant l'entrée (retournement). En gain
+                # ou en perte d'après leurs positions encore ouvertes, comme dans le terminal en démo.
                 opposite = [item for item in open_trades if item[0].side != plan.side]
-                reverse, why = opposite_plan(config.opposite_signals, [item[0].move_at(bid, ask) for item in opposite])
+                latent = [item[0].open_move_at(bid, ask) for item in opposite]
+                reverse, why = opposite_plan(config.opposite_signals, latent)
                 if why is not None:
                     refusals[(code, reason_key(why))] += 1
                     continue

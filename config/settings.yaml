@@ -145,16 +145,17 @@ scalping:
   extra_slippage_points: 10     # bilan séparé « simulation avec glissement supplémentaire »
   max_hold_s: 600               # durée maximale (10 min, le temps d'atteindre 3 x le stop) : fermeture même en perte
   # Compte (communs aux deux stratégies).
-  # Lot : 0,4, ou 0,3 si 0,4 perdrait plus de risk_per_trade_pct au stop (demande de l'utilisateur du 29/09, nuit :
-  # « lot de 0,3 ou 0,4 ») ; trade refusé si même 0,3 dépasse. 1 % = plafond dur (CLAUDE.md règle 5) : sur 5 000 €,
-  # 0,4 lot tient jusqu'à un stop d'environ 13 pips, 0,3 jusqu'à 18 pips.
-  risk_per_trade_pct: 1.0
-  # Lot calculé pour risquer risk_per_trade_pct au stop (01/10 : avec un stop de 4 à 8 $, 0,3-0,4 lot risquerait
-  # 2 à 5 % du compte, au-delà du plafond de 1 %) : environ 0,14 lot au total pour 4 $ de stop, 0,07 pour 8 $,
-  # réparti sur les positions du signal.
-  lot_choices: []
-  max_open_positions: 2         # « la version 2 positions, même dans des sens différents » (utilisateur, 29/09)
-  max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
+  # Lot 0,4 pour CHAQUE position du signal (trois positions, objectifs 2, 4 et 6 $ : 1,2 lot par signal), ou 0,3 si
+  # le signal perdrait plus de risk_per_trade_pct au stop ; signal refusé si même 0,3 dépasse. Choix de l'utilisateur
+  # du 01/10 (« la taille de lot je t'ai dit 0,3, 0,4 », puis « 0,4 / 0,3 par position »), qui lève le plafond de
+  # 1 % par trade pour cette expérience démo. Sur 5 100 € : 0,4 jusqu'à un stop d'environ 6 $, 0,3 de 6 à 8 $.
+  # Un signal stoppé coûte 8 à 12,5 % du compte : l'arrêt total à -10 % arrive au premier ou au deuxième (rejeu des
+  # 4 semaines, chaque jour relancé à 5 000 € : arrêt total tous les jours, après 2 à 4 trades en général).
+  risk_per_trade_pct: 12.5
+  lot_choices: [0.4, 0.3]
+  lot_per_position: true
+  max_open_positions: 2         # deux signaux au plus, six positions (« le nombre de trades est bon », 01/10)
+  max_total_risk_pct: 25.0      # risque cumulé des trades ouverts (deux signaux)
   max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
   min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s (base)
   # Pas de limite de perte du jour (null) : décision de l'utilisateur du 01/10 (« retire la limite de perte »), compte
@@ -168,7 +169,9 @@ scalping:
   # demandé le 29/09 (nuit) ; puis, sur la séance démo de l'utilisateur avec « garder » (+459 € en une heure,
   # 14 trades), il aurait donné environ +299 € (gagnants coupés tôt) : retour à « garder », même empreinte f8489472.
   # Rejeu sur 4 semaines de ticks Axi : même perte par trade avec l'un ou l'autre (-0,15 R contre -0,14 R).
-  opposite_signals: garder
+  # 01/10 (« pourquoi ils ne sont pas tous dans la même direction » ; choix : « fermer si en gain, puis changer ») :
+  # retourner_si_gain, jamais d'achat et de vente ouverts ensemble. En gain = positions encore ouvertes en gain.
+  opposite_signals: retourner_si_gain
   # Option (désactivée) : max_spread_pips: 2.5 = pas d'entrée si le spread dépasse 2,5 pips (normal : 1,6).
   # Sur 4 semaines de ticks, les trades à plus de 3 pips de spread (23:00-00:00 heure serveur) perdent 7,9 pips
   # en moyenne contre 1,7 ; mais le 29/09 il aurait retiré 3 trades qui ont rapporté +77,58 € : l'utilisateur
@@ -254,13 +257,13 @@ scalping:
     # Après chaque trade fermé : si les 30 derniers trades sont en bénéfice net (frais compris), les limites de
     # base (entrées par minute, positions, risque cumulé) sont multipliées par le palier suivant (x2, x4, x6), au plus
     # un palier par série de 30 trades ; dès qu'ils sont en perte nette, retour immédiat à la base.
-    # Le risque par trade (0,1 %) ne change jamais. Plafonds absolus ci-dessous.
+    # Le risque par trade ne change jamais. Plafonds absolus ci-dessous.
     enabled: true
     version: 1
     window_trades: 30
     multipliers: [1, 2, 4, 6]
     ceiling_entries_per_minute: 12  # une par bougie de 5 s au plus ; requêtes serveur, pas de HFT chez Axi
-    ceiling_total_risk_pct: 2.0     # risque ouvert au plus (deux trades de 0,4 lot)
+    ceiling_total_risk_pct: 25.0    # risque ouvert au plus (deux signaux)
     ceiling_open_positions: 2       # deux positions au plus, même quand la cadence monte
 
 logging:

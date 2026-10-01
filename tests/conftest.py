@@ -63,6 +63,7 @@ def v1_exit_settings():
         opposite_signals="garder",  # testés à part (tests « signaux contraires »)
         max_spread_pips=None,  # testé à part
         lot_fits_day_budget=False,  # testé à part
+        lot_per_position=False,  # testé à part
         max_stop_points=600,
     )
     data["cadence"].update(ceiling_total_risk_pct=1.0, ceiling_open_positions=None)
