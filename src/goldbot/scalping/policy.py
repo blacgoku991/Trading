@@ -195,6 +195,15 @@ class EntryPolicy:
             return f"délai entre deux entrées : moins de {limits.seconds_between_entries:g} s"
         return None
 
+    def risk_room(self, *, equity: float, day_result: float, day_start_equity: float, open_trades: list[Exposure],
+                  day_realized: float | None = None) -> float:  # fmt: skip
+        """Perte encore permise au stop pour une nouvelle entrée : le plus petit du risque cumulé restant et du budget
+        de perte du jour restant (mêmes calculs que refusal)."""
+        open_risk = sum(trade.risk for trade in open_trades)
+        realized = day_result if day_realized is None else day_realized
+        budget = self.cfg.daily_loss_pct / 100 * day_start_equity + realized
+        return min(self.cadence.limits().total_risk_pct / 100 * equity, budget) - open_risk
+
     def accept(self, now_ms: int) -> None:
         self.entries.append(now_ms)
 
@@ -227,13 +236,22 @@ class EntryPolicy:
 
 
 def trade_volume(config: ScalpingConfig, equity: float, loss_per_lot: float, *, volume_min: float,
-                 volume_step: float) -> tuple[float, str | None]:  # fmt: skip
+                 volume_step: float, room: float | None = None) -> tuple[float, str | None]:  # fmt: skip
     """(lot, motif du refus) ; même calcul au rejeu et en démo.
 
     Lot fixe : refusé si sa perte au stop dépasse risk_per_trade_pct de l'equity (plafond dur 1 %). Sinon : lot
     calculé d'après le risque, arrondi vers le bas, refusé sous le lot minimal (jamais arrondi vers le haut).
+    room (lot_fits_day_budget) : perte encore permise aujourd'hui ; le lot choisi y tient aussi (lot plus petit).
     """
     budget = equity * config.risk_per_trade_pct / 100
+    if config.lot_choices and room is not None and room < budget:
+        for lot in sorted(config.lot_choices, reverse=True):
+            volume = round(int(lot / volume_step + 1e-9) * volume_step, 8)
+            if volume >= volume_min and volume * loss_per_lot <= room:
+                return volume, None
+        smallest = min(config.lot_choices)
+        return 0.0, (f"budget de perte du jour : {max(room, 0.0):.2f} restants, même {smallest:g} lot perd "
+                     f"{smallest * loss_per_lot:.2f} au stop")  # fmt: skip
     if config.lot_choices:
         for lot in sorted(config.lot_choices, reverse=True):
             volume = round(int(lot / volume_step + 1e-9) * volume_step, 8)

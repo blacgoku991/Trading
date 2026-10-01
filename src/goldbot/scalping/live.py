@@ -95,7 +95,8 @@ LEARNER = "apprentissage"  # état de l'apprentissage dans la table meta (JSON)
 PEAK = "plus_haut_experience"  # plus haut de la valeur de l'expérience (drawdown maximal)
 HALT = "arret_total"  # motif de l'arrêt total au drawdown maximal : relance manuelle uniquement
 # Réglages ajoutés après coup et leur valeur neutre (comportement d'avant) : hors de l'empreinte à cette valeur.
-NEUTRAL_SETTINGS = {"opposite_signals": "garder", "max_spread_pips": None, "no_entry_after_open_min": None}
+NEUTRAL_SETTINGS = {"opposite_signals": "garder", "max_spread_pips": None, "no_entry_after_open_min": None,
+                    "lot_fits_day_budget": False}
 NEUTRAL_CADENCE = {"ceiling_open_positions": None}
 # Règle des signaux contraires dans le nom affiché (« garder », le comportement d'origine : rien).
 OPPOSITE_LABELS = {"ignorer": " + sans contraires", "retourner": " + retournement",
@@ -200,6 +201,7 @@ class ScalpRunner:
         self.pause_until_ms = -(2**62)
         self.day: int | None = None
         self.day_start_ms = 0
+        self.day_prior = 0.0  # réalisé aujourd'hui par le bot avant cette expérience (_earlier_today)
         account = broker.account()
         self.currency = account.currency
         self.day_start_equity = account.equity
@@ -390,6 +392,7 @@ class ScalpRunner:
         if day != self.day:
             self.day, self.day_start_ms = day, day * 86_400_000
             self.day_start_equity = self.broker.account().equity
+            self.day_prior = self._earlier_today(self.day_start_ms)
 
     @staticmethod
     def _read_text(direction: int) -> str:
@@ -476,17 +479,30 @@ class ScalpRunner:
             self.say(self._signal_line)
             self._signal_line = None
 
+    def _earlier_today(self, day_start_ms: int) -> float:
+        """Résultat réalisé aujourd'hui par le bot (son magic) hors de cette expérience, lu dans les deals : une
+        nouvelle expérience ne remet pas la perte du jour à zéro (CLAUDE.md règle 5)."""
+        if self.local_only:
+            return 0.0
+        try:
+            deals = self.broker.deals_between(day_start_ms // 1000, self.server_now_ms() // 1000 + 60)
+        except BrokerError as exc:
+            self.say(f"   historique des deals illisible ({exc}) : perte du jour comptée sur cette expérience seulement")
+            return 0.0
+        total = sum(d.profit + d.commission + d.swap + d.fee for d in deals if d.magic == self.cfg.magic)
+        return total - self.store.realized_since(day_start_ms)
+
     def _day_result(self) -> float:
         """Résultat du jour : démo réalisé + latent ; en --simulation, résultat simulé réalisé (comme le rejeu)."""
         if self.local_only:
             return self.store.sim_realized_since(self.day_start_ms)
-        return self.store.realized_since(self.day_start_ms) + self._latent()
+        return self.store.realized_since(self.day_start_ms) + self.day_prior + self._latent()
 
     def _day_realized(self) -> float:
         """Résultat réalisé du jour (démo, ou simulé en --simulation), sans le latent."""
         if self.local_only:
             return self.store.sim_realized_since(self.day_start_ms)
-        return self.store.realized_since(self.day_start_ms)
+        return self.store.realized_since(self.day_start_ms) + self.day_prior
 
     def _exposures(self) -> list[Exposure]:
         """Trades ouverts de l'expérience : ordres démo (regroupés par signal) et trades simulés."""
@@ -550,7 +566,12 @@ class ScalpRunner:
         loss_per_lot += 2 * self.exit_commission_per_lot
         account = self.broker.account()
         # Lot fixe ou calculé d'après le risque ; au-delà du maximum par ordre : fractionnement en plusieurs ordres.
-        volume, why = trade_volume(cfg, account.equity, loss_per_lot, volume_min=spec.volume_min,
+        room = None
+        if cfg.lot_fits_day_budget:
+            room = self.policy.risk_room(equity=account.equity, day_result=self._day_result(),
+                                         day_realized=self._day_realized(), day_start_equity=self.day_start_equity,
+                                         open_trades=self._exposures())  # fmt: skip
+        volume, why = trade_volume(cfg, account.equity, loss_per_lot, room=room, volume_min=spec.volume_min,
                                    volume_step=spec.volume_step)  # fmt: skip
         if why is not None:
             self._refuse(setup, spread, why)

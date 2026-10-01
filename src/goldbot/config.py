@@ -383,6 +383,9 @@ class ScalpingConfig(_Section):
     # fermés au marché, puis entrée), « retourner_si_gain » (fermés seulement s'ils sont tous en gain, sinon signal
     # refusé et trades gardés).
     opposite_signals: Literal["garder", "ignorer", "retourner", "retourner_si_gain"] = "garder"
+    # Lot pris dans lot_choices, du plus gros au plus petit, dont la perte au stop tient aussi dans ce qui reste du
+    # budget de perte du jour et du risque cumulé : le lot diminue avec les pertes du jour au lieu de tout refuser.
+    lot_fits_day_budget: bool = False
     # Pas de nouvelle entrée si le spread du moment dépasse ce nombre de pips (None : pas de limite).
     max_spread_pips: float | None = Field(default=None, gt=0)
     # Pas de nouvelle entrée pendant ces minutes après la réouverture quotidienne (spreads larges, prix désordonnés).

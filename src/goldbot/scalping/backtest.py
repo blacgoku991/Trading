@@ -236,8 +236,13 @@ def run_backtest(
                 # Comme en direct : perte au stop avec le glissement attendu, commission comprise.
                 worst_move = plan.stop_distance + config.expected_slippage_points * point + fee
                 loss_per_lot = worst_move * instrument.contract_size
+                room = None
+                if config.lot_fits_day_budget:
+                    room = policy.risk_room(equity=equity, day_result=day_pnl, day_realized=day_pnl,
+                                            day_start_equity=day_start_equity,
+                                            open_trades=[exposure for _, exposure, _, _, _ in open_trades])
                 lots, why = trade_volume(config, equity, loss_per_lot, volume_min=instrument.volume_min,
-                                         volume_step=instrument.volume_step)  # fmt: skip
+                                         volume_step=instrument.volume_step, room=room)  # fmt: skip
                 if why is not None:  # au-delà du maximum par ordre : fractionnement (split_volume)
                     refusals[(code, reason_key(why))] += 1
                     continue

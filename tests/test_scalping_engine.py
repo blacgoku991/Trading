@@ -1064,3 +1064,22 @@ def test_the_cadence_never_opens_more_positions_than_the_ceiling():
     for _ in range(60):
         cadence.on_close(1.0)
     assert cadence.level == 3 and cadence.limits().open_positions == 5  # x6 sans plafond : 30
+
+
+def test_the_lot_shrinks_to_what_is_left_of_the_day_budget():
+    from goldbot.scalping.policy import trade_volume
+
+    cfg = CONFIG.model_copy(update={"lot_choices": [0.4, 0.3, 0.2, 0.1], "risk_per_trade_pct": 1.0})
+    common = dict(volume_min=0.01, volume_step=0.01)
+    assert trade_volume(cfg, 5000.0, 100.0, room=80.0, **common) == (0.4, None)  # 40 <= 50 (1 %) : lot normal
+    assert trade_volume(cfg, 5000.0, 100.0, room=25.0, **common) == (0.2, None)  # plus que 25 à perdre aujourd'hui
+    volume, why = trade_volume(cfg, 5000.0, 100.0, room=5.0, **common)
+    assert volume == 0.0 and why.startswith("budget de perte du jour : 5.00 restants, même 0.1 lot perd 10.00")
+    assert trade_volume(cfg, 5000.0, 100.0, **common) == (0.4, None)  # sans le réglage : comme avant
+
+
+def test_risk_room_is_what_the_entry_checks_would_still_allow():
+    policy = EntryPolicy(CONFIG)  # risque cumulé 0,5 %, perte du jour 1 %
+    open_trades = [Exposure("t1", "k1", LONG, 10.0)]
+    room = policy.risk_room(equity=5000.0, day_result=-30.0, day_start_equity=5000.0, open_trades=open_trades)
+    assert room == pytest.approx(10.0)  # min(0,5 % = 25, 1 % - 30 = 20) - 10 déjà en jeu

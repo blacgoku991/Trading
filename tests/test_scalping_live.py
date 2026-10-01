@@ -1126,3 +1126,22 @@ def test_the_status_line_gives_the_reasons_of_the_signals_set_aside(world):
     live = runner()
     live.set_aside.update({"budget de perte du jour": 3, "signal périmé": 1})
     assert "(depuis le lancement : budget de perte du jour 3, signal périmé 1)" in live.status_line()
+
+
+def test_a_new_experiment_does_not_reset_the_loss_of_the_day(world):
+    from goldbot.broker.base import Deal
+
+    broker, clock, quote, runner, lines = world
+    lost = Deal(ticket=1, order=1, position_id=1, symbol="XAUUSD", type=C.DEAL_TYPE_SELL, entry=C.DEAL_ENTRY_OUT,
+                reason=C.DEAL_REASON_SL, volume=0.4, price=4000.0, commission=0.0, swap=0.0, fee=0.0, profit=-195.0,
+                magic=MAGIC, comment="SC-R-1-L#1", time_msc=BASE_MS - 3_600_000)  # fmt: skip
+    manual = replace(lost, ticket=2, position_id=2, magic=0, profit=-500.0)  # trade manuel : jamais compté
+    broker._deals += [lost, manual]
+    live = runner()  # base vide : nouvelle expérience le même jour
+    live.step()
+    assert live._day_realized() == pytest.approx(-195.0)
+    broker.history_ticks = range_then_breakout(BASE_MS)
+    clock.server_ms = BASE_MS + 16_500
+    quote(4000.50)
+    live.step()
+    assert _deals(broker) == [] and live.set_aside == {"perte du jour atteinte": 1}  # -195 pour -1 % = -100
