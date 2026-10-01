@@ -149,16 +149,15 @@ scalping:
   # « lot de 0,3 ou 0,4 ») ; trade refusé si même 0,3 dépasse. 1 % = plafond dur (CLAUDE.md règle 5) : sur 5 000 €,
   # 0,4 lot tient jusqu'à un stop d'environ 13 pips, 0,3 jusqu'à 18 pips.
   risk_per_trade_pct: 1.0
-  lot_choices: [0.4, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01]
-  # Lot qui diminue avec les pertes du jour (01/10, l'utilisateur : « il dort ») : le plus gros lot de la liste dont
-  # la perte au stop tient dans ce qui reste du budget de perte du jour (−2 %) ; il continue avec un lot plus petit
-  # au lieu de tout refuser. Rejeu 4 semaines : 15 trades par jour au lieu de 11 ; arrêt à −10 % au 5e jour.
-  lot_fits_day_budget: true
+  lot_choices: [0.4, 0.3]       # « laisse en 0,4, 0,3 » (utilisateur, 01/10)
   max_open_positions: 2         # « la version 2 positions, même dans des sens différents » (utilisateur, 29/09)
   max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
   max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
   min_seconds_between_entries: 5  # une entrée au plus par bougie de 5 s (base)
-  daily_loss_pct: 2.0           # plus d'entrée pour la journée au-delà de -2 % (démo, latent compris ; CLAUDE.md §3.5)
+  # Pas de limite de perte du jour (null) : décision de l'utilisateur du 01/10 (« retire la limite de perte »), compte
+  # démo seulement, après le rejeu des 4 semaines sans limite à 0,4 lot : -2 550 € en 2 jours. Restent : 1 % de
+  # risque au plus par trade et l'arrêt total à -10 % depuis le plus haut.
+  daily_loss_pct: null
   max_drawdown_pct: 10.0        # -10 % depuis le plus haut de l'expérience : arrêt total, relance manuelle
   # Signal dans l'autre sens qu'un trade ouvert : garder (achat et vente peuvent coexister : le principe de la
   # version f8489472), ignorer, retourner (trades contraires fermés au marché puis nouveau trade), retourner_si_gain
@@ -254,7 +253,7 @@ scalping:
     window_trades: 30
     multipliers: [1, 2, 4, 6]
     ceiling_entries_per_minute: 12  # une par bougie de 5 s au plus ; requêtes serveur, pas de HFT chez Axi
-    ceiling_total_risk_pct: 2.0     # risque ouvert jamais au-delà de la perte journalière maximale (daily_loss_pct)
+    ceiling_total_risk_pct: 2.0     # risque ouvert au plus (deux trades de 0,4 lot)
     ceiling_open_positions: 2       # deux positions au plus, même quand la cadence monte
 
 logging:

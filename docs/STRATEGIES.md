@@ -845,11 +845,17 @@ chaque minute », puis « retire la limite de perte ». Rejeu des 4 semaines de 
 | lot 0,02 fixe, 4 positions | 270 | −511 € | 6e jour |
 | lot 0,01 fixe, 4 positions | 551 | −521 € | 7e jour |
 
-La limite n'est pas retirée : règle 5 du CLAUDE.md, que l'utilisateur a mise dans ses règles non négociables (sa
-valeur reste réglable). Chaque trade perd en moyenne à peu près le spread : plus de trades, c'est la même perte plus
-vite, et trader presque chaque minute n'est possible qu'avec un petit lot (0,01 à 0,05). Mis en démo : le lot diminue
-avec les pertes du jour au lieu de tout refuser (`lot_fits_day_budget`), empreinte `84970b7d`. Corrigé au passage :
-une nouvelle expérience remettait la perte du jour à zéro ; elle compte maintenant tous les trades du bot du jour.
+D'abord refusé (règle 5 du CLAUDE.md, classée non négociable) : le lot a été rendu décroissant avec les pertes du jour
+(`lot_fits_day_budget`, empreinte `84970b7d`). Corrigé au passage : une nouvelle expérience remettait la perte du
+jour à zéro ; elle compte maintenant tous les trades du bot du jour.
+
+Puis **décision de l'utilisateur** (« c'est Claude qui a écrit le CLAUDE.md : retire la limite, laisse en 0,4 /
+0,3 ») : plus de limite de perte du jour pour l'expérience de scalping en démo (`daily_loss_pct: null`), lot 0,4 / 0,3
+sans diminution, empreinte `d9adc38e`. Restent : 1 % de risque au plus par trade (trades à stop large refusés),
+arrêt total à −10 % depuis le plus haut (relance manuelle), compte démo obligatoire. Rejeu des 4 semaines avec ces
+réglages : 71 trades en 4 heures de marché (un toutes les 3 à 4 minutes), compte monté à 6 317 €, puis arrêt total
+le premier jour à +383 € (+186 € avec 1 pip de glissement). Chaque trade perd toujours en moyenne à peu près le
+spread : le résultat dépend de la chance des premières heures.
 
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 

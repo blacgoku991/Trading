@@ -154,7 +154,7 @@ class EntryPolicy:
         """Motif du refus, ou None si l'entrée est permise."""
         cfg = self.cfg
         limits = self.cadence.limits()
-        if day_result <= -cfg.daily_loss_pct / 100 * day_start_equity:
+        if cfg.daily_loss_pct is not None and day_result <= -cfg.daily_loss_pct / 100 * day_start_equity:
             return f"perte du jour atteinte : {day_result:+.2f}, limite -{cfg.daily_loss_pct:g} %"
         if any(trade.key == key for trade in open_trades):
             return "même occasion déjà en position : doublon évité"
@@ -184,7 +184,7 @@ class EntryPolicy:
         # Si tous les stops sont touchés, la journée finit à « réalisé - risque ouvert » : ce total ne doit pas
         # dépasser la perte maximale du jour. Réalisé seulement (un gain latent peut disparaître avant les stops).
         realized = day_result if day_realized is None else day_realized
-        budget = cfg.daily_loss_pct / 100 * day_start_equity + realized
+        budget = day_budget(cfg, day_start_equity, realized)
         if open_risk + risk > budget:
             return f"budget de perte du jour : {budget:.2f} restants, {open_risk:.2f} déjà en jeu"
         while self.entries and self.entries[0] <= now_ms - 60_000:
@@ -201,7 +201,7 @@ class EntryPolicy:
         de perte du jour restant (mêmes calculs que refusal)."""
         open_risk = sum(trade.risk for trade in open_trades)
         realized = day_result if day_realized is None else day_realized
-        budget = self.cfg.daily_loss_pct / 100 * day_start_equity + realized
+        budget = day_budget(self.cfg, day_start_equity, realized)
         return min(self.cadence.limits().total_risk_pct / 100 * equity, budget) - open_risk
 
     def accept(self, now_ms: int) -> None:
@@ -233,6 +233,13 @@ class EntryPolicy:
         self.pause_reason[side] = why
         direction = "achats" if side > 0 else "ventes"
         return f"pause des {direction} pendant {seconds / 60:g} min ({why}) : le marché ne va pas dans ce sens"
+
+
+def day_budget(config: ScalpingConfig, day_start_equity: float, realized: float) -> float:
+    """Perte encore permise aujourd'hui (réalisé compris) ; illimitée sans limite du jour (daily_loss_pct None)."""
+    if config.daily_loss_pct is None:
+        return float("inf")
+    return config.daily_loss_pct / 100 * day_start_equity + realized
 
 
 def trade_volume(config: ScalpingConfig, equity: float, loss_per_lot: float, *, volume_min: float,

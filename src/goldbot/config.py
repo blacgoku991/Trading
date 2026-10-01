@@ -371,7 +371,8 @@ class ScalpingConfig(_Section):
     # Une entrée par bougie de 5 s au plus, soit 12 par minute (l'utilisateur a levé sa limite de 5 le 29/09).
     max_entries_per_minute: int = Field(ge=1, le=12)
     min_seconds_between_entries: float = Field(ge=0)
-    daily_loss_pct: float = Field(gt=0)
+    # Perte maximale du jour (%) ; None : pas de limite du jour (décision de l'utilisateur du 01/10/2026, démo).
+    daily_loss_pct: float | None = Field(gt=0)
     # Baisse maximale depuis le plus haut de l'expérience : arrêt total, relance manuelle (CLAUDE.md règle 5).
     max_drawdown_pct: float = Field(default=10.0, gt=0, le=10.0)
     min_free_margin_pct: float = Field(ge=0, lt=100)
@@ -421,7 +422,7 @@ class ScalpingConfig(_Section):
         if self.max_entries_per_minute > self.cadence.ceiling_entries_per_minute:
             raise ValueError("max_entries_per_minute dépasse le plafond technique de la cadence")
         ceiling = self.cadence.ceiling_total_risk_pct
-        if not self.max_total_risk_pct <= ceiling <= self.daily_loss_pct:
+        if not self.max_total_risk_pct <= ceiling <= (self.daily_loss_pct or float("inf")):
             raise ValueError("cadence : plafond du risque ouvert entre max_total_risk_pct et la perte journalière")
         if not (self.breakout.enabled or self.pullback.enabled or self.two_candles.enabled):
             raise ValueError("au moins une stratégie de scalping doit être active")

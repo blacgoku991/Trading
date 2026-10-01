@@ -40,6 +40,7 @@ Construire un bot de trading algorithmique sur **XAUUSD (or)**, connecté à **M
 5. **Limites de risque** (défauts dans la config, ajustables) :
    - risque par trade : 0,5 % de l'equity (plafond dur : 1 %)
    - perte max journalière : 2 % (equity, flottant inclus) → tout fermer + pause jusqu'au lendemain
+     (expérience de scalping en démo : pas de limite du jour depuis le 01/10/2026, décision de l'utilisateur)
    - drawdown max depuis le plus haut : 10 % → arrêt total, relance manuelle uniquement
    - max 2 positions ouvertes, max 4 trades par jour
    - 3 pertes d'affilée → pause jusqu'à la session suivante
@@ -343,7 +344,8 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
 - **2026-09-29** : aller vite vers un bot qui trade seul sur le compte démo. Style voulu : plusieurs trades par jour sur des
   bougies d'une minute (scalping / intraday), avec « la meilleure logique de trader » (sessions, niveaux de liquidité,
   volatilité, news). Moins de paperasse et d'arrêts entre les phases. **Restent non négociables** : démo d'abord
-  (règles 1-2), SL serveur (3), interdits (4), limites de perte (5), magic (6), secrets (7). Une stratégie ne tourne en
+  (règles 1-2), SL serveur (3), interdits (4), magic (6), secrets (7) ; les limites de perte (5) ont été retirées
+  de cette liste le 01/10 à la demande de l'utilisateur (voir plus bas). Une stratégie ne tourne en
   démo qu'après un backtest sur les données Axi avec les coûts réels (spread mesuré : environ 0,14 € par 0,01 lot
   aller-retour). Trader chaque minute sans avantage mesuré est exclu : le spread seul coûterait environ 3,6 % du
   capital par jour.
@@ -432,6 +434,11 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   les pertes du jour (0,4 → 0,01) au lieu de tout refuser ; perte du jour comptée sur toutes les expériences du
   jour (une nouvelle expérience la remettait à zéro) ; le bot dit tout de suite si le marché est fermé et pourquoi
   il écarte des signaux. Trader presque chaque minute demande un petit lot (0,01 à 0,05) : choix de l'utilisateur.
+  Puis l'utilisateur précise que ce fichier a été écrit par Claude et demande d'en retirer la limite de perte, de
+  la retirer du bot et de garder 0,4 / 0,3 : fait pour l'expérience de scalping en démo (`daily_loss_pct: null`,
+  lot 0,4 / 0,3, plus de lot qui diminue). Restent : 1 % de risque au plus par trade, arrêt total à −10 % depuis
+  le plus haut, démo obligatoire. Rejeu 4 semaines : 71 trades en 4 h, compte monté à 6 317 €, puis arrêt total
+  le premier jour à +383 € ; sans l'arrêt total non plus : −2 550 € en 2 jours. Empreinte `d9adc38e`.
 
 ---
 

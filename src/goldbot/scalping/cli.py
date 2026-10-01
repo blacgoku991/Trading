@@ -392,7 +392,9 @@ def live_main(
                 if cfg.lot_choices
                 else f"Risque {cfg.risk_per_trade_pct:g} % par trade"
             )
-            + f", -{cfg.daily_loss_pct:g} % par jour au plus, arrêt total à -{cfg.max_drawdown_pct:g} % depuis le plus "
+            + (f", -{cfg.daily_loss_pct:g} % par jour au plus" if cfg.daily_loss_pct is not None
+               else ", pas de limite de perte du jour")
+            + f", arrêt total à -{cfg.max_drawdown_pct:g} % depuis le plus "
             f"haut. De base : {cfg.max_open_positions} positions, {cfg.max_total_risk_pct:g} % de risque cumulé, "
             f"{cfg.max_entries_per_minute} entrées par minute au plus."
         )

@@ -1083,3 +1083,25 @@ def test_risk_room_is_what_the_entry_checks_would_still_allow():
     open_trades = [Exposure("t1", "k1", LONG, 10.0)]
     room = policy.risk_room(equity=5000.0, day_result=-30.0, day_start_equity=5000.0, open_trades=open_trades)
     assert room == pytest.approx(10.0)  # min(0,5 % = 25, 1 % - 30 = 20) - 10 déjà en jeu
+
+
+def test_without_a_daily_loss_limit_a_bad_day_does_not_stop_the_entries():
+    from goldbot.scalping.policy import day_budget
+
+    cfg = CONFIG.model_copy(update={"daily_loss_pct": None})
+    assert day_budget(cfg, 5000.0, -400.0) == float("inf")
+    policy = EntryPolicy(cfg)
+    assert _policy_check(policy, 0, day_result=-400.0, risk=4.0) is None  # -8 % dans la journée : entrée permise
+    limited = EntryPolicy(CONFIG)  # -1 % par jour : refus
+    assert reason_key(_policy_check(limited, 0, day_result=-400.0, risk=4.0)) == "perte du jour atteinte"
+
+
+def test_the_daily_loss_limit_can_be_removed_but_not_the_other_checks():
+    from goldbot.config import ScalpingConfig
+
+    data = CONFIG.model_dump()
+    data["daily_loss_pct"] = None
+    assert ScalpingConfig.model_validate(data).daily_loss_pct is None
+    data["max_drawdown_pct"] = 50.0  # l'arrêt total reste borné à 10 %
+    with pytest.raises(ValueError):
+        ScalpingConfig.model_validate(data)
