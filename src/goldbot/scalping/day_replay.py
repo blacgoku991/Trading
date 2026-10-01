@@ -16,6 +16,7 @@ import argparse
 import json
 import tempfile
 import time
+from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as clock_time
@@ -106,8 +107,15 @@ def report(results: dict[str, ScalpResult], *, settings: Settings, rule: ServerT
             notes.append("arrêt total")
         suffix = f"  ({', '.join(notes)})" if notes else ""
         lines.append(f"  {name:<28}{len(trades):>7}{wins:>9.0f} %{pips:>+9.1f}{net:>+10.2f} {currency}{suffix}")
-    demo = results["version démo"].trades
+    demo_result = results["version démo"]
+    demo = demo_result.trades
     lines.append("")
+    reasons: Counter = Counter()
+    for (_, reason), count in demo_result.refusals.items():
+        reasons[reason] += count
+    aside = ", ".join(f"{reason} {count}" for reason, count in reasons.most_common(4)) or "aucun"
+    lines.append(f"Version démo : {sum(demo_result.signals.values())} signaux, {len(demo)} trades ; signaux écartés : "
+                 f"{aside}.")  # fmt: skip
     if demo.empty:
         lines.append("Version démo : aucun trade sur cette période.")
         return lines

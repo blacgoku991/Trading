@@ -239,6 +239,21 @@ class ScalpRunner:
         utc = self.rule.server_to_utc(_EPOCH + timedelta(milliseconds=server_ms))
         return pd.Timestamp(utc).tz_convert(self.zone).strftime("%H:%M:%S")
 
+    def _next_open_ms(self, now_ms: int) -> int | None:
+        """Première minute de cotation après now_ms (heure serveur, ms), dans les 4 jours ; None sinon."""
+        start = now_ms // 60_000 * 60_000 + 60_000
+        return next((start + k * 60_000 for k in range(4 * 1440) if self._is_open(start + k * 60_000)), None)
+
+    def _when(self, server_ms: int, now_ms: int) -> str:
+        """« 00:00 (dans 30 min) » dans les 24 h, sinon « lundi 00:00 » (heure affichée)."""
+        at = pd.Timestamp(self.rule.server_to_utc(_EPOCH + timedelta(milliseconds=server_ms))).tz_convert(self.zone)
+        wait = int((server_ms - now_ms) // 60_000)
+        if wait < 24 * 60:
+            hours, minutes = divmod(wait, 60)
+            return f"{at:%H:%M} (dans {f'{hours} h {minutes:02d}' if hours else f'{minutes} min'})"
+        days = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+        return f"{days[at.weekday()]} {at:%H:%M}"
+
     def _money(self, value: float) -> str:
         return f"{value:+.2f} {self.currency}"
 
@@ -986,11 +1001,19 @@ class ScalpRunner:
             trend += " | sens du jour : " + {1: "achats seulement", -1: "ventes seulement"}.get(
                 self.direction, "aucun trade (mouvement trop faible)"
             )
-        market = "marché ouvert" if self._is_open(now_ms) else "marché fermé"
+        market = "marché ouvert"
+        if not self._is_open(now_ms):
+            reopen = self._next_open_ms(now_ms)
+            market = "marché fermé, pas de trade" + (f" avant {self._when(reopen, now_ms)}" if reopen else "")
+        aside = ""
+        if self.set_aside:  # motifs des signaux écartés depuis le lancement (pas affichés un par un)
+            aside = " (depuis le lancement : " + ", ".join(f"{reason} {count}" for reason, count
+                                                          in self.set_aside.most_common(3)) + ")"  # fmt: skip
         return (
             f"{self._clock(now_ms)} en marche ({market}) | tendance M1 {trend} | ATR M1 {pips(self.atr, self.cfg)} | "
             f"spread {pips(tick.ask - tick.bid, self.cfg)} | signaux : {counts.get(SENT, 0)} envoyés, "
-            f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} écartés par les règles | {self.running_total()} | "
+            f"{counts.get(NOT_SENT, 0)} simulés, {counts.get(REFUSED, 0)} écartés par les règles{aside} | "
+            f"{self.running_total()} | "
             f"{self.policy.cadence.describe()}" + (f" | ARRÊT TOTAL : {self.halted}" if self.halted else "")
         )
 

@@ -409,7 +409,8 @@ def live_main(
             say("Mode --simulation : aucun ordre n'est envoyé, tout est simulé.")
         say("Ctrl+C pour arrêter (les positions de l'expérience sont alors fermées). Bilans toutes les 15 minutes.")
         steps = 0
-        last_report = last_status = pd.Timestamp(now_utc())
+        last_report = pd.Timestamp(now_utc())
+        last_status = last_report - STATUS_EVERY  # première ligne d'état dès le premier passage (marché ouvert ?)
         try:
             while max_steps is None or steps < max_steps:
                 try:

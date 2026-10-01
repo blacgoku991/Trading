@@ -1096,3 +1096,33 @@ def test_a_spread_wider_than_the_limit_is_set_aside_silently(tmp_path, settings)
     live.step()
     assert broker.sent == [] and live.set_aside == {"spread trop large": 1}
     assert not any("refus" in line for line in lines)  # compté, pas affiché
+
+
+# --- ligne d'état : pourquoi aucun trade (demande de l'utilisateur, 01/10 : « ça ne prend pas de trade ») ---------
+
+
+def test_the_launch_shows_the_market_state_at_once(tmp_path, env_file, world):
+    broker, clock, *_ = world
+    code, output = _launch(tmp_path, env_file, broker, clock, max_steps=1)
+    assert code == EXIT_OK and "en marche (marché ouvert)" in output  # sans attendre 5 minutes
+
+
+@pytest.mark.parametrize(
+    ("server_time", "expected"),
+    [("2026-01-06 00:30", "marché fermé, pas de trade avant 00:00 (dans 30 min)"),  # coupure (Paris : 23:30)
+     ("2026-01-06 23:59:30", "marché fermé, pas de trade avant 00:00 (dans 1 h 00)"),  # Paris : 22:59:30
+     ("2026-01-10 12:00", "marché fermé, pas de trade avant lundi 00:00")],  # samedi
+)
+def test_a_closed_market_is_said_with_the_time_trading_resumes(world, server_time, expected):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    clock.server_ms = int(pd.Timestamp(server_time).value // 1_000_000)
+    quote(4000.0)
+    assert expected in live.status_line()
+
+
+def test_the_status_line_gives_the_reasons_of_the_signals_set_aside(world):
+    broker, clock, quote, runner, lines = world
+    live = runner()
+    live.set_aside.update({"budget de perte du jour": 3, "signal périmé": 1})
+    assert "(depuis le lancement : budget de perte du jour 3, signal périmé 1)" in live.status_line()

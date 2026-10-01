@@ -69,6 +69,7 @@ def test_day_replay_from_exported_files(tmp_path, settings):
     rows = [line for line in lines if line.startswith("  ") and "EUR" in line and "lot à" not in line]
     assert [row.split()[0] for row in rows][:2] == ["version", "objectif"] and len(rows) == len(variants(settings.scalping))
     assert "Trades de la version démo (heure de Paris) :" in text
+    assert any(line.startswith("Version démo : ") and " signaux, 2 trades ; signaux écartés : " in line for line in lines)
     assert "  11:02:00 ACHAT 0.4 lot à 4000.28 -> 4004.28 (objectif, 215 s) +40.0 pips +160.00 EUR" in lines
     assert "  11:03:00 VENTE 0.4 lot à 4001.28 -> 4002.28 (stop, 43 s) -10.0 pips -40.00 EUR" in lines
 
