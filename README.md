@@ -238,8 +238,9 @@ seule la cassure tourne en démo (l'impulsion-repli perd dans toutes ses version
   l'impulsion (principe public de GOLD Scalper PRO réécrit en règles, pas son code) ;
 - **deux bougies** (idée de l'utilisateur, seule active depuis le 29/09 au soir) : bougie baissière puis haussière
   → vente (haussière puis baissière → achat), stop au-delà des deux bougies (10 pips au moins), une position de
-  0,4 lot (0,3 si 0,4 perdrait plus de 1 % au stop), objectif 40 pips, pas de limite de perte du jour (décision de
-  l'utilisateur du 01/10), arrêt total à −10 % depuis le plus haut ; deux positions au plus, un achat et une
+  stop entre 4 et 8 $ (élargi à 4 $, refusé au-delà de 8 $), trois positions avec des objectifs à 2, 4 et 6 $, lot
+  calculé pour risquer 1 % au stop (environ 0,14 lot au total pour 4 $), pas de limite de perte du jour (décision de
+  l'utilisateur du 01/10), arrêt total à −10 % depuis le plus haut ; deux signaux au plus, un achat et une
   vente pouvant être ouverts en même temps (option `opposite_signals: retourner_si_gain` : fermer le trade
   contraire s'il est en gain, sinon ignorer le signal). Rejeu 4 semaines : perdante (PF 0,74, arrêt à −10 % au
   4e jour de cotation).
@@ -302,8 +303,8 @@ et clôtures, pas à gagner. Quelques trades gagnants ne prouveront pas qu'elle 
 3. Bilans à tout moment : `.\.venv\Scripts\python.exe scripts\run_scalp.py --bilan`.
 
 4. **Rejeu d'une journée** (terminal MT5 ouvert ; lecture de l'historique seulement, aucun ordre) : la version
-   démo et 8 variantes d'un seul réglage (objectif 30 ou 50 pips, stop d'au moins 15 pips, durée 5 ou 15 min,
-   spread maximal, pause d'une heure à la réouverture, retournement si gain), rejouées sur les ticks du jour avec
+   démo et 9 variantes d'un seul réglage (objectifs ou stop minimum à ±25 %, durée 5 ou 20 min, spread maximal,
+   pause d'une heure à la réouverture, retournement si gain), rejouées sur les ticks du jour avec
    le même code que le bot, puis la liste des trades de la version démo (heure de Paris) :
 
    ```powershell

@@ -138,7 +138,7 @@ scalping:
   # Sorties communes aux deux stratégies (comparaison à risque et à sorties égaux).
   stop_buffer_points: 5         # marge au-delà de la structure qui porte le stop
   min_stop_points: 200          # stop d'au moins 2,00 $ (trades démo du 29/09 : stops serrés touchés par le bruit)
-  max_stop_points: 600          # et d'au plus 6,00 $
+  max_stop_points: 800          # et d'au plus 8,00 $ (deux bougies : « stop de 4 à 8 points », utilisateur, 01/10)
   target_ratio: 3.0             # objectif = 3 x la distance du stop (un gain couvre trois pertes)
   min_target_cost_ratio: 3.0    # objectif >= 3 x le coût estimé (spread + glissements + commission), sinon refus
   expected_slippage_points: 5   # glissement supposé par exécution (filtre de coût et calcul du lot)
@@ -149,7 +149,10 @@ scalping:
   # « lot de 0,3 ou 0,4 ») ; trade refusé si même 0,3 dépasse. 1 % = plafond dur (CLAUDE.md règle 5) : sur 5 000 €,
   # 0,4 lot tient jusqu'à un stop d'environ 13 pips, 0,3 jusqu'à 18 pips.
   risk_per_trade_pct: 1.0
-  lot_choices: [0.4, 0.3]       # « laisse en 0,4, 0,3 » (utilisateur, 01/10)
+  # Lot calculé pour risquer risk_per_trade_pct au stop (01/10 : avec un stop de 4 à 8 $, 0,3-0,4 lot risquerait
+  # 2 à 5 % du compte, au-delà du plafond de 1 %) : environ 0,14 lot au total pour 4 $ de stop, 0,07 pour 8 $,
+  # réparti sur les positions du signal.
+  lot_choices: []
   max_open_positions: 2         # « la version 2 positions, même dans des sens différents » (utilisateur, 29/09)
   max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
   max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
@@ -193,13 +196,17 @@ scalping:
     # trades gagnants (51 % contre 36 %) mais plus petits : PF 0,80 contre 0,88 avec 40 pips fixes (dernière année).
     # Retour à la v1 (29/09, nuit, demande : « remets la version d'avant, elle fait plus de bénéfice ») : reprise,
     # objectif fixe 40 pips, lot 0,4 / 0,3 ; la moins perdante des trois sur 7 ans de M1 (PF 0,88).
+    # 01/10 (une vente stoppée en 2 s avec un stop de 1,09 $ quand une bougie M1 faisait près de 3 $ ; utilisateur :
+    # « le stop doit être de 4 à 8 points au minimum et le TP de 2 à 6 points, mais plusieurs positions ») : stop
+    # au-delà des deux bougies, élargi à 4 $ au moins, refusé au-delà de 8 $ ; trois positions, objectifs 2, 4 et 6 $.
+    # Rejeu (31/08, premier jour des 4 semaines, puis arrêt total à -10 %) : 49 trades, 49 % de gagnants, -412 €.
     enabled: true
     version: 1
     mode: reprise
     target_mode: fixe
     minutes: 1
-    min_stop_pips: 10
-    target_pips: [40]
+    min_stop_pips: 40
+    target_pips: [20, 40, 60]
   breakout:
     # « cassure » v1 : clôture au-delà du plus haut / plus bas des 60 s précédentes (bougie de signal exclue),
     # confirmée par une 2e clôture, dans le sens de la tendance M1 (EMA20 / EMA50 sur barres clôturées).

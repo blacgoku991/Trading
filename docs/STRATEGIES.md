@@ -857,6 +857,20 @@ réglages : 71 trades en 4 heures de marché (un toutes les 3 à 4 minutes), com
 le premier jour à +383 € (+186 € avec 1 pip de glissement). Chaque trade perd toujours en moyenne à peu près le
 spread : le résultat dépend de la chance des premières heures.
 
+### Stop de 4 à 8 $, trois objectifs de 2 à 6 $ (01/10/2026)
+
+Vente démo de 0,4 lot stoppée en 2 secondes : stop à 1,09 $ (le minimum de 10 pips) quand une bougie M1 faisait près de
+3 $ (ATR M1 29 pips). Demande de l'utilisateur : « le stop doit être de 4 à 8 points au minimum et le TP de 2 à 6
+points, mais plusieurs positions ». Fait : stop au-delà des deux bougies, élargi à 4 $ (`min_stop_pips: 40`), refusé
+au-delà de 8 $ (`max_stop_points: 800`) ; trois positions avec le même stop et des objectifs à 2, 4 et 6 $ ; lot
+calculé pour risquer 1 % au stop (le plafond reste : 0,3-0,4 lot avec 4 $ de stop risquerait 2 à 5 %), soit environ
+0,14 lot au total pour 4 $ de stop et 0,07 pour 8 $. Empreinte `ec41cae7`.
+
+Rejeu des 4 semaines (sans limite du jour) : tous les réglages atteignent l'arrêt total à −10 % dès le premier jour
+(31/08) ; celui-ci : 49 trades, 49 % de gagnants, −412 € (20 minutes au lieu de 10 : 94 trades, −370 €). Rejeu d'une
+journée, soirée du 28/09 (21:55-23:00) : 10 trades, 70 % de gagnants, +39,63 €. Avec un stop plus large que l'objectif
+moyen, il faut gagner plus d'une fois sur deux ; le spread reste payé à chaque trade.
+
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 
 Demande : un sens achat / vente « en fonction du marché et de la réaction des bougies », qui change en quelques

@@ -557,10 +557,9 @@ _V1_EXITS = [
     ("    ceiling_open_positions: 2 ", "    # "),
     ("  max_entries_per_minute: 12 ", "  max_entries_per_minute: 5 "),
     ("  risk_per_trade_pct: 1.0\n", "  risk_per_trade_pct: 0.1\n"),
-    ("  lot_choices: [0.4, 0.3]       # « laisse en 0,4, 0,3 » (utilisateur, 01/10)\n", ""),
+    ("  max_stop_points: 800 ", "  max_stop_points: 600 "),
     ("résultat (PF 0,90 contre 0,91).\n    enabled: false\n", "résultat (PF 0,90 contre 0,91).\n    enabled: true\n"),
-    ("la moins perdante des trois sur 7 ans de M1 (PF 0,88).\n    enabled: true\n",
-     "la moins perdante des trois sur 7 ans de M1 (PF 0,88).\n    enabled: false\n"),
+    ("49 % de gagnants, -412 €.\n    enabled: true\n", "49 % de gagnants, -412 €.\n    enabled: false\n"),
     ("à la demande de l'utilisateur.\n    enabled: false\n", "à la demande de l'utilisateur.\n    enabled: true\n"),
 ]
 

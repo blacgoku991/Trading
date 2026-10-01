@@ -44,19 +44,23 @@ DAY_LIMITS = ("perte du jour atteinte", "budget de perte du jour")
 
 
 def variants(cfg: ScalpingConfig) -> dict[str, ScalpingConfig]:
-    """La version démo, puis une variante par réglage (objectif, stop, durée, spread, signaux contraires)."""
+    """La version démo, puis une variante par réglage, relative à la démo (objectifs, stop, durée, spread...)."""
     two = cfg.two_candles
 
     def with_two(**update: object) -> ScalpingConfig:
         return cfg.model_copy(update={"two_candles": two.model_copy(update=update)})
 
+    def targets(factor: float) -> list[float]:
+        return [round(target * factor, 1) for target in two.target_pips]
+
     return {
         "version démo": cfg,
-        "objectif 30 pips": with_two(target_pips=[30.0]),
-        "objectif 50 pips": with_two(target_pips=[50.0]),
-        "stop au moins 15 pips": with_two(min_stop_pips=15.0),
+        "objectifs -25 %": with_two(target_pips=targets(0.75)),
+        "objectifs +25 %": with_two(target_pips=targets(1.25)),
+        "stop minimum -25 %": with_two(min_stop_pips=round(two.min_stop_pips * 0.75, 1)),
+        "stop minimum +25 %": with_two(min_stop_pips=round(two.min_stop_pips * 1.25, 1)),
         "durée max 5 min": cfg.model_copy(update={"max_hold_s": 300}),
-        "durée max 15 min": cfg.model_copy(update={"max_hold_s": 900}),
+        "durée max 20 min": cfg.model_copy(update={"max_hold_s": 1200}),
         "spread max 2,5 pips": cfg.model_copy(update={"max_spread_pips": 2.5}),
         "pause 1 h à la réouverture": cfg.model_copy(update={"no_entry_after_open_min": 60.0}),
         "retournement si gain": cfg.model_copy(update={"opposite_signals": "retourner_si_gain"}),

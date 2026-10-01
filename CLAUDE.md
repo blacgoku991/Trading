@@ -439,6 +439,11 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   lot 0,4 / 0,3, plus de lot qui diminue). Restent : 1 % de risque au plus par trade, arrêt total à −10 % depuis
   le plus haut, démo obligatoire. Rejeu 4 semaines : 71 trades en 4 h, compte monté à 6 317 €, puis arrêt total
   le premier jour à +383 € ; sans l'arrêt total non plus : −2 550 € en 2 jours. Empreinte `d9adc38e`.
+  Puis, après une vente stoppée en 2 s (stop de 1,09 $ quand une bougie M1 faisait près de 3 $) : « le stop doit être
+  de 4 à 8 points au minimum et le TP de 2 à 6 points, mais plusieurs positions ». Fait : stop au-delà des deux
+  bougies, élargi à 4 $, refusé au-delà de 8 $ ; trois positions, objectifs 2, 4 et 6 $ ; lot calculé pour 1 % au
+  stop (0,3-0,4 lot y risquerait 2 à 5 %) : environ 0,14 lot au total. Empreinte `ec41cae7`. Rejeu : arrêt total à
+  −10 % le premier jour des 4 semaines (−412 €) ; soirée du 28/09 (rejeu d'une journée) : 10 trades, +39,63 €.
 
 ---
 
