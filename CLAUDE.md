@@ -427,6 +427,11 @@ Gardé **uniquement** s'il bat la version sans ML hors échantillon et après co
   deux positions au plus (même résultat ce jour-là), filtre de spread non activé (il aurait retiré +77,58 €).
   Outil `scripts/rejeu_jour.py` : la version démo et 8 variantes rejouées sur les ticks du jour (MT5, lecture
   seulement). Rappelé : une journée ne prouve rien. Les T/P de la séance avaient été déplacés à la main.
+  Puis (01/10) « il dort, il faut qu'il trade presque chaque minute » et « retire la limite de perte » : refusé
+  (règle 5, non négociable ; rejeu sans limite à 0,4 lot : −2 550 € en 2 jours). Mis en démo : lot qui diminue avec
+  les pertes du jour (0,4 → 0,01) au lieu de tout refuser ; perte du jour comptée sur toutes les expériences du
+  jour (une nouvelle expérience la remettait à zéro) ; le bot dit tout de suite si le marché est fermé et pourquoi
+  il écarte des signaux. Trader presque chaque minute demande un petit lot (0,01 à 0,05) : choix de l'utilisateur.
 
 ---
 

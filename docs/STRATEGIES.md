@@ -830,6 +830,27 @@ chaque jour (−68 à −102 €), souvent avec deux pertes juste après la réo
 trade plus de la journée : 24 h/24, elle ne tradera souvent plus le soir. La pause d'une heure fait mieux 5 jours sur
 6 (−72 à −89 € ; +83 € le 28/09).
 
+### « Il dort » : la limite de perte du jour (01/10/2026)
+
+L'utilisateur relance le bot (version `f8489472`) et voit qu'il ne prend pas de trade : « il faut qu'il trade presque
+chaque minute », puis « retire la limite de perte ». Rejeu des 4 semaines de ticks Axi, lot 0,4 / 0,3 :
+
+| Réglage | Trades par jour | Résultat | Arrêt total (−10 %) |
+|---|---|---|---|
+| limite du jour −2 % (actuelle) | 11, puis plus rien jusqu'au lendemain | −353 € | 4e jour |
+| lot qui diminue avec les pertes du jour (0,4 → 0,01), 2 positions | 15 | −515 € | 5e jour |
+| limite du jour −3 % ou −5 % | 69 à 71 | +383 à +425 € au moment de l'arrêt | dès le 1er jour |
+| **sans limite de perte** | 298 | **−2 550 € en 2 jours** (5 310 → 2 760 €) | — |
+| lot 0,05 fixe, 4 positions | 109 | −480 € | 5e jour |
+| lot 0,02 fixe, 4 positions | 270 | −511 € | 6e jour |
+| lot 0,01 fixe, 4 positions | 551 | −521 € | 7e jour |
+
+La limite n'est pas retirée : règle 5 du CLAUDE.md, que l'utilisateur a mise dans ses règles non négociables (sa
+valeur reste réglable). Chaque trade perd en moyenne à peu près le spread : plus de trades, c'est la même perte plus
+vite, et trader presque chaque minute n'est possible qu'avec un petit lot (0,01 à 0,05). Mis en démo : le lot diminue
+avec les pertes du jour au lieu de tout refuser (`lot_fits_day_budget`), empreinte `84970b7d`. Corrigé au passage :
+une nouvelle expérience remettait la perte du jour à zéro ; elle compte maintenant tous les trades du bot du jour.
+
 ### Lecture du marché : 5 familles de lecture des bougies (29/09/2026, nuit)
 
 Demande : un sens achat / vente « en fonction du marché et de la réaction des bougies », qui change en quelques

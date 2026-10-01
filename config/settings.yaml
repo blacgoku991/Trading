@@ -149,7 +149,11 @@ scalping:
   # « lot de 0,3 ou 0,4 ») ; trade refusé si même 0,3 dépasse. 1 % = plafond dur (CLAUDE.md règle 5) : sur 5 000 €,
   # 0,4 lot tient jusqu'à un stop d'environ 13 pips, 0,3 jusqu'à 18 pips.
   risk_per_trade_pct: 1.0
-  lot_choices: [0.4, 0.3]
+  lot_choices: [0.4, 0.3, 0.2, 0.1, 0.05, 0.02, 0.01]
+  # Lot qui diminue avec les pertes du jour (01/10, l'utilisateur : « il dort ») : le plus gros lot de la liste dont
+  # la perte au stop tient dans ce qui reste du budget de perte du jour (−2 %) ; il continue avec un lot plus petit
+  # au lieu de tout refuser. Rejeu 4 semaines : 15 trades par jour au lieu de 11 ; arrêt à −10 % au 5e jour.
+  lot_fits_day_budget: true
   max_open_positions: 2         # « la version 2 positions, même dans des sens différents » (utilisateur, 29/09)
   max_total_risk_pct: 2.0       # risque cumulé des trades ouverts
   max_entries_per_minute: 12    # « pas de limite » (utilisateur, 29/09) : une entrée par bougie de 5 s au plus
